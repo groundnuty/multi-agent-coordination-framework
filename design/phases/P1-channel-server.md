@@ -65,8 +65,11 @@ Reads config from environment variables, wires modules together, starts the serv
 | `MACF_CA_CERT` | Path to CA cert | Yes | `certs/ca-cert.pem` |
 | `MACF_AGENT_CERT` | Path to agent cert | Yes | `certs/agent-cert.pem` |
 | `MACF_AGENT_KEY` | Path to agent key | Yes | `certs/agent-key.pem` |
+| `MACF_AGENT_TYPE` | Agent lifecycle type | No (default: `permanent`) | `permanent` or `worker` |
 | `MACF_DEBUG` | Enable debug logging | No | `true` |
 | `MACF_LOG_PATH` | Log file path | No | `.macf/logs/channel.log` |
+
+**Port behavior:** If `MACF_PORT` is set and that port is in use, the server will fail to start (no random retry — user requested a specific port). Random retry only applies when `MACF_PORT` is unset or 0.
 
 **Startup sequence:**
 1. Read env vars
@@ -156,9 +159,13 @@ Request:
 
 Response: `200 OK` with body `{"status":"received"}`
 
+Validation: body must be valid JSON with `Content-Type: application/json`. The `type` field must be one of the known values (`issue_routed`, `mention`, `startup_check`). Missing optional fields are acceptable. Reject bodies larger than 64KB.
+
 Errors:
 - `401` — invalid or missing client cert
-- `400` — malformed JSON body
+- `400` — malformed JSON or unknown `type`
+- `413` — body too large (>64KB)
+- `415` — missing or wrong Content-Type
 - `500` — internal error pushing to MCP
 
 #### GET /health
@@ -173,9 +180,12 @@ Response:
   "type": "permanent",
   "uptime_seconds": 3600,
   "current_issue": null,
-  "version": "0.1.0"
+  "version": "0.1.0",
+  "last_notification": "2026-03-28T18:01:00Z"
 }
 ```
+
+The `version` field is read from `package.json` at startup.
 
 **mTLS configuration:**
 

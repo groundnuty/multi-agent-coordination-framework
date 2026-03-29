@@ -43,11 +43,13 @@ GET /health → 200
   "agent": "code-agent",
   "status": "online",
   "type": "permanent",
-  "uptime": 3600,
-  "current_issue": 42
+  "uptime_seconds": 3600,
+  "current_issue": 42,
+  "version": "0.1.0",
+  "last_notification": "2026-03-28T18:01:00Z"
 }
 
-POST /notify → 200 "ok"
+POST /notify → 200 {"status":"received"}
 Body: { "type": "issue_routed", "issue_number": 42, "title": "..." }
 
 POST /sign → 200
