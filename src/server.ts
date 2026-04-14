@@ -3,7 +3,13 @@ import { createLogger } from './logger.js';
 import { createMcpChannel } from './mcp.js';
 import { createHealthState } from './health.js';
 import { createHttpsServer } from './https.js';
+import { createRegistryFromConfig } from './registry/factory.js';
+import { checkCollision, CollisionError } from './collision.js';
+import { registerShutdownHandler } from './shutdown.js';
+import { generateToken } from './token.js';
+import { checkPendingIssues } from './startup-issues.js';
 import type { NotifyPayload } from './types.js';
+import type { AgentInfo } from './registry/types.js';
 
 async function main(): Promise<void> {
   const config = loadConfig();
@@ -65,15 +71,77 @@ async function main(): Promise<void> {
     logger,
   });
 
+  // P1: Connect MCP channel
   await mcp.connect();
 
+  // P1: Bind port
   const { actualPort } = await httpsServer.start(config.port, config.host);
+
+  // P2: Generate token and create registry
+  const token = await generateToken();
+  const registry = createRegistryFromConfig(config.registry, config.project, token);
+
+  // P2: Collision detection
+  const collisionResult = await checkCollision(
+    config.agentName,
+    registry,
+    {
+      caCertPath: config.caCertPath,
+      agentCertPath: config.agentCertPath,
+      agentKeyPath: config.agentKeyPath,
+    },
+    logger,
+  );
+
+  if (collisionResult.action === 'abort') {
+    await httpsServer.stop();
+    throw new CollisionError(
+      config.agentName,
+      collisionResult.existing.host,
+      collisionResult.existing.port,
+    );
+  }
+
+  // P2: Register in GitHub variable (use advertiseHost, not bind address)
+  const agentInfo: AgentInfo = {
+    host: config.advertiseHost,
+    port: actualPort,
+    type: config.agentType as 'permanent' | 'worker',
+    instance_id: config.instanceId,
+    started: new Date().toISOString(),
+  };
+
+  await registry.register(config.agentName, agentInfo);
+  logger.info('registered', {
+    agent: config.agentName,
+    host: config.advertiseHost,
+    port: actualPort,
+    instance_id: config.instanceId,
+  });
+
+  // P2: Register shutdown handler
+  registerShutdownHandler({
+    agentName: config.agentName,
+    registry,
+    httpsServer,
+    logger,
+  });
+
+  // P2: Check for pending issues and push startup_check notification
+  await checkPendingIssues({
+    repo: 'groundnuty/macf',
+    agentLabel: 'code-agent',
+    token,
+    onNotify,
+    logger,
+  });
 
   logger.info('server_started', {
     port: actualPort,
-    host: config.host,
+    host: config.advertiseHost,
     agent: config.agentName,
     type: config.agentType,
+    instance_id: config.instanceId,
   });
 }
 
