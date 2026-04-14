@@ -90,6 +90,9 @@ jobs:
             "${TMUX_BIN} has-session -t ${SESSION} 2>/dev/null" \
             && ssh -o StrictHostKeyChecking=accept-new \
             -i ~/.ssh/id_agent "${SSH_USER}@${HOST}" \
+            "${TMUX_BIN} send-keys -t ${SESSION} C-u" 2>/dev/null \
+            && ssh -o StrictHostKeyChecking=accept-new \
+            -i ~/.ssh/id_agent "${SSH_USER}@${HOST}" \
             "${TMUX_BIN} send-keys -t ${SESSION} 'Please work on issue #${ISSUE_NUMBER}. Run: gh issue view ${ISSUE_NUMBER} --json title,body,labels,comments' Enter" 2>/dev/null \
             && sleep 1 \
             && ssh -o StrictHostKeyChecking=accept-new \
@@ -186,6 +189,9 @@ jobs:
               if ssh -o ConnectTimeout=30 -o StrictHostKeyChecking=accept-new \
                 -i ~/.ssh/id_agent "${SSH_USER}@${HOST}" \
                 "${TMUX_BIN} has-session -t ${SESSION} 2>/dev/null" \
+                && ssh -o StrictHostKeyChecking=accept-new \
+                -i ~/.ssh/id_agent "${SSH_USER}@${HOST}" \
+                "${TMUX_BIN} send-keys -t ${SESSION} C-u" 2>/dev/null \
                 && ssh -o StrictHostKeyChecking=accept-new \
                 -i ~/.ssh/id_agent "${SSH_USER}@${HOST}" \
                 "${TMUX_BIN} send-keys -t ${SESSION} 'You were mentioned in ${REF}. Please check and respond: gh issue view ${VIEW_NUM} --repo groundnuty/macf --json title,body,comments' Enter" 2>/dev/null \
