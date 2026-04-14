@@ -94,7 +94,11 @@ jobs:
             && sleep 1 \
             && ssh -o StrictHostKeyChecking=accept-new \
             -i ~/.ssh/id_agent "${SSH_USER}@${HOST}" \
-            "${TMUX_BIN} send-keys -t ${SESSION} 'Please work on issue #${ISSUE_NUMBER}. Run: gh issue view ${ISSUE_NUMBER} --json title,body,labels,comments' Enter Enter Enter" 2>/dev/null; then
+            "${TMUX_BIN} send-keys -t ${SESSION} 'Please work on issue #${ISSUE_NUMBER}. Run: gh issue view ${ISSUE_NUMBER} --json title,body,labels,comments' Enter" 2>/dev/null \
+            && sleep 1 \
+            && ssh -o StrictHostKeyChecking=accept-new \
+            -i ~/.ssh/id_agent "${SSH_USER}@${HOST}" \
+            "${TMUX_BIN} send-keys -t ${SESSION} Enter" 2>/dev/null; then
             echo "Routed issue #${ISSUE_NUMBER} to ${LABEL}"
           else
             echo "Agent ${LABEL} is offline or unreachable"
@@ -192,7 +196,11 @@ jobs:
                 && sleep 1 \
                 && ssh -o StrictHostKeyChecking=accept-new \
                 -i ~/.ssh/id_agent "${SSH_USER}@${HOST}" \
-                "${TMUX_BIN} send-keys -t ${SESSION} 'You were mentioned in ${REF}. Please check and respond: gh issue view ${VIEW_NUM} --repo groundnuty/macf --json title,body,comments' Enter Enter Enter" 2>/dev/null; then
+                "${TMUX_BIN} send-keys -t ${SESSION} 'You were mentioned in ${REF}. Please check and respond: gh issue view ${VIEW_NUM} --repo groundnuty/macf --json title,body,comments' Enter" 2>/dev/null \
+                && sleep 1 \
+                && ssh -o StrictHostKeyChecking=accept-new \
+                -i ~/.ssh/id_agent "${SSH_USER}@${HOST}" \
+                "${TMUX_BIN} send-keys -t ${SESSION} Enter" 2>/dev/null; then
                 echo "Routed mention to ${AGENT_NAME}"
               else
                 echo "Agent ${AGENT_NAME} is offline, skipping"
