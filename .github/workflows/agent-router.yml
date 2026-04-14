@@ -54,7 +54,17 @@ jobs:
           tags: tag:ci-runner
 
       - name: Wait for Tailscale network
-        run: sleep 5
+        run: |
+          HOST=$(echo '${{ needs.config.outputs.agents }}' | jq -r '.[keys[0]].host')
+          echo "Waiting for $HOST to be reachable..."
+          for i in $(seq 1 30); do
+            if tailscale ping --timeout 2s "$HOST" >/dev/null 2>&1; then
+              echo "Node reachable after ${i} attempts"
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "WARNING: node not reachable after 60s, proceeding anyway"
 
       - name: Route to agent by label
         env:
@@ -123,7 +133,17 @@ jobs:
           tags: tag:ci-runner
 
       - name: Wait for Tailscale network
-        run: sleep 5
+        run: |
+          HOST=$(echo '${{ needs.config.outputs.agents }}' | jq -r '.[keys[0]].host')
+          echo "Waiting for $HOST to be reachable..."
+          for i in $(seq 1 30); do
+            if tailscale ping --timeout 2s "$HOST" >/dev/null 2>&1; then
+              echo "Node reachable after ${i} attempts"
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "WARNING: node not reachable after 60s, proceeding anyway"
 
       - name: Route to mentioned agents
         env:
