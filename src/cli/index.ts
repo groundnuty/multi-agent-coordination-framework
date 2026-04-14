@@ -1,0 +1,108 @@
+#!/usr/bin/env node
+import 'reflect-metadata';
+import { Command } from 'commander';
+import { listAgents } from './commands/list.js';
+import { cdAgent } from './commands/cd.js';
+import { initAgent } from './commands/init.js';
+import { updatePlugin } from './commands/update.js';
+import { showStatus } from './commands/status.js';
+import { listPeers } from './commands/peers.js';
+import { certsInit, certsRecover, certsRotate } from './commands/certs.js';
+
+const program = new Command();
+
+program
+  .name('macf')
+  .description('Multi-Agent Coordination Framework CLI')
+  .version('0.1.0')
+  .action(() => {
+    listAgents();
+  });
+
+program
+  .command('init')
+  .description('Set up a project directory for an agent')
+  .requiredOption('--project <name>', 'Project name (e.g., macf)')
+  .requiredOption('--role <role>', 'Agent role (e.g., code-agent)')
+  .option('--name <name>', 'Agent name (defaults to role)')
+  .option('--type <type>', 'Agent type: permanent or worker', 'permanent')
+  .requiredOption('--app-id <id>', 'GitHub App ID')
+  .requiredOption('--install-id <id>', 'GitHub App Installation ID')
+  .requiredOption('--key-path <path>', 'Path to GitHub App private key')
+  .option('--registry-type <type>', 'Registry: org, profile, or repo', 'repo')
+  .option('--registry-org <org>', 'Org name (for org registry)')
+  .option('--registry-user <user>', 'User name (for profile registry)')
+  .option('--registry-repo <repo>', 'owner/repo (for repo registry)')
+  .action((opts) => {
+    initAgent(process.cwd(), {
+      project: opts.project,
+      role: opts.role,
+      name: opts.name,
+      type: opts.type,
+      appId: opts.appId,
+      installId: opts.installId,
+      keyPath: opts.keyPath,
+      registryType: opts.registryType,
+      registryOrg: opts.registryOrg,
+      registryUser: opts.registryUser,
+      registryRepo: opts.registryRepo,
+    });
+  });
+
+program
+  .command('update')
+  .description('Update plugin in current project')
+  .action(() => {
+    updatePlugin(process.cwd());
+  });
+
+program
+  .command('status')
+  .description('Ping all agents and show status')
+  .action(async () => {
+    await showStatus();
+  });
+
+program
+  .command('peers')
+  .description('List peers from the registry')
+  .action(async () => {
+    await listPeers();
+  });
+
+const certs = program
+  .command('certs')
+  .description('Certificate management');
+
+certs
+  .command('init')
+  .description('Create CA certificate and upload to registry')
+  .action(async () => {
+    await certsInit(process.cwd());
+  });
+
+certs
+  .command('recover')
+  .description('Recover CA key from encrypted backup in registry')
+  .action(async () => {
+    await certsRecover(process.cwd());
+  });
+
+certs
+  .command('rotate')
+  .description('Regenerate agent certificate with existing CA')
+  .action(async () => {
+    await certsRotate(process.cwd());
+  });
+
+program
+  .command('cd <agent-name>')
+  .description('Print agent project path (for shell: cd $(macf cd code-agent))')
+  .action((agentName: string) => {
+    cdAgent(agentName);
+  });
+
+program.parseAsync(process.argv).catch((err: Error) => {
+  console.error(`Error: ${err.message}`);
+  process.exitCode = 1;
+});
