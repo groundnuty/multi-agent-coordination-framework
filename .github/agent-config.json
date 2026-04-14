@@ -1,0 +1,25 @@
+{
+  "agents": {
+    "code-agent": {
+      "app_name": "macf-code-agent",
+      "host": "orzech-dev-agents",
+      "tmux_session": "code-agent",
+      "tmux_bin": "tmux",
+      "ssh_user": "ubuntu",
+      "ssh_key_secret": "AGENT_SSH_KEY"
+    },
+    "science-agent": {
+      "app_name": "macf-science-agent",
+      "host": "orzech-dev-agents",
+      "tmux_session": "science-agent",
+      "tmux_bin": "tmux",
+      "ssh_user": "ubuntu",
+      "ssh_key_secret": "AGENT_SSH_KEY"
+    }
+  },
+  "label_to_status": {
+    "in-progress": "In Progress",
+    "in-review": "In Review",
+    "blocked": "Blocked"
+  }
+}
