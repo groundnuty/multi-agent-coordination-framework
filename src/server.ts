@@ -25,18 +25,22 @@ async function main(): Promise<void> {
       meta['source'] = payload.source;
     }
 
-    const parts: string[] = [];
-    if (payload.type === 'issue_routed' && payload.issue_number !== undefined) {
-      parts.push(`Issue #${payload.issue_number} was routed to you`);
-      if (payload.title) parts[0] += `: ${payload.title}`;
-      health.setCurrentIssue(payload.issue_number);
+    let content: string;
+    if (payload.type === 'issue_routed') {
+      if (payload.issue_number !== undefined) {
+        const suffix = payload.title ? `: ${payload.title}` : '';
+        content = `Issue #${payload.issue_number} was routed to you${suffix}`;
+        health.setCurrentIssue(payload.issue_number);
+      } else {
+        content = payload.title
+          ? `An issue was routed to you: ${payload.title}`
+          : 'An issue was routed to you';
+      }
     } else if (payload.type === 'mention') {
-      parts.push(payload.message ?? 'You were mentioned');
-    } else if (payload.type === 'startup_check') {
-      parts.push(payload.message ?? 'Pending issues found at startup');
+      content = payload.message ?? 'You were mentioned';
+    } else {
+      content = payload.message ?? 'Pending issues found at startup';
     }
-
-    const content = parts.join('\n');
 
     logger.info('notify_received', {
       type: payload.type,

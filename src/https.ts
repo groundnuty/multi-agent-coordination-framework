@@ -1,4 +1,5 @@
 import { createServer, type Server as NodeHttpsServer } from 'node:https';
+import type { TLSSocket } from 'node:tls';
 import { readFileSync } from 'node:fs';
 import { NotifyPayloadSchema } from './types.js';
 import type { NotifyPayload, HealthResponse, HttpsServer, Logger } from './types.js';
@@ -36,19 +37,34 @@ function readBody(
   return new Promise((resolve, reject) => {
     const chunks: Buffer[] = [];
     let size = 0;
+    let settled = false;
 
     req.on('data', (chunk: Buffer) => {
       size += chunk.length;
-      if (size > MAX_BODY_BYTES) {
+      if (size > MAX_BODY_BYTES && !settled) {
+        settled = true;
         req.destroy();
         reject(new HttpsServerError('Body too large'));
         return;
       }
-      chunks.push(chunk);
+      if (!settled) {
+        chunks.push(chunk);
+      }
     });
 
-    req.on('end', () => resolve(Buffer.concat(chunks).toString('utf-8')));
-    req.on('error', reject);
+    req.on('end', () => {
+      if (!settled) {
+        settled = true;
+        resolve(Buffer.concat(chunks).toString('utf-8'));
+      }
+    });
+
+    req.on('error', (err) => {
+      if (!settled) {
+        settled = true;
+        reject(err);
+      }
+    });
   });
 }
 
@@ -76,6 +92,14 @@ export function createHttpsServer(config: {
     req: import('node:http').IncomingMessage,
     res: import('node:http').ServerResponse,
   ): Promise<void> {
+    // Defense-in-depth: reject at HTTP level even if TLS handshake passed.
+    // Protects against misconfigured rejectUnauthorized during debugging.
+    const tlsSocket = req.socket as TLSSocket;
+    if (!tlsSocket.authorized) {
+      sendJson(res, 401, { error: 'Unauthorized' });
+      return;
+    }
+
     const { method, url } = req;
 
     if (method === 'GET' && url === '/health') {
@@ -151,18 +175,23 @@ export function createHttpsServer(config: {
     });
   }
 
+  function requestHandler(
+    req: import('node:http').IncomingMessage,
+    res: import('node:http').ServerResponse,
+  ): void {
+    handleRequest(req, res).catch((err) => {
+      logger.error('request_error', {
+        error: err instanceof Error ? err.message : String(err),
+      });
+      if (!res.headersSent) {
+        sendJson(res, 500, { error: 'Internal server error' });
+      }
+    });
+  }
+
   return {
     async start(port: number, host: string): Promise<{ readonly actualPort: number }> {
-      server = createServer(tlsOptions, (req, res) => {
-        handleRequest(req, res).catch((err) => {
-          logger.error('request_error', {
-            error: err instanceof Error ? err.message : String(err),
-          });
-          if (!res.headersSent) {
-            sendJson(res, 500, { error: 'Internal server error' });
-          }
-        });
-      });
+      server = createServer(tlsOptions, requestHandler);
 
       // Explicit port: fail immediately if busy
       if (port !== 0) {
@@ -194,17 +223,8 @@ export function createHttpsServer(config: {
             );
           }
           // Close and recreate server for retry
-          server.close();
-          server = createServer(tlsOptions, (req, res) => {
-            handleRequest(req, res).catch((innerErr) => {
-              logger.error('request_error', {
-                error: innerErr instanceof Error ? innerErr.message : String(innerErr),
-              });
-              if (!res.headersSent) {
-                sendJson(res, 500, { error: 'Internal server error' });
-              }
-            });
-          });
+          await new Promise<void>((r) => server!.close(() => r()));
+          server = createServer(tlsOptions, requestHandler);
         }
       }
 

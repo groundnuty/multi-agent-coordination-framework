@@ -6,10 +6,10 @@
 import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { request } from 'node:https';
-import { createHttpsServer } from '../src/https.js';
-import { createHealthState } from '../src/health.js';
-import { createLogger } from '../src/logger.js';
-import type { NotifyPayload, HttpsServer } from '../src/types.js';
+import { createHttpsServer } from '../../src/https.js';
+import { createHealthState } from '../../src/health.js';
+import { createLogger } from '../../src/logger.js';
+import type { NotifyPayload, HttpsServer } from '../../src/types.js';
 import { generateTestCerts, cleanupTestCerts, type TestCerts } from './fixtures/gen-certs.js';
 
 let certs: TestCerts;

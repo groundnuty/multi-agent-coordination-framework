@@ -2,8 +2,8 @@ import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { request } from 'node:https';
 import { createServer as createNetServer } from 'node:net';
-import { createHttpsServer } from '../src/https.js';
-import type { HealthResponse, Logger } from '../src/types.js';
+import { createHttpsServer } from '../../src/https.js';
+import type { HealthResponse, Logger } from '../../src/types.js';
 import { generateTestCerts, cleanupTestCerts, type TestCerts } from './fixtures/gen-certs.js';
 
 let certs: TestCerts;
@@ -309,7 +309,7 @@ describe('createHttpsServer', () => {
   });
 
   it('fails immediately when explicit port is busy', async () => {
-    const { PortUnavailableError } = await import('../src/errors.js');
+    const { PortUnavailableError } = await import('../../src/errors.js');
 
     // Start first server on explicit port
     const server1 = createHttpsServer({
