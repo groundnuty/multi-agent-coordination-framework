@@ -3,7 +3,10 @@ import { mkdirSync, writeFileSync, readFileSync, existsSync, appendFileSync } fr
 import { join, resolve } from 'node:path';
 import {
   projectMacfDir, writeAgentConfig, addToAgentsIndex,
+  agentCertPath, agentKeyPath, MACF_GLOBAL_DIR, CA_KEY_PATH,
 } from '../config.js';
+import { loadCA } from '../../certs/ca.js';
+import { generateAgentCert } from '../../certs/agent-cert.js';
 import type { MacfAgentConfig } from '../config.js';
 
 export interface InitOptions {
@@ -23,7 +26,7 @@ export interface InitOptions {
 /**
  * Set up a project directory for an agent.
  */
-export function initAgent(projectDir: string, opts: InitOptions): void {
+export async function initAgent(projectDir: string, opts: InitOptions): Promise<void> {
   const absDir = resolve(projectDir);
   const macfDir = projectMacfDir(absDir);
   const agentName = opts.name ?? opts.role;
@@ -87,13 +90,34 @@ export function initAgent(projectDir: string, opts: InitOptions): void {
   // Register in global index
   addToAgentsIndex(absDir);
 
-  console.log(`Agent "${agentName}" initialized in ${absDir}`);
-  console.log(`  Config: ${join(macfDir, 'macf-agent.json')}`);
-  console.log(`  Launcher: ${claudeShPath}`);
-  console.log(`\nNext steps:`);
-  console.log(`  1. Place your GitHub App key at: ${opts.keyPath}`);
-  console.log(`  2. Run: macf certs init  (to create CA, if first agent)`);
-  console.log(`  3. Run: ./claude.sh  (to start the agent)`);
+  // Generate agent cert if CA key is available locally
+  const caCertFile = join(MACF_GLOBAL_DIR, 'ca-cert.pem');
+  if (existsSync(caCertFile) && existsSync(CA_KEY_PATH)) {
+    try {
+      const ca = loadCA(caCertFile, CA_KEY_PATH);
+      await generateAgentCert({
+        agentName,
+        caCertPem: ca.certPem,
+        caKeyPem: ca.keyPem,
+        certPath: agentCertPath(absDir),
+        keyPath: agentKeyPath(absDir),
+      });
+      console.log(`Agent "${agentName}" initialized in ${absDir}`);
+      console.log(`  Config: ${join(macfDir, 'macf-agent.json')}`);
+      console.log(`  Cert:   ${agentCertPath(absDir)}`);
+      console.log(`  Launcher: ${claudeShPath}`);
+    } catch (err) {
+      console.warn(`  Warning: cert generation failed: ${err instanceof Error ? err.message : String(err)}`);
+      console.log(`Agent "${agentName}" initialized in ${absDir} (no cert — run macf certs rotate)`);
+    }
+  } else {
+    console.log(`Agent "${agentName}" initialized in ${absDir}`);
+    console.log(`  Config: ${join(macfDir, 'macf-agent.json')}`);
+    console.log(`  Launcher: ${claudeShPath}`);
+    console.log(`\n  No CA found locally. To generate agent cert:`);
+    console.log(`    macf certs init     (if first agent — creates CA)`);
+    console.log(`    macf certs rotate   (if CA already exists)`);
+  }
 }
 
 function generateClaudeSh(config: MacfAgentConfig): string {

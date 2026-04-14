@@ -7,7 +7,7 @@ import {
 } from '../config.js';
 import { createCA, backupCAKey, recoverCAKey, loadCA } from '../../certs/ca.js';
 import { generateAgentCert } from '../../certs/agent-cert.js';
-import { createGitHubClient } from '../../registry/github-client.js';
+import { createClientFromConfig } from '../registry-helper.js';
 import { generateToken } from '../../token.js';
 
 function promptPassphrase(message: string): Promise<string> {
@@ -22,14 +22,7 @@ function promptPassphrase(message: string): Promise<string> {
 
 function getVariablesClient(config: ReturnType<typeof readAgentConfig>, token: string) {
   if (!config) throw new Error('No macf-agent.json found. Run `macf init` first.');
-
-  let pathPrefix: string;
-  switch (config.registry.type) {
-    case 'org': pathPrefix = `/orgs/${config.registry.org}`; break;
-    case 'profile': pathPrefix = `/repos/${config.registry.user}/${config.registry.user}`; break;
-    case 'repo': pathPrefix = `/repos/${config.registry.owner}/${config.registry.repo}`; break;
-  }
-  return createGitHubClient(pathPrefix, token);
+  return createClientFromConfig(config.registry, token);
 }
 
 /**

@@ -1,6 +1,7 @@
 import { request } from 'node:https';
 import { readFileSync, existsSync } from 'node:fs';
 import { loadAllAgents, agentCertPath, agentKeyPath } from '../config.js';
+import { createClientFromConfig } from '../registry-helper.js';
 import { createRegistryFromConfig } from '../../registry/factory.js';
 import { generateToken } from '../../token.js';
 import type { HealthResponse } from '../../types.js';
@@ -72,15 +73,7 @@ export async function showStatus(): Promise<void> {
   const registry = createRegistryFromConfig(first.config.registry, first.config.project, token);
 
   // Get CA cert from registry for mTLS pings (raw PEM, not via Registry which wraps as AgentInfo)
-
-  const { createGitHubClient } = await import('../../registry/github-client.js');
-  let signPathPrefix: string;
-  switch (first.config.registry.type) {
-    case 'org': signPathPrefix = `/orgs/${first.config.registry.org}`; break;
-    case 'profile': signPathPrefix = `/repos/${first.config.registry.user}/${first.config.registry.user}`; break;
-    case 'repo': signPathPrefix = `/repos/${first.config.registry.owner}/${first.config.registry.repo}`; break;
-  }
-  const client = createGitHubClient(signPathPrefix, token);
+  const client = createClientFromConfig(first.config.registry, token);
   const caCertPem = await client.readVariable(`${first.config.project.toUpperCase()}_CA_CERT`);
 
   if (!caCertPem) {

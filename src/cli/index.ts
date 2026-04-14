@@ -33,8 +33,8 @@ program
   .option('--registry-org <org>', 'Org name (for org registry)')
   .option('--registry-user <user>', 'User name (for profile registry)')
   .option('--registry-repo <repo>', 'owner/repo (for repo registry)')
-  .action((opts) => {
-    initAgent(process.cwd(), {
+  .action(async (opts) => {
+    await initAgent(process.cwd(), {
       project: opts.project,
       role: opts.role,
       name: opts.name,

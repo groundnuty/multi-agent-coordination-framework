@@ -17,8 +17,8 @@ describe('macf init', () => {
   beforeEach(() => { dir = tempDir(); });
   afterEach(() => { rmSync(dir, { recursive: true, force: true }); });
 
-  it('creates .macf directory structure', () => {
-    initAgent(dir, {
+  it('creates .macf directory structure', async () => {
+    await initAgent(dir, {
       project: 'TEST',
       role: 'code-agent',
       appId: '123',
@@ -34,8 +34,8 @@ describe('macf init', () => {
     expect(existsSync(join(dir, '.macf', 'plugin'))).toBe(true);
   });
 
-  it('writes macf-agent.json with correct content', () => {
-    initAgent(dir, {
+  it('writes macf-agent.json with correct content', async () => {
+    await initAgent(dir, {
       project: 'MACF',
       role: 'science-agent',
       name: 'my-agent',
@@ -54,8 +54,8 @@ describe('macf init', () => {
     expect(config!.registry).toEqual({ type: 'org', org: 'my-org' });
   });
 
-  it('defaults agent name to role', () => {
-    initAgent(dir, {
+  it('defaults agent name to role', async () => {
+    await initAgent(dir, {
       project: 'P',
       role: 'code-agent',
       appId: '1',
@@ -69,8 +69,8 @@ describe('macf init', () => {
     expect(config!.agent_name).toBe('code-agent');
   });
 
-  it('generates claude.sh', () => {
-    initAgent(dir, {
+  it('generates claude.sh', async () => {
+    await initAgent(dir, {
       project: 'TEST',
       role: 'agent',
       appId: '1',
@@ -87,8 +87,8 @@ describe('macf init', () => {
     expect(content).toContain('exec claude');
   });
 
-  it('adds .macf/ to .gitignore', () => {
-    initAgent(dir, {
+  it('adds .macf/ to .gitignore', async () => {
+    await initAgent(dir, {
       project: 'T',
       role: 'a',
       appId: '1',
@@ -102,11 +102,11 @@ describe('macf init', () => {
     expect(gitignore).toContain('.macf/');
   });
 
-  it('does not duplicate .macf/ in existing .gitignore', () => {
+  it('does not duplicate .macf/ in existing .gitignore', async () => {
     const { writeFileSync } = require('node:fs');
     writeFileSync(join(dir, '.gitignore'), '.macf/\nnode_modules/\n');
 
-    initAgent(dir, {
+    await initAgent(dir, {
       project: 'T',
       role: 'a',
       appId: '1',
@@ -121,8 +121,8 @@ describe('macf init', () => {
     expect(matches).toHaveLength(1);
   });
 
-  it('throws on missing required registry options', () => {
-    expect(() => initAgent(dir, {
+  it('rejects missing required registry options', async () => {
+    await expect(initAgent(dir, {
       project: 'T',
       role: 'a',
       appId: '1',
@@ -130,11 +130,11 @@ describe('macf init', () => {
       keyPath: 'k',
       registryType: 'org',
       // missing registryOrg
-    })).toThrow('--registry-org');
+    })).rejects.toThrow('--registry-org');
   });
 
-  it('supports profile registry type', () => {
-    initAgent(dir, {
+  it('supports profile registry type', async () => {
+    await initAgent(dir, {
       project: 'T',
       role: 'a',
       appId: '1',
