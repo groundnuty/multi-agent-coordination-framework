@@ -53,6 +53,9 @@ jobs:
           oauth-secret: ${{ secrets.TS_OAUTH_SECRET }}
           tags: tag:ci-runner
 
+      - name: Wait for Tailscale network
+        run: sleep 5
+
       - name: Route to agent by label
         env:
           ISSUE_NUMBER: ${{ github.event.issue.number }}
@@ -82,7 +85,7 @@ jobs:
           echo "$AGENT_SSH_KEY" > ~/.ssh/id_agent
           chmod 600 ~/.ssh/id_agent
 
-          if ssh -o ConnectTimeout=10 -o StrictHostKeyChecking=accept-new \
+          if ssh -o ConnectTimeout=30 -o StrictHostKeyChecking=accept-new \
             -i ~/.ssh/id_agent "${SSH_USER}@${HOST}" \
             "${TMUX_BIN} has-session -t ${SESSION} 2>/dev/null" \
             && ssh -o StrictHostKeyChecking=accept-new \
@@ -118,6 +121,9 @@ jobs:
           oauth-client-id: ${{ secrets.TS_OAUTH_CLIENT_ID }}
           oauth-secret: ${{ secrets.TS_OAUTH_SECRET }}
           tags: tag:ci-runner
+
+      - name: Wait for Tailscale network
+        run: sleep 5
 
       - name: Route to mentioned agents
         env:
@@ -177,7 +183,7 @@ jobs:
               echo "$AGENT_SSH_KEY" > ~/.ssh/id_agent
               chmod 600 ~/.ssh/id_agent
 
-              if ssh -o ConnectTimeout=10 -o StrictHostKeyChecking=accept-new \
+              if ssh -o ConnectTimeout=30 -o StrictHostKeyChecking=accept-new \
                 -i ~/.ssh/id_agent "${SSH_USER}@${HOST}" \
                 "${TMUX_BIN} has-session -t ${SESSION} 2>/dev/null" \
                 && ssh -o StrictHostKeyChecking=accept-new \
