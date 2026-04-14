@@ -2,7 +2,7 @@ name: Agent Router
 
 on:
   issues:
-    types: [labeled]
+    types: [labeled, closed]
   issue_comment:
     types: [created]
   pull_request:
@@ -193,3 +193,21 @@ jobs:
               fi
             fi
           done
+
+  # ─── LABEL CLEANUP ON CLOSE ───
+  cleanup-labels:
+    if: >
+      (github.event_name == 'issues') &&
+      (github.event.action == 'closed')
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - name: Remove status labels
+        env:
+          ISSUE_NUMBER: ${{ github.event.issue.number }}
+        run: |
+          for LABEL in in-progress in-review blocked; do
+            gh issue edit "$ISSUE_NUMBER" --repo "$GITHUB_REPOSITORY" --remove-label "$LABEL" 2>/dev/null || true
+          done
+          echo "Cleaned status labels from issue #${ISSUE_NUMBER}"
