@@ -88,6 +88,10 @@ After posting, **immediately check for more work:**
 
     GH_TOKEN=$GH_TOKEN gh issue list --repo groundnuty/macf --label "code-agent" --state open --json number,title
 
+**If other issues are assigned to you, pick up the next one immediately.** Do NOT ask the reporter to ping you or reply with "continue" — work through your queue without prompting. The only time you wait is: (a) after PR creation (waiting for review) or (b) after the queue is empty.
+
+If an issue is ambiguous or has a blocker, ask clarifying questions on that specific issue and move on to the next queued one while waiting.
+
 ## Communicating with Other Agents
 
 All discussion happens in **issue comments**, not PR comments. Issue threads are visible on the Projects board and persist after PRs are merged or closed.

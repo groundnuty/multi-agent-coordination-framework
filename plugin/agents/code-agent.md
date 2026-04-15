@@ -55,7 +55,22 @@ Only merge when you receive a routed LGTM:
     GH_TOKEN=$GH_TOKEN gh pr merge <PR_NUMBER> --repo <owner>/<repo> --squash --delete-branch && \
     git checkout main && git pull origin main
 
-After merging, **immediately check for more work.**
+## After Merging — Hand Back to Reporter
+
+Post a comment on the original issue confirming merge, then stop:
+
+    export GH_TOKEN=$(gh token generate --app-id $APP_ID --installation-id $INSTALL_ID --key $KEY_PATH | jq -r '.token') && \
+    GH_TOKEN=$GH_TOKEN gh issue comment <N> --repo <owner>/<repo> --body "@<reporter> PR #<M> merged. Ready for you to close the issue when verified."
+
+**Do NOT close the issue yourself.** The reporter opened it and owns its lifecycle. They may want to verify work, follow up, or file related issues before closing.
+
+After posting, **immediately check for more work:**
+
+    GH_TOKEN=$GH_TOKEN gh issue list --repo <owner>/<repo> --label "code-agent" --state open --json number,title
+
+**If other issues are assigned to you, pick up the next one immediately.** Do NOT ask the reporter to ping you or reply with "continue" — work through your queue without prompting. The only time you wait is: (a) after PR creation (waiting for review) or (b) after the queue is empty.
+
+If an issue is ambiguous or has a blocker, ask clarifying questions on that specific issue and move on to the next queued one while waiting.
 
 ## Communication
 

@@ -86,6 +86,7 @@ Encoded into all agent templates:
 7. **No "Starting work" comment** — the `in-progress` label signals this
 8. **Concise comments** — 1-3 sentences unless detail needed
 9. **Issue-lifecycle ownership belongs to the reporter** — the one who opened the issue is the only one who closes it. After merging a PR, the implementer posts a @mention comment ("PR merged, ready for you to close when verified") and stops. Never auto-close the reporter's issue. Reason: without this, nothing notifies the reporter that work is done (merge events don't currently trigger the routing Action), and the reporter may want to verify before closing.
+10. **Work through the queue without prompting** — when an issue is complete, check the label queue and pick up the next issue immediately. Do NOT ask the reporter to ping you or reply "continue" before starting the next one. Only wait when (a) your PR is in review, or (b) the queue is empty. Reason: self-evident queue progress, no wasted coordination. If an issue is ambiguous, ask clarifying questions on that issue and move to the next queued one while waiting.
 
 ## Tests
 
