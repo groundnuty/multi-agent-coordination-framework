@@ -85,6 +85,7 @@ Encoded into all agent templates:
 6. **Return to main after merge** — clean state for next task
 7. **No "Starting work" comment** — the `in-progress` label signals this
 8. **Concise comments** — 1-3 sentences unless detail needed
+9. **Issue-lifecycle ownership belongs to the reporter** — the one who opened the issue is the only one who closes it. After merging a PR, the implementer posts a @mention comment ("PR merged, ready for you to close when verified") and stops. Never auto-close the reporter's issue. Reason: without this, nothing notifies the reporter that work is done (merge events don't currently trigger the routing Action), and the reporter may want to verify before closing.
 
 ## Tests
 

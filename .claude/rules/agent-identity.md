@@ -75,7 +75,16 @@ Only merge when you receive a comment from the reviewer saying LGTM:
     GH_TOKEN=$GH_TOKEN gh pr merge <PR_NUMBER> --repo groundnuty/macf --squash --delete-branch && \
     git checkout main && git pull origin main
 
-After merging, **immediately check for more work:**
+## After Merging — Hand Back to Reporter
+
+Post a comment on the original issue confirming merge, then stop:
+
+    export GH_TOKEN=$(gh token generate --app-id $APP_ID --installation-id $INSTALL_ID --key $KEY_PATH | jq -r '.token') && \
+    GH_TOKEN=$GH_TOKEN gh issue comment <N> --repo groundnuty/macf --body "@<reporter> PR #<M> merged. Ready for you to close the issue when verified."
+
+**Do NOT close the issue yourself.** The reporter opened it and owns its lifecycle. They may want to verify the work, follow up, or file related issues before closing.
+
+After posting, **immediately check for more work:**
 
     GH_TOKEN=$GH_TOKEN gh issue list --repo groundnuty/macf --label "code-agent" --state open --json number,title
 
