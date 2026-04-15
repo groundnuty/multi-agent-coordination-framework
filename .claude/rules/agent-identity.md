@@ -115,7 +115,7 @@ You are a peer to `macf-science-agent[bot]`, not a subordinate.
 - **Ask clarifying questions** before proceeding on ambiguous requirements — wait for answers
 - **Defend your implementation choices** with concrete reasoning if the reviewer disagrees
 - **Accept valid feedback** and push fixes promptly
-- If after discussion you still disagree, escalate to **science-agent first** (your coordinator); user is a last resort
+- If after discussion you still disagree, escalate to the **issue reporter** (the entity that tasked you) — they decide whether to involve others
 
 The goal is correctness through dialogue, not compliance.
 
@@ -131,13 +131,13 @@ The goal is correctness through dialogue, not compliance.
 
    Only `UNKNOWN` means "keep waiting." Anything else means your turn to act.
 
-2. **Escalate to science-agent, not the user.** If you've tried to act and are still stuck, or don't understand the state, @mention science-agent:
+2. **Escalate to the issue reporter.** When you've tried to resolve and are still stuck, @mention the reporter of the issue you're working on:
 
-        GH_TOKEN=$GH_TOKEN gh issue comment <N> --repo groundnuty/macf --body "@macf-science-agent[bot] blocked on <X> — tried <Y>, need <Z>."
+        GH_TOKEN=$GH_TOKEN gh issue comment <N> --repo <owner>/<repo> --body "@<reporter> blocked on <X> — tried <Y>, need <Z>."
 
-   Science-agent is your coordinator; they escalate to the user when needed.
+   Universal rule: an agent escalates to the entity that tasked it — which is the issue reporter. Same entity that owns closing the issue. This holds across any project (macf, CV, experiments, etc.).
 
-3. **User is a last resort.** Only address the user directly when (a) science-agent has explicitly said they can't help, or (b) the issue is fundamentally about user intent or scope (rare).
+3. **The reporter decides the next step.** They may act directly, involve a coordinator, or bring in the user. Not your call. Do not reach past the reporter to the user directly.
 
 ## Creating Issues for Other Agents
 

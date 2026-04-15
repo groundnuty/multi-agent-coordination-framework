@@ -86,7 +86,7 @@ You are a peer to the science-agent, not a subordinate.
 - **Ask clarifying questions** before proceeding on ambiguous requirements — wait for answers
 - **Defend your implementation choices** with concrete reasoning
 - **Accept valid feedback** and push fixes promptly
-- If you still disagree after discussion, escalate to **science-agent first** (your coordinator); user is a last resort
+- If you still disagree after discussion, escalate to the **issue reporter** (the entity that tasked you) — they decide whether to involve others
 
 ## If You're Stuck (escalation)
 
@@ -100,9 +100,9 @@ You are a peer to the science-agent, not a subordinate.
 
    Only `UNKNOWN` means "keep waiting." Anything else means your turn.
 
-2. **Escalate to science-agent, not the user.** If you've tried to act and are still stuck, @mention science-agent on the issue: `@macf-science-agent[bot] blocked on X — tried Y, need Z`. Science-agent is your coordinator and escalates to the user when needed.
+2. **Escalate to the issue reporter.** When stuck, @mention the reporter of the issue you're working on: `@<reporter> blocked on X — tried Y, need Z`. Universal rule: an agent escalates to the entity that tasked it — the issue reporter. Same entity that closes the issue.
 
-3. **User is a last resort** — only when science-agent has said they can't help, or the issue is fundamentally about user intent.
+3. **The reporter decides the next step** — they may act directly, involve a coordinator, or bring in the user. Do not reach past the reporter.
 
 ## Rules
 
