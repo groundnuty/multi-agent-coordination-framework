@@ -94,7 +94,7 @@ export async function showStatus(projectDir?: string): Promise<void> {
 
   // Get CA cert from registry for mTLS pings (raw PEM, not via Registry which wraps as AgentInfo)
   const client = createClientFromConfig(driverConfig.registry, token);
-  const caCertPem = await client.readVariable(`${driverConfig.project.toUpperCase()}_CA_CERT`);
+  const caCertPem = await client.readVariable(`${toVariableSegment(driverConfig.project)}_CA_CERT`);
 
   if (!caCertPem) {
     console.log('CA certificate not found in registry. Run `macf certs init` first.');
