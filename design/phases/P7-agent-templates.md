@@ -75,20 +75,30 @@ Worker agents use the permanent agent templates but with `agent_type: worker` in
 
 ## Key Patterns from CPC (Tribal Knowledge)
 
-Encoded into all agent templates:
+The cross-cutting patterns listed here apply to every agent. They are **not** duplicated into each agent template. The authoritative source is:
 
-1. **Token refresh in command blocks** — not as a separate instruction (agents ignore separate instructions ~20% of the time)
-2. **Turn-based workflow** — agent's turn ends after PR creation, merge only on routed LGTM
-3. **Discussion in issues, not PRs** — all comments go in the issue thread
-4. **@mention in every comment** — routing depends on it
-5. **Pull latest main before branching** — ensures latest rules
-6. **Return to main after merge** — clean state for next task
-7. **No "Starting work" comment** — the `in-progress` label signals this
-8. **Concise comments** — 1-3 sentences unless detail needed
-9. **Issue-lifecycle ownership belongs to the reporter** — the one who opened the issue is the only one who closes it. After merging a PR, the implementer posts a @mention comment ("PR merged, ready for you to close when verified") and stops. Never auto-close the reporter's issue. Reason: without this, nothing notifies the reporter that work is done (merge events don't currently trigger the routing Action), and the reporter may want to verify before closing.
-10. **Work through the queue without prompting** — when an issue is complete, check the label queue and pick up the next issue immediately. Do NOT ask the reporter to ping you or reply "continue" before starting the next one. Only wait when (a) your PR is in review, or (b) the queue is empty. Reason: self-evident queue progress, no wasted coordination. If an issue is ambiguous, ask clarifying questions on that issue and move to the next queued one while waiting.
-11. **Treat definitive GitHub states as action signals, not wait signals.** When waiting for a PR to merge, poll `mergeStateStatus` via `gh pr view`. Only `UNKNOWN` means "keep waiting." `DIRTY`/`CONFLICTING` → rebase & resolve conflicts. `BEHIND` → rebase & force-push. `BLOCKED`/`UNSTABLE` → check reviews / required checks and fix. Reason: code-agent got stuck polling `UNKNOWN→DIRTY` transitions and didn't recognize DIRTY as an action signal. (#49 PR #51, 2026-04-15.)
-12. **Escalate to the issue reporter.** Universal rule: an agent escalates to the entity that tasked it — which is the issue reporter (same entity that closes the issue per rule 9). When stuck, @mention the reporter, not the user directly. The reporter decides the next step — act themselves, involve a coordinator, or escalate to user. Example topologies: macf (code-agent → science-agent → user), CV (cv-agents → user directly). Rule stays the same; chain flows from who opened the issue.
+**`plugin/rules/coordination.md`** — shipped with the CLI package and distributed to each workspace's `.claude/rules/coordination.md` by `macf init` / `macf update` (see issue #52).
+
+Patterns covered there:
+
+1. Token refresh in command blocks (not a separate instruction — agents ignore those ~20% of the time)
+2. Turn-based workflow — agent's turn ends after PR creation, merge only on routed LGTM
+3. Discussion in issues, not PRs
+4. @mention in every comment — routing depends on it
+5. Pull latest main before branching
+6. Return to main after merge
+7. No "Starting work" comment — the `in-progress` label signals this
+8. Concise comments (1-3 sentences unless detail is needed)
+9. Reporter owns the issue — implementer never closes, posts handoff comment after merge
+10. Work through the queue without prompting
+11. Definitive GitHub states are action signals, not wait signals (mergeStateStatus interpretation)
+12. Escalate to the issue reporter (universal: whoever tasked you)
+
+Agent-specific content (code-agent's TDD+`make check`, science-agent's "now-or-backlog?" prompt, writing-agent's commit-per-change, exp-*'s experimental constraints) stays in each agent's template file.
+
+### Experimental variant note
+
+The `exp-*` agent templates intentionally **override** some of these universal patterns (e.g. `exp-code-agent` does NOT work through the queue — it stops after one task; `exp-single-agent` does not use @mentions because there is no peer). They keep their own inline rules to make the experimental constraints prominent and to prevent coordination.md from silently changing their behavior. This is deliberate drift for experimental control.
 
 ## Tests
 

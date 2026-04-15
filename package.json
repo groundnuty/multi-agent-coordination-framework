@@ -8,6 +8,10 @@
   "bin": {
     "macf": "dist/cli/index.js"
   },
+  "files": [
+    "dist/",
+    "plugin/rules/"
+  ],
   "engines": {
     "node": ">=22"
   },
