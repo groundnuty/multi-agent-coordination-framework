@@ -43,6 +43,22 @@ export function caKeyPath(project: string): string {
 }
 
 /**
+ * Extract TokenSource-compatible credentials from a loaded config.
+ * Resolves the relative key_path against the project directory so it's
+ * absolute when passed to `gh token generate`.
+ */
+export function tokenSourceFromConfig(
+  projectDir: string,
+  config: Pick<MacfAgentConfig, 'github_app'>,
+): { readonly appId: string; readonly installId: string; readonly keyPath: string } {
+  return {
+    appId: config.github_app.app_id,
+    installId: config.github_app.install_id,
+    keyPath: resolve(projectDir, config.github_app.key_path),
+  };
+}
+
+/**
  * Walk up from startDir looking for .macf/macf-agent.json.
  * Returns the project root (the dir CONTAINING .macf/), or null if not found.
  *

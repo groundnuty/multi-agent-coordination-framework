@@ -3,6 +3,7 @@ import { createInterface } from 'node:readline';
 import {
   readAgentConfig, agentCertPath, agentKeyPath,
   caCertPath as caCertPathFor, caKeyPath as caKeyPathFor, caDir,
+  tokenSourceFromConfig,
 } from '../config.js';
 import { createCA, backupCAKey, recoverCAKey, loadCA } from '../../certs/ca.js';
 import { generateAgentCert } from '../../certs/agent-cert.js';
@@ -35,7 +36,7 @@ export async function certsInit(projectDir: string): Promise<void> {
     return;
   }
 
-  const token = await generateToken();
+  const token = await generateToken(tokenSourceFromConfig(projectDir, config));
   const client = getVariablesClient(config, token);
 
   // Per-project CA paths. mkdir with 0o700 — CA key is the most sensitive secret.
@@ -86,7 +87,7 @@ export async function certsRecover(projectDir: string): Promise<void> {
     return;
   }
 
-  const token = await generateToken();
+  const token = await generateToken(tokenSourceFromConfig(projectDir, config));
   const client = getVariablesClient(config, token);
 
   const passphrase = await promptPassphrase('Enter passphrase for CA key recovery: ');
