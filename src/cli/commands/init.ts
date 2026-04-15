@@ -9,6 +9,7 @@ import {
 import { loadCA } from '../../certs/ca.js';
 import { generateAgentCert } from '../../certs/agent-cert.js';
 import { copyCanonicalRules, copyCanonicalScripts } from '../rules.js';
+import { fetchPluginToWorkspace } from '../plugin-fetcher.js';
 import {
   resolveLatestVersions, isValidSemver, isValidActionsRef,
   FALLBACK_VERSIONS, statusMessage,
@@ -178,6 +179,20 @@ export async function initAgent(projectDir: string, opts: InitOptions): Promise<
     console.log(`  Scripts: copied ${copiedScripts.length} helper script(s) to .claude/scripts/`);
   }
 
+  // Fetch the macf-agent plugin at the pinned version and place it at
+  // .macf/plugin/ so claude.sh can use --plugin-dir (per DR-013).
+  // Network failures here don't abort init — the workspace is usable
+  // without the plugin (degrades to rules-only mode), and the user can
+  // re-try with `macf update` once connectivity is back.
+  try {
+    fetchPluginToWorkspace(absDir, versions.plugin);
+    console.log(`  Plugin: fetched macf-agent@v${versions.plugin} to .macf/plugin/`);
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.warn(`  Warning: plugin fetch failed: ${msg}`);
+    console.warn(`  You can retry later with \`macf update\` once the issue is resolved.`);
+  }
+
   // Generate agent cert if CA key is available locally (per-project)
   const caCertFile = caCertPathFor(opts.project);
   const caKeyFile = caKeyPathFor(opts.project);
@@ -239,7 +254,9 @@ function generateClaudeSh(config: MacfAgentConfig): string {
     `export GIT_COMMITTER_NAME="${config.agent_name}[bot]"`,
     '',
     `echo "Starting ${config.agent_name} (${config.agent_role})..."`,
-    'exec claude "$@"',
+    // --plugin-dir loads the pinned macf-agent plugin from this workspace
+    // (per DR-013). Additive — user-scope plugins still load alongside.
+    'exec claude --plugin-dir "$SCRIPT_DIR/.macf/plugin" "$@"',
     '',
   ].join('\n');
 }
