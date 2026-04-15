@@ -9,6 +9,7 @@ import { generateAgentCert } from '../../certs/agent-cert.js';
 import { createClientFromConfig } from '../registry-helper.js';
 import { generateToken } from '../../token.js';
 import { promptPassword, PromptCancelled } from '../prompt.js';
+import { toVariableSegment } from '../../registry/variable-name.js';
 
 async function promptPassphrase(message: string): Promise<string> {
   try {
@@ -58,7 +59,7 @@ export async function certsInit(projectDir: string): Promise<void> {
 
   console.log(`  CA cert: ${caCertP}`);
   console.log(`  CA key:  ${caKeyP}`);
-  console.log(`  CA cert uploaded to registry as ${config.project.toUpperCase()}_CA_CERT`);
+  console.log(`  CA cert uploaded to registry as ${toVariableSegment(config.project)}_CA_CERT`);
 
   // Encrypted backup
   const passphrase = await promptPassphrase('Enter passphrase for CA key backup: ');
@@ -74,7 +75,7 @@ export async function certsInit(projectDir: string): Promise<void> {
     client,
   });
 
-  console.log(`  Encrypted CA key backed up to registry as ${config.project.toUpperCase()}_CA_KEY_ENCRYPTED`);
+  console.log(`  Encrypted CA key backed up to registry as ${toVariableSegment(config.project)}_CA_KEY_ENCRYPTED`);
   console.log('\nCA initialization complete.');
 }
 
