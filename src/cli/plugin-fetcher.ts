@@ -28,8 +28,6 @@ export interface FetchPluginOptions {
   readonly marketplaceUrl?: string;
   /** Override the subdir inside the marketplace repo (for testing). */
   readonly pluginSubdir?: string;
-  /** If true, throw on fetch failure. If false, throw with a helpful message. Default: true. */
-  readonly throwOnError?: boolean;
 }
 
 /**
