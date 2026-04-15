@@ -6,9 +6,11 @@
  * version pins, this command is the canonical bumper.
  */
 import { createInterface } from 'node:readline';
+import { existsSync } from 'node:fs';
 import { readAgentConfig, writeAgentConfig } from '../config.js';
 import { resolveLatestVersions } from '../version-resolver.js';
 import { copyCanonicalRules, copyCanonicalScripts } from '../rules.js';
+import { fetchPluginToWorkspace, workspacePluginDir } from '../plugin-fetcher.js';
 import type { VersionPins } from '../config.js';
 import type { ResolvedVersions } from '../version-resolver.js';
 
@@ -197,6 +199,24 @@ export async function update(
   }
 
   writeAgentConfig(projectDir, { ...config, versions: newVersions });
+
+  // Re-fetch the plugin if versions.plugin was bumped OR the plugin dir
+  // is missing (repair case: user bumped pin earlier but fetch failed,
+  // or workspace was cloned without .macf/plugin/). Unlike rules/scripts,
+  // plugin fetch is a network clone — we don't want to do it on every
+  // `macf update` unconditionally, only when the pin actually changed
+  // (or needs to).
+  const pluginBumped = toBump.some(r => r.component === 'plugin');
+  const pluginMissing = !existsSync(workspacePluginDir(projectDir));
+  if (pluginBumped || pluginMissing) {
+    try {
+      fetchPluginToWorkspace(projectDir, newVersions.plugin);
+      console.log(`Refreshed .macf/plugin/ to macf-agent@v${newVersions.plugin}`);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.warn(`Warning: plugin re-fetch failed: ${msg}`);
+    }
+  }
 
   console.log('\nUpdated:');
   for (const row of toBump) {
