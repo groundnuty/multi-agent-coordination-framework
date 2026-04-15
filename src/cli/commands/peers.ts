@@ -1,4 +1,4 @@
-import { loadAllAgents, readAgentConfig } from '../config.js';
+import { loadAllAgents, readAgentConfig, tokenSourceFromConfig } from '../config.js';
 import { createRegistryFromConfig } from '../../registry/factory.js';
 import { generateToken } from '../../token.js';
 
@@ -9,9 +9,8 @@ import { generateToken } from '../../token.js';
  * Otherwise uses the first agent from the global index.
  */
 export async function listPeers(projectDir?: string): Promise<void> {
-  const token = await generateToken();
-
   let driverConfig;
+  let driverPath: string;
   if (projectDir) {
     const c = readAgentConfig(projectDir);
     if (!c) {
@@ -19,6 +18,7 @@ export async function listPeers(projectDir?: string): Promise<void> {
       return;
     }
     driverConfig = c;
+    driverPath = projectDir;
   } else {
     const agents = loadAllAgents();
     if (agents.length === 0) {
@@ -26,8 +26,10 @@ export async function listPeers(projectDir?: string): Promise<void> {
       return;
     }
     driverConfig = agents[0]!.config;
+    driverPath = agents[0]!.path;
   }
 
+  const token = await generateToken(tokenSourceFromConfig(driverPath, driverConfig));
   const registry = createRegistryFromConfig(driverConfig.registry, driverConfig.project, token);
 
   const peers = await registry.list('');

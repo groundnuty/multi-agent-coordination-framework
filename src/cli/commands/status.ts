@@ -1,6 +1,6 @@
 import { request } from 'node:https';
 import { readFileSync, existsSync } from 'node:fs';
-import { loadAllAgents, readAgentConfig, agentCertPath, agentKeyPath } from '../config.js';
+import { loadAllAgents, readAgentConfig, agentCertPath, agentKeyPath, tokenSourceFromConfig } from '../config.js';
 import { createClientFromConfig } from '../registry-helper.js';
 import { createRegistryFromConfig } from '../../registry/factory.js';
 import { generateToken } from '../../token.js';
@@ -66,10 +66,10 @@ function formatUptime(seconds: number): string {
  */
 export async function showStatus(projectDir?: string): Promise<void> {
   const agents = loadAllAgents();
-  const token = await generateToken();
 
-  // Pick the config that drives registry access.
+  // Pick the config + path that drives registry access and token generation.
   let driverConfig;
+  let driverPath: string;
   if (projectDir) {
     const c = readAgentConfig(projectDir);
     if (!c) {
@@ -77,13 +77,17 @@ export async function showStatus(projectDir?: string): Promise<void> {
       return;
     }
     driverConfig = c;
+    driverPath = projectDir;
   } else {
     if (agents.length === 0) {
       console.log('No agents configured. Run `macf init` first.');
       return;
     }
     driverConfig = agents[0]!.config;
+    driverPath = agents[0]!.path;
   }
+
+  const token = await generateToken(tokenSourceFromConfig(driverPath, driverConfig));
 
   const registry = createRegistryFromConfig(driverConfig.registry, driverConfig.project, token);
 
