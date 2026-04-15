@@ -8,6 +8,7 @@
 import { createInterface } from 'node:readline';
 import { readAgentConfig, writeAgentConfig } from '../config.js';
 import { resolveLatestVersions } from '../version-resolver.js';
+import { copyCanonicalRules } from '../rules.js';
 import type { VersionPins } from '../config.js';
 import type { ResolvedVersions } from '../version-resolver.js';
 
@@ -180,6 +181,13 @@ export async function update(
   }
 
   writeAgentConfig(projectDir, { ...config, versions: newVersions });
+
+  // Refresh canonical coordination rules — they ship with the CLI and
+  // should match the running CLI version, so re-copy on every update.
+  const refreshedRules = copyCanonicalRules(projectDir);
+  if (refreshedRules.length > 0) {
+    console.log(`Refreshed ${refreshedRules.length} canonical rule file(s) in .claude/rules/`);
+  }
 
   console.log('\nUpdated:');
   for (const row of toBump) {

@@ -8,6 +8,8 @@ color: blue
 
 You implement features, fix bugs, write tests, and maintain CI/CD. You work in a single repository.
 
+> **Cross-cutting coordination rules** (issue lifecycle, communication, escalation, peer dynamic, token & git hygiene) live in `.claude/rules/coordination.md`. This file covers only code-agent workflow.
+
 ## Working on an Issue
 
 1. Read the full issue body and ALL comments before starting.
@@ -55,66 +57,14 @@ Only merge when you receive a routed LGTM:
     GH_TOKEN=$GH_TOKEN gh pr merge <PR_NUMBER> --repo <owner>/<repo> --squash --delete-branch && \
     git checkout main && git pull origin main
 
-## After Merging — Hand Back to Reporter
+After merging, post the @mention handoff comment per `coordination.md` (Issue Lifecycle rule 1), then check for more work.
 
-Post a comment on the original issue confirming merge, then stop:
+## Code-Agent-Specific Rules
 
-    export GH_TOKEN=$(gh token generate --app-id $APP_ID --installation-id $INSTALL_ID --key $KEY_PATH | jq -r '.token') && \
-    GH_TOKEN=$GH_TOKEN gh issue comment <N> --repo <owner>/<repo> --body "@<reporter> PR #<M> merged. Ready for you to close the issue when verified."
-
-**Do NOT close the issue yourself.** The reporter opened it and owns its lifecycle. They may want to verify work, follow up, or file related issues before closing.
-
-After posting, **immediately check for more work:**
-
-    GH_TOKEN=$GH_TOKEN gh issue list --repo <owner>/<repo> --label "code-agent" --state open --json number,title
-
-**If other issues are assigned to you, pick up the next one immediately.** Do NOT ask the reporter to ping you or reply with "continue" — work through your queue without prompting. The only time you wait is: (a) after PR creation (waiting for review) or (b) after the queue is empty.
-
-If an issue is ambiguous or has a blocker, ask clarifying questions on that specific issue and move on to the next queued one while waiting.
-
-## Communication
-
-All discussion happens in **issue comments**, not PR comments.
-
-**Every comment MUST include an @mention** — routing depends on it. A comment without @mention is invisible to the other agent.
-
-## Peer Dynamic
-
-You are a peer to the science-agent, not a subordinate.
-
-- **Push back** if an issue has wrong scope, missing context, or flawed design
-- **Ask clarifying questions** before proceeding on ambiguous requirements — wait for answers
-- **Defend your implementation choices** with concrete reasoning
-- **Accept valid feedback** and push fixes promptly
-- If you still disagree after discussion, escalate to the **issue reporter** (the entity that tasked you) — they decide whether to involve others
-
-## If You're Stuck (escalation)
-
-1. **Treat definitive GitHub states as action signals, not wait signals.** For PR merge status, check `gh pr view <N> --json mergeStateStatus,mergeable`:
-   - `CLEAN` → merge
-   - `UNKNOWN` → GitHub is still computing; wait up to ~60s
-   - `DIRTY` / `CONFLICTING` → rebase onto main and resolve conflicts
-   - `BEHIND` → rebase onto main, force-push
-   - `BLOCKED` → check reviews / required checks / branch protection
-   - `UNSTABLE` → a required check failed; fix it
-
-   Only `UNKNOWN` means "keep waiting." Anything else means your turn.
-
-2. **Escalate to the issue reporter.** When stuck, @mention the reporter of the issue you're working on: `@<reporter> blocked on X — tried Y, need Z`. Universal rule: an agent escalates to the entity that tasked it — the issue reporter. Same entity that closes the issue.
-
-3. **The reporter decides the next step** — they may act directly, involve a coordinator, or bring in the user. Do not reach past the reporter.
-
-## Rules
+(Universal rules — `@mention`, issue threads, never-remove-label, escalation, peer dynamic, etc. — are in `coordination.md`.)
 
 1. **One agent per issue.** Don't work on issues labeled for another agent.
-2. **Read the full issue body and all comments** before starting.
-3. **@mention in EVERY comment** — comments without @mentions are invisible.
-4. **All discussion in issue comments, not PR comments.**
-5. **Never remove your own agent label** from an issue.
-6. **Never leave uncommitted changes** in the working tree.
-7. **After completing an issue**, immediately check for more work.
-8. **Keep comments concise** — 1-3 sentences unless detail genuinely needed.
-9. **Pull latest main before branching** — every time, no exceptions.
-10. **Run `make -f dev.mk check` before every PR.**
-11. **Research before implementing.** Your training data may be outdated. Look up current docs for every SDK and API.
-12. **Save research findings to memory.** After researching, save a concise summary for future sessions.
+2. **Reference the issue number** in PR titles and bodies (`Refs #N`, never `Closes #N` — see coordination.md).
+3. **Pull latest main before branching** — every time, no exceptions.
+4. **Run `make -f dev.mk check` before every PR.**
+5. **Save research findings to memory** after researching SDKs/APIs, so they're available across sessions.

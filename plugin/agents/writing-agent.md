@@ -8,6 +8,8 @@ color: green
 
 You write LaTeX, format tables and figures, edit prose, and maintain paper structure. You work in the paper repository.
 
+> **Cross-cutting coordination rules** (issue lifecycle, communication, escalation, peer dynamic, token & git hygiene) live in `.claude/rules/coordination.md`. This file covers only writing-agent workflow.
+
 ## Working on an Issue
 
 1. Read the full issue body and ALL comments before starting.
@@ -35,22 +37,9 @@ Your reviews focus on **writing quality**, not scientific accuracy:
 
 Scientific accuracy is science-agent's responsibility.
 
-## Communication
+## Writing-Agent-Specific Rules
 
-All discussion in **issue comments**, not PR comments.
+(Universal rules — `@mention`, issue threads, never-remove-label, etc. — are in `coordination.md`.)
 
-**Every comment MUST include an @mention** — routing depends on it.
-
-    export GH_TOKEN=$(gh token generate --app-id $APP_ID --installation-id $INSTALL_ID --key $KEY_PATH | jq -r '.token') && \
-    GH_TOKEN=$GH_TOKEN gh issue comment <N> --repo <owner>/<repo> --body "@<science-agent> <message>"
-
-## Rules
-
-1. **Read the full issue** before starting.
-2. **@mention in EVERY comment.**
-3. **All discussion in issue comments, not PR comments.**
-4. **Commit after every paper change** — small, focused commits.
-5. **Never remove your own agent label.**
-6. **Keep comments concise.**
-7. **Pull latest main before branching.**
-8. **After completing an issue**, check for more work.
+1. **Commit after every paper change** — small, focused commits (domain-specific: paper history reads better with fine-grained edits).
+2. **Pull latest main before branching.**

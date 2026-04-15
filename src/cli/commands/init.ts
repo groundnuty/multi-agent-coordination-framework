@@ -8,6 +8,7 @@ import {
 } from '../config.js';
 import { loadCA } from '../../certs/ca.js';
 import { generateAgentCert } from '../../certs/agent-cert.js';
+import { copyCanonicalRules } from '../rules.js';
 import {
   resolveLatestVersions, isValidSemver, isValidActionsRef,
   FALLBACK_VERSIONS, statusMessage,
@@ -161,6 +162,13 @@ export async function initAgent(projectDir: string, opts: InitOptions): Promise<
 
   // Register in global index
   addToAgentsIndex(absDir);
+
+  // Copy canonical coordination rules into <workspace>/.claude/rules/
+  // (single source of truth shipped with the CLI; refreshed by `macf update`)
+  const copiedRules = copyCanonicalRules(absDir);
+  if (copiedRules.length > 0) {
+    console.log(`  Rules: copied ${copiedRules.length} canonical rule file(s) to .claude/rules/`);
+  }
 
   // Generate agent cert if CA key is available locally (per-project)
   const caCertFile = caCertPathFor(opts.project);
