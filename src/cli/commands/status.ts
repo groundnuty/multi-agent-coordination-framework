@@ -1,6 +1,7 @@
 import { request } from 'node:https';
 import { readFileSync, existsSync } from 'node:fs';
 import { loadAllAgents, readAgentConfig, agentCertPath, agentKeyPath, tokenSourceFromConfig } from '../config.js';
+import { toVariableSegment } from '../../registry/variable-name.js';
 import { createClientFromConfig } from '../registry-helper.js';
 import { createRegistryFromConfig } from '../../registry/factory.js';
 import { generateToken } from '../../token.js';
@@ -105,8 +106,11 @@ export async function showStatus(projectDir?: string): Promise<void> {
   console.log('macf agents:\n');
 
   for (const peer of peers) {
-    // Find local agent config for cert paths
-    const localAgent = agents.find(a => a.config.agent_name === peer.name);
+    // peer.name comes back uppercased from the registry (toVariableSegment),
+    // so compare in that space rather than the original-case agent_name.
+    const localAgent = agents.find(
+      a => toVariableSegment(a.config.agent_name) === peer.name,
+    );
     const certP = localAgent ? agentCertPath(localAgent.path) : '';
     const keyP = localAgent ? agentKeyPath(localAgent.path) : '';
 
@@ -126,9 +130,11 @@ export async function showStatus(projectDir?: string): Promise<void> {
     }
   }
 
-  // Show any local agents not in registry
+  // Show any local agents not in registry. Compare in sanitized space
+  // since that's what the registry stores.
   for (const { config } of agents) {
-    const inRegistry = peers.some(p => p.name === config.agent_name);
+    const sanitized = toVariableSegment(config.agent_name);
+    const inRegistry = peers.some(p => p.name === sanitized);
     if (!inRegistry) {
       console.log(
         `  ${config.agent_name.padEnd(18)} ${'—'.padEnd(28)}not registered`,

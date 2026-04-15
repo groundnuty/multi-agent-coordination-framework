@@ -190,4 +190,83 @@ describe('createRegistry', () => {
       expect(client.deleteVariable).toHaveBeenCalledWith('MACF_AGENT_CODE_AGENT');
     });
   });
+
+  describe('hyphenated names (issue #46 roundtrip)', () => {
+    it('register + list roundtrip for hyphenated project and agent', async () => {
+      const hyphenClient = mockClient();
+      const registry = createRegistry(hyphenClient, 'academic-resume');
+
+      await registry.register('cv-architect', {
+        host: 'host1', port: 8847, type: 'permanent',
+        instance_id: 'a1', started: '2026-01-01T00:00:00Z',
+      });
+
+      // Variable name should be fully sanitized (no hyphens)
+      expect(hyphenClient.writeVariable).toHaveBeenCalledWith(
+        'ACADEMIC_RESUME_AGENT_CV_ARCHITECT',
+        expect.stringContaining('"host":"host1"'),
+      );
+
+      // Simulate GitHub returning that stored value on list()
+      vi.mocked(hyphenClient.listVariables).mockResolvedValueOnce([
+        {
+          name: 'ACADEMIC_RESUME_AGENT_CV_ARCHITECT',
+          value: JSON.stringify({
+            host: 'host1', port: 8847, type: 'permanent',
+            instance_id: 'a1', started: '2026-01-01T00:00:00Z',
+          }),
+        },
+      ]);
+
+      const peers = await registry.list('');
+      expect(peers).toHaveLength(1);
+      // list() returns the name in sanitized space — callers that need to
+      // compare against the original agent_name must also sanitize.
+      expect(peers[0]!.name).toBe('CV_ARCHITECT');
+      expect(peers[0]!.info.host).toBe('host1');
+    });
+
+    it('get() by hyphenated agent name reads the sanitized variable', async () => {
+      const hyphenClient = mockClient();
+      vi.mocked(hyphenClient.readVariable).mockResolvedValueOnce(JSON.stringify({
+        host: 'h', port: 1, type: 'permanent',
+        instance_id: 'x', started: '2026-01-01T00:00:00Z',
+      }));
+
+      const registry = createRegistry(hyphenClient, 'academic-resume');
+      const result = await registry.get('cv-architect');
+
+      expect(result).not.toBeNull();
+      expect(hyphenClient.readVariable).toHaveBeenCalledWith(
+        'ACADEMIC_RESUME_AGENT_CV_ARCHITECT',
+      );
+    });
+
+    it('list() filter prefix is also sanitized', async () => {
+      const hyphenClient = mockClient();
+      vi.mocked(hyphenClient.listVariables).mockResolvedValueOnce([
+        {
+          name: 'MACF_AGENT_CV_ARCHITECT',
+          value: JSON.stringify({
+            host: 'h', port: 1, type: 'permanent',
+            instance_id: 'x', started: '2026-01-01T00:00:00Z',
+          }),
+        },
+        {
+          name: 'MACF_AGENT_OTHER_AGENT',
+          value: JSON.stringify({
+            host: 'h', port: 2, type: 'permanent',
+            instance_id: 'y', started: '2026-01-01T00:00:00Z',
+          }),
+        },
+      ]);
+
+      const registry = createRegistry(hyphenClient, 'MACF');
+      // Filter 'cv-' should match 'CV_ARCHITECT' after sanitization
+      const peers = await registry.list('cv-');
+
+      expect(peers).toHaveLength(1);
+      expect(peers[0]!.name).toBe('CV_ARCHITECT');
+    });
+  });
 });
