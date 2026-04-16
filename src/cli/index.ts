@@ -12,6 +12,7 @@ import { listPeers } from './commands/peers.js';
 import { certsInit, certsRecover, certsRotate } from './commands/certs.js';
 import { repoInit } from './commands/repo-init.js';
 import { rulesRefresh } from './commands/rules-refresh.js';
+import { runDoctor } from './commands/doctor.js';
 import { findProjectRoot } from './config.js';
 
 /**
@@ -167,6 +168,15 @@ certs
   .option('--dir <path>', 'Project directory (defaults to auto-discovery from cwd)')
   .action(async (opts) => {
     await certsRotate(resolveProjectDir(opts.dir));
+  });
+
+program
+  .command('doctor')
+  .description('Verify the workspace\'s bot token satisfies the MACF App permission doctrine (DR-019)')
+  .option('--dir <path>', 'Project directory (defaults to auto-discovery from cwd)')
+  .action((opts) => {
+    const code = runDoctor(resolveProjectDir(opts.dir));
+    process.exitCode = code;
   });
 
 const rules = program
