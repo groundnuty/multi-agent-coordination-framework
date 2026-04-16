@@ -30,15 +30,22 @@ export interface RequiredPermission {
  * DR-019 permission doctrine. Keep in sync with
  * design/decisions/DR-019-app-permissions.md and
  * templates/macf-app-manifest.json.
+ *
+ * Names here are GitHub's CANONICAL API names (as returned by
+ * `GET /app/installations/:id` in the `permissions` field), which
+ * differ from the App settings UI labels for some entries — notably
+ * Variables → `actions_variables`. We use canonical names everywhere
+ * to avoid false negatives (an installation with `actions_variables`
+ * would be flagged as missing `variables` if we used the UI label).
  */
 export const MACF_REQUIRED_PERMISSIONS: readonly RequiredPermission[] = [
-  { name: 'metadata',      level: 'read',  why: 'Mandatory by GitHub — cannot be omitted' },
-  { name: 'contents',      level: 'write', why: 'Push commits, PRs to feature branches' },
-  { name: 'issues',        level: 'write', why: 'Comment, label, edit issues — primary coordination surface' },
-  { name: 'pull_requests', level: 'write', why: 'Create/merge PRs, submit reviews' },
-  { name: 'variables',     level: 'write', why: 'Agent registry lives in repo/org/user variables' },
-  { name: 'workflows',     level: 'write', why: 'macf repo-init writes .github/workflows/' },
-  { name: 'actions',       level: 'read',  why: 'gh run list / view --log-failed for self-debug' },
+  { name: 'metadata',          level: 'read',  why: 'Mandatory by GitHub — cannot be omitted' },
+  { name: 'contents',          level: 'write', why: 'Push commits, PRs to feature branches' },
+  { name: 'issues',            level: 'write', why: 'Comment, label, edit issues — primary coordination surface' },
+  { name: 'pull_requests',     level: 'write', why: 'Create/merge PRs, submit reviews' },
+  { name: 'actions_variables', level: 'write', why: 'Agent registry lives in repo/org/user variables (UI label: Variables)' },
+  { name: 'workflows',         level: 'write', why: 'macf repo-init writes .github/workflows/' },
+  { name: 'actions',           level: 'read',  why: 'gh run list / view --log-failed for self-debug' },
 ];
 
 export interface DoctorFinding {
@@ -93,51 +100,70 @@ export function formatPermissionRow(
 }
 
 /**
- * Fetch a fresh installation token and return its response body (JSON
- * object with `token`, `expires_at`, `permissions`). Wraps execFileSync
- * with list-form args (no shell — no injection risk). Throws on failure
- * with the stderr output included.
+ * Fetch the installation's GRANTED permissions by querying
+ * `GET /app/installations/:id` with an App JWT. We do NOT use the
+ * install-token response's `permissions` field here — it doesn't
+ * surface all granted permissions (verified empirically: an App with
+ * `actions_variables: write` may report an incomplete set in the
+ * install-token response but the full set via JWT query). See
+ * discussion on issue #74 for the evidence.
  */
-export function fetchTokenResponse(appId: string, installId: string, keyPath: string): {
-  permissions: Record<string, string>;
-} {
-  let stdout: string;
+export async function fetchInstallationPermissions(
+  appId: string,
+  installId: string,
+  keyPath: string,
+): Promise<Record<string, string>> {
+  // Get a JWT signed with the App's private key. `gh token generate --jwt`
+  // does the RS256 signing for us, avoiding a Node crypto reimplementation.
+  let jwt: string;
   try {
-    stdout = execFileSync('gh', [
+    jwt = execFileSync('gh', [
       'token', 'generate',
       '--app-id', appId,
-      '--installation-id', installId,
       '--key', keyPath,
+      '--jwt',
+      '--token-only',
     ], {
       encoding: 'utf-8',
       stdio: ['ignore', 'pipe', 'pipe'],
-    });
+    }).trim();
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     throw new Error(
-      `gh token generate failed: ${msg}. ` +
+      `gh token generate --jwt failed: ${msg}. ` +
       `See coordination.md Token & Git Hygiene for diagnostics.`,
       { cause: err },
     );
   }
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(stdout);
-  } catch {
-    throw new Error('gh token generate returned non-JSON output — upgrade gh-token plugin?');
+  if (!jwt.startsWith('eyJ')) {
+    throw new Error(`gh token generate --jwt returned unexpected output (not a JWT): ${jwt.slice(0, 40)}...`);
   }
-  const permissions = (parsed as { permissions?: unknown }).permissions;
-  if (!permissions || typeof permissions !== 'object') {
-    throw new Error('gh token generate response missing `permissions` field');
+
+  const response = await fetch(`https://api.github.com/app/installations/${installId}`, {
+    headers: {
+      Authorization: `Bearer ${jwt}`,
+      Accept: 'application/vnd.github+json',
+      'X-GitHub-Api-Version': '2022-11-28',
+    },
+  });
+  if (!response.ok) {
+    const body = await response.text().catch(() => '<no body>');
+    throw new Error(
+      `GET /app/installations/${installId} returned ${response.status}: ${body.slice(0, 200)}`,
+    );
   }
-  return { permissions: permissions as Record<string, string> };
+  const parsed = (await response.json()) as { permissions?: unknown };
+  if (!parsed.permissions || typeof parsed.permissions !== 'object') {
+    throw new Error('/app/installations/:id response missing `permissions` field');
+  }
+  return parsed.permissions as Record<string, string>;
 }
 
 /**
  * Main entry for `macf doctor`. Returns the shell exit code: 0 if all
  * required permissions are present, 1 if any are missing or insufficient.
  */
-export function runDoctor(projectDir: string): number {
+export async function runDoctor(projectDir: string): Promise<number> {
   const config = readAgentConfig(projectDir);
   if (!config) {
     console.error('No macf-agent.json found. Run `macf init` first.');
@@ -145,20 +171,22 @@ export function runDoctor(projectDir: string): number {
   }
 
   const source = tokenSourceFromConfig(projectDir, config);
-  let response: { permissions: Record<string, string> };
+  let permissions: Record<string, string>;
   try {
-    response = fetchTokenResponse(source.appId, source.installId, source.keyPath);
+    permissions = await fetchInstallationPermissions(
+      source.appId, source.installId, source.keyPath,
+    );
   } catch (err) {
     console.error(`Error: ${err instanceof Error ? err.message : String(err)}`);
     return 1;
   }
 
-  const finding = diffPermissions(response.permissions);
+  const finding = diffPermissions(permissions);
 
   console.log('MACF doctor report');
   console.log('──────────────────────────────────────────────────────────────');
   for (const req of MACF_REQUIRED_PERMISSIONS) {
-    console.log(`  ${formatPermissionRow(req, response.permissions[req.name])}`);
+    console.log(`  ${formatPermissionRow(req, permissions[req.name])}`);
   }
   console.log('');
 

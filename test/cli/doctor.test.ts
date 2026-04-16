@@ -14,12 +14,20 @@ import {
 } from '../../src/cli/commands/doctor.js';
 
 describe('MACF_REQUIRED_PERMISSIONS', () => {
-  it('has exactly the seven DR-019 permissions', () => {
+  it('has exactly the seven DR-019 permissions (canonical API names)', () => {
     const names = MACF_REQUIRED_PERMISSIONS.map(p => p.name).sort();
     expect(names).toEqual([
-      'actions', 'contents', 'issues', 'metadata',
-      'pull_requests', 'variables', 'workflows',
+      'actions', 'actions_variables', 'contents', 'issues', 'metadata',
+      'pull_requests', 'workflows',
     ]);
+  });
+
+  it('uses canonical API name actions_variables, not UI label variables', () => {
+    // Regression guard: GitHub's API returns actions_variables; the UI
+    // shows "Variables". Using the UI label would give false negatives.
+    const names = MACF_REQUIRED_PERMISSIONS.map(p => p.name);
+    expect(names).toContain('actions_variables');
+    expect(names).not.toContain('variables');
   });
 
   it('actions is read-level (coordinator self-debug)', () => {
@@ -41,7 +49,7 @@ describe('diffPermissions', () => {
       contents: 'write',
       issues: 'write',
       pull_requests: 'write',
-      variables: 'write',
+      actions_variables: 'write',
       workflows: 'write',
       actions: 'read',
     };
@@ -63,10 +71,10 @@ describe('diffPermissions', () => {
 
   it('flags write-required-but-read-granted as insufficient (not missing)', () => {
     const actual = allOk();
-    actual.variables = 'read'; // downgraded
+    actual.actions_variables = 'read'; // downgraded
     const finding = diffPermissions(actual);
     expect(finding.missing).toEqual([]);
-    expect(finding.insufficient.map(x => x.required.name)).toEqual(['variables']);
+    expect(finding.insufficient.map(x => x.required.name)).toEqual(['actions_variables']);
     expect(finding.insufficient[0]?.actual).toBe('read');
   });
 
@@ -78,9 +86,9 @@ describe('diffPermissions', () => {
     expect(finding.insufficient).toEqual([]);
   });
 
-  it('handles the observed real-world gap (no variables, no actions)', () => {
-    // This matches what `gh token generate | jq .permissions` currently
-    // returns for an App without the #72 fixes applied.
+  it('handles the observed real-world gap (no actions_variables, no actions)', () => {
+    // This matches what `GET /app/installations/:id` returns for an App
+    // created before the #72 doctrine added variables/actions.
     const actual: Record<string, string> = {
       contents: 'write',
       issues: 'write',
@@ -90,7 +98,7 @@ describe('diffPermissions', () => {
     };
     const finding = diffPermissions(actual);
     const missingNames = finding.missing.map(p => p.name).sort();
-    expect(missingNames).toEqual(['actions', 'variables']);
+    expect(missingNames).toEqual(['actions', 'actions_variables']);
   });
 
   it('handles completely empty permission map (broken token)', () => {
@@ -124,7 +132,7 @@ describe('formatPermissionRow', () => {
 
   it('marks insufficient (write-required, read-granted) with ⚠', () => {
     const writeReq: RequiredPermission = {
-      name: 'variables',
+      name: 'actions_variables',
       level: 'write',
       why: 'Registry',
     };

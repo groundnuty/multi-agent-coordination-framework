@@ -22,17 +22,20 @@ Rather than re-discover on the next App, we codify the minimum set here.
 
 ## Decision
 
-The minimum permission set for a MACF agent's GitHub App:
+The minimum permission set for a MACF agent's GitHub App. Names in the
+first column are **GitHub's canonical API names** as returned by
+`GET /app/installations/:id` — some differ from the App settings UI labels
+(noted in the last column).
 
-| Permission          | Level  | Why                                                             |
-|---------------------|--------|------------------------------------------------------------------|
-| `metadata`          | read   | Mandatory by GitHub — cannot be omitted                         |
-| `contents`          | write  | Push commits, PRs to feature branches                           |
-| `issues`            | write  | Comment, label, edit issues — the primary coordination surface  |
-| `pull_requests`     | write  | Create/merge PRs, submit reviews                                |
-| `variables`         | write  | Agent registry lives in repo/org/user variables (DR-005/DR-006) |
-| `workflows`         | write  | `macf repo-init` writes `.github/workflows/agent-router.yml`    |
-| `actions`           | read   | `gh run list` / `gh run view --log-failed` for self-debug       |
+| Permission (API name) | Level  | Why                                                             | UI label        |
+|-----------------------|--------|------------------------------------------------------------------|-----------------|
+| `metadata`            | read   | Mandatory by GitHub — cannot be omitted                         | Metadata        |
+| `contents`            | write  | Push commits, PRs to feature branches                           | Contents        |
+| `issues`              | write  | Comment, label, edit issues — the primary coordination surface  | Issues          |
+| `pull_requests`       | write  | Create/merge PRs, submit reviews                                | Pull requests   |
+| `actions_variables`   | write  | Agent registry lives in repo/org/user variables (DR-005/DR-006) | **Variables**   |
+| `workflows`           | write  | `macf repo-init` writes `.github/workflows/agent-router.yml`    | Workflows       |
+| `actions`             | read   | `gh run list` / `gh run view --log-failed` for self-debug       | Actions         |
 
 Every MACF App should have all seven. Coordinator/review agents (science-agent,
 writing-agent) especially need `actions: read` to debug their team's CI — a
@@ -49,16 +52,23 @@ above at its listed level before installing.
 
 ## Verifying an existing App
 
-A future `macf doctor` command (#73) will compare an App's installation-token
-permissions against this table and fail loud if anything is missing. Until
-that lands, a manual check:
+Use `macf doctor` (#74) — it queries `GET /app/installations/:id` with an
+App JWT and compares the returned `.permissions` map against this table.
 
-    GH_TOKEN=$(./scripts/macf-gh-token.sh --app-id $APP_ID ...) gh api /rate_limit
-    # and
-    GH_TOKEN=$GH_TOKEN gh api /installation/repositories
+**Why the JWT query, not the install-token response:** the installation
+token response's `.permissions` field does NOT surface all granted
+permissions — some (notably `actions_variables`) are visible only via
+the JWT-authenticated installation endpoint. Observed empirically on
+multiple Apps; using the install-token response gives false negatives.
 
-401 on either → the App is missing `metadata` (mandatory) or `contents` — fix
-before shipping.
+Manual equivalent:
+
+    JWT=$(gh token generate --app-id $APP_ID --key $KEY_PATH --jwt --token-only)
+    curl -s -H "Authorization: Bearer $JWT" \
+      -H "Accept: application/vnd.github+json" \
+      https://api.github.com/app/installations/$INSTALL_ID | jq .permissions
+
+Compare the keys returned against the table above.
 
 ## Options Considered
 

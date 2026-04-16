@@ -174,8 +174,8 @@ program
   .command('doctor')
   .description('Verify the workspace\'s bot token satisfies the MACF App permission doctrine (DR-019)')
   .option('--dir <path>', 'Project directory (defaults to auto-discovery from cwd)')
-  .action((opts) => {
-    const code = runDoctor(resolveProjectDir(opts.dir));
+  .action(async (opts) => {
+    const code = await runDoctor(resolveProjectDir(opts.dir));
     process.exitCode = code;
   });
 
