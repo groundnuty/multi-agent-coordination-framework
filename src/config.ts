@@ -73,6 +73,8 @@ export function loadConfig(): AgentConfig {
   };
 }
 
+let warnedFallback = false;
+
 /**
  * Resolve the CA private-key path. Preferred source is the explicit
  * MACF_CA_KEY env var (#103 R3); falls back to the historical
@@ -92,6 +94,17 @@ function resolveCaKeyPath(caCertPath: string): string {
       throw new ConfigError(`File not found for MACF_CA_KEY: ${explicit}`);
     }
     return explicit;
+  }
+  // Warn once per process so operators see their workspace is in legacy
+  // mode. The structured logger isn't available this early in startup
+  // (loadConfig runs before createLogger), so write directly to stderr.
+  if (!warnedFallback) {
+    warnedFallback = true;
+    process.stderr.write(
+      'Warning: MACF_CA_KEY not set; deriving from MACF_CA_CERT. ' +
+      'This fallback is for legacy workspaces only — run `macf update` ' +
+      'to regenerate claude.sh with the explicit MACF_CA_KEY export.\n',
+    );
   }
   return caCertPath.replace('-cert.pem', '-key.pem');
 }
