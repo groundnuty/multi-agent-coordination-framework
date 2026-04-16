@@ -10,6 +10,7 @@ import {
   MACF_REQUIRED_PERMISSIONS,
   diffPermissions,
   formatPermissionRow,
+  describeNonJwtOutput,
   type RequiredPermission,
 } from '../../src/cli/commands/doctor.js';
 
@@ -139,5 +140,52 @@ describe('formatPermissionRow', () => {
     const row = formatPermissionRow(writeReq, 'read');
     expect(row).toMatch(/^⚠ /);
     expect(row).toContain('need write, have read');
+  });
+});
+
+describe('describeNonJwtOutput (#86 — no JWT leak)', () => {
+  it('reports at most the first 6 characters of non-JWT output', () => {
+    // Simulate a genuinely-valid JWT that trips the startsWith check
+    // due to e.g. a leading whitespace char. Must NOT leak beyond 6.
+    const fakeJwt = ' eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9.payload.signature';
+    const msg = describeNonJwtOutput(fakeJwt);
+    // First 6 chars end at "eyJhbG" (after the leading space)... actually
+    // the slice is on the raw string: " eyJhb" (leading space + 5 chars).
+    // Length should match.
+    expect(msg).toContain(`length=${fakeJwt.length}`);
+    // Body of message should contain EXACTLY 6 characters of the input
+    // and no more. Check that no fragment longer than 6 chars of the
+    // original appears in the message.
+    const longFragment = fakeJwt.slice(0, 20);
+    expect(msg).not.toContain(longFragment);
+    // And the payload segment must not be present.
+    expect(msg).not.toContain('payload');
+    expect(msg).not.toContain('signature');
+  });
+
+  it('handles empty output cleanly', () => {
+    const msg = describeNonJwtOutput('');
+    expect(msg).toContain('(empty)');
+    expect(msg).toContain('length=0');
+  });
+
+  it('handles short error-message output (e.g. "401")', () => {
+    const msg = describeNonJwtOutput('401');
+    expect(msg).toContain("prefix='401'");
+    expect(msg).toContain('length=3');
+  });
+
+  it('does not include the word "undefined" when input is an empty string', () => {
+    // Guard against "prefix='undefined'" or similar drift
+    const msg = describeNonJwtOutput('');
+    expect(msg).not.toContain('undefined');
+  });
+
+  it('never exceeds 6 chars of raw input exposure, even for long inputs', () => {
+    const secret = 'a'.repeat(400);
+    const msg = describeNonJwtOutput(secret);
+    // 7 consecutive 'a's would mean we leaked >6 chars
+    expect(msg).not.toContain('aaaaaaa');
+    expect(msg).toContain('length=400');
   });
 });

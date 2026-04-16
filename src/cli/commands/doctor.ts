@@ -100,6 +100,22 @@ export function formatPermissionRow(
 }
 
 /**
+ * Format a non-leaking error message when `gh token generate --jwt` returns
+ * output that doesn't look like a JWT. Shows only the first 6 characters
+ * plus length — enough to distinguish empty / error-message / binary-garbage
+ * / genuinely-wrong-prefix, without exposing credential material if the
+ * branch fires on a genuinely-valid JWT due to a locale/whitespace/plugin
+ * edge case. See #86. Exported for unit tests.
+ */
+export function describeNonJwtOutput(jwt: string): string {
+  const safePrefix = jwt.length > 0 ? jwt.slice(0, 6) : '(empty)';
+  return (
+    `gh token generate --jwt returned unexpected output ` +
+    `(prefix='${safePrefix}', length=${jwt.length})`
+  );
+}
+
+/**
  * Fetch the installation's GRANTED permissions by querying
  * `GET /app/installations/:id` with an App JWT. We do NOT use the
  * install-token response's `permissions` field here — it doesn't
@@ -136,7 +152,7 @@ export async function fetchInstallationPermissions(
     );
   }
   if (!jwt.startsWith('eyJ')) {
-    throw new Error(`gh token generate --jwt returned unexpected output (not a JWT): ${jwt.slice(0, 40)}...`);
+    throw new Error(describeNonJwtOutput(jwt));
   }
 
   const response = await fetch(`https://api.github.com/app/installations/${installId}`, {
