@@ -17,6 +17,23 @@ import { createRegistryFromConfig } from '../../registry/factory.js';
 import { generateToken } from '../../token.js';
 import type { RegistryConfig } from '../../registry/types.js';
 
+/**
+ * Resolve which issue label `/macf-issues` should query (see #83).
+ *
+ * Precedence: explicit override > agent role > agent name > legacy fallback.
+ * Each agent's `claude.sh` sets MACF_AGENT_ROLE; defaulting from that
+ * makes every agent see their own queue, not a hardcoded 'code-agent'
+ * queue.
+ *
+ * Exported for unit tests.
+ */
+export function resolveAgentLabel(env: Readonly<Record<string, string | undefined>>): string {
+  return env['MACF_AGENT_LABEL']
+    ?? env['MACF_AGENT_ROLE']
+    ?? env['MACF_AGENT_NAME']
+    ?? 'code-agent';
+}
+
 const command = process.argv[2];
 
 function getRegistryConfig(): RegistryConfig {
@@ -71,7 +88,7 @@ async function main(): Promise<void> {
     case 'issues': {
       const token = await generateToken();
       const repo = process.env['MACF_REGISTRY_REPO'] ?? 'groundnuty/macf';
-      const label = process.env['MACF_AGENT_LABEL'] ?? 'code-agent';
+      const label = resolveAgentLabel(process.env);
       const issues = await checkIssues({ repo, label, token });
       console.log(formatIssues(issues));
       break;
