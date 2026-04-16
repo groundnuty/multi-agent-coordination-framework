@@ -10,7 +10,31 @@ The rules here are topology-agnostic: they work whether the project uses a scien
 
 ## Issue Lifecycle
 
-1. **The reporter owns the issue.** The agent who opens an issue is the only one who closes it. Implementers merge PRs but never close the reporter's issue — they post a @mention comment ("PR #M merged, ready for you to close when verified") and stop. Reason: merge events do not currently trigger routing, so without this handoff the reporter is never notified that work is done. Also, the reporter may want to verify the work before closing.
+1. **The reporter owns the issue closure.** The agent who opened an issue is the only one who closes it. This rule has two failure modes — both costly, both silent. Check for both before posting a merge-handoff comment.
+
+   **Failure mode A — closing an issue you didn't open.** Two ways this happens:
+   - *Auto-close via PR keywords.* GitHub's auto-close keywords in a PR body or commit message close the referenced issue on merge, bypassing the reporter. **Never use any of these 9 variants when the issue was filed by someone else:** `Closes #N`, `Fixes #N`, `Resolves #N`, `Close #N`, `Fix #N`, `Resolve #N`, `Closed #N`, `Fixed #N`, `Resolved #N`. Use **`Refs #N`** instead.
+   - *Manual close via `gh issue close`.* Don't close someone else's issue even after merging the implementation. Post the handoff comment and stop.
+
+   **Failure mode B — waiting for yourself to close.** When the issue's reporter is YOU (you filed the issue during an audit, a follow-up split-off, or self-observed bug), there is no one else to close it. Don't post `@<other-agent> ready for you to close when verified` — no one is waiting to do that for you. After your PR merges, close the issue yourself with a verification comment. Silent stall otherwise: the queue fills with in-review issues that never clear.
+
+   **Self-check before posting any merge-handoff comment:**
+
+        gh issue view <N> --json author --jq '.author.login'
+
+   - Author is someone else (user or another agent) → post `@<author> PR #M merged, ready for you to close when verified.` and STOP.
+   - Author is YOU (your `app/<bot-name>` login) → close the issue yourself:
+
+            gh issue close <N> --reason completed --comment "Verified on main after PR #M merged. Closing as reporter."
+
+   Also self-check PR bodies before pushing:
+
+        git log -1 --pretty=%B  # or the PR body draft
+        # grep for any of: Closes Fixes Resolves Close Fix Resolve Closed Fixed Resolved
+
+   If any of those appear and the referenced issue was filed by someone else, replace with `Refs #N`.
+
+   **Why this rule matters:** Reporter-owns-closure gives the reporter a chance to verify the fix matches their intent before the issue disappears from their queue. In a multi-agent workflow, the reporter often has context the implementer doesn't (why it was filed at that priority, what the acceptance criteria really meant, what adjacent work it blocks). Auto-close strips that context; reflexive handoff on self-filed issues wastes it.
 
 2. **Work through the queue without prompting.** When an issue is complete, check your assigned-label queue and pick up the next one immediately. Do NOT ask the reporter to ping you or reply "continue" before starting. Only wait when (a) your PR is in review, or (b) the queue is empty. If an issue is ambiguous, ask clarifying questions on that issue and move to the next queued one while waiting.
 
