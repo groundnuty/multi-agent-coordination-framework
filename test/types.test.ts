@@ -1,11 +1,15 @@
 import { describe, it, expect } from 'vitest';
-import { NotifyPayloadSchema, NotifyTypeSchema, HealthResponseSchema } from '../src/types.js';
+import {
+  NotifyPayloadSchema, NotifyTypeSchema, HealthResponseSchema,
+  CiCompletionPayloadSchema, CheckSuiteConclusionSchema,
+} from '../src/types.js';
 
 describe('NotifyTypeSchema', () => {
   it('accepts valid types', () => {
     expect(NotifyTypeSchema.parse('issue_routed')).toBe('issue_routed');
     expect(NotifyTypeSchema.parse('mention')).toBe('mention');
     expect(NotifyTypeSchema.parse('startup_check')).toBe('startup_check');
+    expect(NotifyTypeSchema.parse('ci_completion')).toBe('ci_completion');
   });
 
   it('rejects unknown types', () => {
@@ -86,6 +90,122 @@ describe('HealthResponseSchema', () => {
       current_issue: null,
       version: '0.1.0',
       last_notification: null,
+    })).toThrow();
+  });
+});
+
+describe('CheckSuiteConclusionSchema', () => {
+  it('accepts all four actionable conclusions', () => {
+    for (const v of ['success', 'failure', 'timed_out', 'action_required']) {
+      expect(CheckSuiteConclusionSchema.parse(v)).toBe(v);
+    }
+  });
+
+  it('rejects non-actionable conclusions', () => {
+    for (const v of ['neutral', 'cancelled', 'skipped', 'stale', 'unknown']) {
+      expect(() => CheckSuiteConclusionSchema.parse(v), v).toThrow();
+    }
+  });
+});
+
+describe('CiCompletionPayloadSchema (#122)', () => {
+  const base = {
+    type: 'ci_completion' as const,
+    source: 'ci_completion' as const,
+    pr_number: 42,
+    pr_title: 'fix: do a thing',
+    pr_url: 'https://github.com/owner/repo/pull/42',
+    conclusion: 'success' as const,
+    failing_check_name: null,
+    message: 'PR #42: CI SUCCESS. ...',
+  };
+
+  it('accepts a success payload with failing_check_name null', () => {
+    const result = CiCompletionPayloadSchema.parse(base);
+    expect(result.conclusion).toBe('success');
+    expect(result.failing_check_name).toBeNull();
+  });
+
+  it('accepts a failure payload with failing_check_name string', () => {
+    const result = CiCompletionPayloadSchema.parse({
+      ...base,
+      conclusion: 'failure',
+      failing_check_name: 'check / build',
+      message: 'PR #42: CI FAILED. First failing check: \'check / build\'. ...',
+    });
+    expect(result.conclusion).toBe('failure');
+    expect(result.failing_check_name).toBe('check / build');
+  });
+
+  it('accepts timed_out and action_required conclusions', () => {
+    expect(CiCompletionPayloadSchema.parse({ ...base, conclusion: 'timed_out' }).conclusion)
+      .toBe('timed_out');
+    expect(CiCompletionPayloadSchema.parse({ ...base, conclusion: 'action_required' }).conclusion)
+      .toBe('action_required');
+  });
+
+  it('rejects wrong literal type', () => {
+    expect(() => CiCompletionPayloadSchema.parse({ ...base, type: 'mention' })).toThrow();
+  });
+
+  it('rejects wrong literal source', () => {
+    expect(() => CiCompletionPayloadSchema.parse({ ...base, source: 'label' })).toThrow();
+  });
+
+  it('rejects missing pr_number', () => {
+    const { pr_number: _pn, ...withoutPrNumber } = base;
+    void _pn;
+    expect(() => CiCompletionPayloadSchema.parse(withoutPrNumber)).toThrow();
+  });
+
+  it('rejects non-URL pr_url', () => {
+    expect(() => CiCompletionPayloadSchema.parse({ ...base, pr_url: 'not a url' })).toThrow();
+  });
+
+  it('rejects non-actionable conclusion (cancelled, neutral, etc.)', () => {
+    expect(() => CiCompletionPayloadSchema.parse({ ...base, conclusion: 'cancelled' })).toThrow();
+  });
+
+  it('rejects undefined failing_check_name (must be null or string, not omitted)', () => {
+    const { failing_check_name: _fcn, ...withoutFcn } = base;
+    void _fcn;
+    expect(() => CiCompletionPayloadSchema.parse(withoutFcn)).toThrow();
+  });
+
+  it('also round-trips through the wider NotifyPayloadSchema (backward-compat)', () => {
+    // Receivers parse against NotifyPayloadSchema (backward-compat
+    // across variants) and narrow via type discriminator — verify
+    // that a valid CiCompletionPayload also parses cleanly through
+    // the wider schema.
+    const result = NotifyPayloadSchema.parse(base);
+    expect(result.type).toBe('ci_completion');
+    expect(result.pr_number).toBe(42);
+    expect(result.conclusion).toBe('success');
+    expect(result.failing_check_name).toBeNull();
+  });
+});
+
+describe('NotifyPayloadSchema (#122 additions)', () => {
+  it('accepts ci_completion type', () => {
+    const result = NotifyPayloadSchema.parse({
+      type: 'ci_completion',
+      pr_number: 99,
+      conclusion: 'success',
+    });
+    expect(result.type).toBe('ci_completion');
+  });
+
+  it('rejects bad conclusion even on the wider schema', () => {
+    expect(() => NotifyPayloadSchema.parse({
+      type: 'ci_completion',
+      conclusion: 'junk',
+    })).toThrow();
+  });
+
+  it('rejects malformed pr_url even on the wider schema', () => {
+    expect(() => NotifyPayloadSchema.parse({
+      type: 'ci_completion',
+      pr_url: 'not a url',
     })).toThrow();
   });
 });
