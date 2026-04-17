@@ -48,6 +48,25 @@ async function main(): Promise<void> {
       }
     } else if (payload.type === 'mention') {
       content = payload.message ?? 'You were mentioned';
+    } else if (payload.type === 'ci_completion') {
+      // Prefer the prebuilt `message` (producer has all context) but
+      // fall back to a shape-derived rendering if absent. Producers
+      // that use CiCompletionPayloadSchema always provide `message`.
+      if (payload.message) {
+        content = payload.message;
+      } else if (payload.pr_number !== undefined && payload.conclusion !== undefined) {
+        const prRef = `PR #${payload.pr_number}`;
+        if (payload.conclusion === 'success') {
+          content = `${prRef}: CI SUCCESS`;
+        } else {
+          const failing = payload.failing_check_name
+            ? ` (first failing check: '${payload.failing_check_name}')`
+            : '';
+          content = `${prRef}: CI ${payload.conclusion.toUpperCase()}${failing}`;
+        }
+      } else {
+        content = 'CI completed';
+      }
     } else {
       content = payload.message ?? 'Pending issues found at startup';
     }

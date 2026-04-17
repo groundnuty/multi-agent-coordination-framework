@@ -6,9 +6,24 @@ export const NotifyTypeSchema = z.enum([
   'issue_routed',
   'mention',
   'startup_check',
+  // `ci_completion` landed with macf-actions v2.0.1 / #122 — routed
+  // by the macf-actions route-by-ci-completion job when a check_suite
+  // completes on an agent-authored PR. Prior to this variant, the job
+  // shoehorned the notification into `type: 'mention'` with
+  // `source: 'ci_completion'` as a discriminator.
+  'ci_completion',
 ]);
 
 export type NotifyType = z.infer<typeof NotifyTypeSchema>;
+
+// Check suite conclusions reaching the receiver — match GitHub's
+// terminal check_suite states that macf-actions treats as actionable
+// (see macf-actions#6 and agent-router.yml).
+export const CheckSuiteConclusionSchema = z.enum([
+  'success', 'failure', 'timed_out', 'action_required',
+]);
+
+export type CheckSuiteConclusion = z.infer<typeof CheckSuiteConclusionSchema>;
 
 export const NotifyPayloadSchema = z.object({
   type: NotifyTypeSchema,
@@ -16,9 +31,45 @@ export const NotifyPayloadSchema = z.object({
   title: z.string().optional(),
   source: z.string().optional(),
   message: z.string().optional(),
+  // CI-completion variant fields (#122). All optional at the top
+  // level to preserve backward compat with producers that only send
+  // the base shape. Producers that want a type-narrowed shape for
+  // ci_completion can validate against CiCompletionPayloadSchema
+  // below before POST.
+  pr_number: z.number().int().positive().optional(),
+  pr_title: z.string().optional(),
+  pr_url: z.string().url().optional(),
+  conclusion: CheckSuiteConclusionSchema.optional(),
+  failing_check_name: z.string().nullable().optional(),
 });
 
 export type NotifyPayload = z.infer<typeof NotifyPayloadSchema>;
+
+/**
+ * Narrower schema for `ci_completion` payloads (#122). Producers
+ * (notably the macf-actions route-by-ci-completion job, v2.0.1+)
+ * should construct-and-validate against this schema for type-level
+ * clarity, then send over the wire. The receiver parses against the
+ * wider `NotifyPayloadSchema` (backward-compat across variants) and
+ * narrows via the `type === 'ci_completion'` discriminator.
+ *
+ * Required fields: everything the receiver needs to render the
+ * notification WITHOUT falling back to free-form `message` parsing.
+ * `failing_check_name` is null when conclusion is 'success'; string
+ * otherwise.
+ */
+export const CiCompletionPayloadSchema = z.object({
+  type: z.literal('ci_completion'),
+  source: z.literal('ci_completion'),
+  pr_number: z.number().int().positive(),
+  pr_title: z.string(),
+  pr_url: z.string().url(),
+  conclusion: CheckSuiteConclusionSchema,
+  failing_check_name: z.string().nullable(),
+  message: z.string(),
+});
+
+export type CiCompletionPayload = z.infer<typeof CiCompletionPayloadSchema>;
 
 // --- Health response (GET /health body) ---
 

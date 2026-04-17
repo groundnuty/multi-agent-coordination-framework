@@ -11,8 +11,15 @@ export { createHttpsServer } from './https.js';
 export { createHealthState } from './health.js';
 export { createLogger } from './logger.js';
 export { loadConfig } from './config.js';
-export { NotifyPayloadSchema, NotifyTypeSchema, HealthResponseSchema } from './types.js';
-export type { NotifyPayload, NotifyType, HealthResponse, AgentConfig, Logger, McpChannel, HttpsServer, HealthState } from './types.js';
+export {
+  NotifyPayloadSchema, NotifyTypeSchema, HealthResponseSchema,
+  CiCompletionPayloadSchema, CheckSuiteConclusionSchema,
+} from './types.js';
+export type {
+  NotifyPayload, NotifyType, HealthResponse, AgentConfig, Logger,
+  McpChannel, HttpsServer, HealthState,
+  CiCompletionPayload, CheckSuiteConclusion,
+} from './types.js';
 
 // P2: Registry & Discovery
 export { createRegistryFromConfig, createRegistry, createGitHubClient, GitHubApiError, AgentInfoSchema, RegistryConfigSchema } from './registry/index.js';
