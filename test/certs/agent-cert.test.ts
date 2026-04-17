@@ -60,6 +60,23 @@ describe('agent-cert', () => {
       const caCert = new x509Lib.X509Certificate(caCertPem);
       expect(cert.issuer).toBe(caCert.subject);
     });
+
+    it('cert has clientAuth ExtendedKeyUsage (#125, step 1 of DR-004 v2 EKU rollout)', async () => {
+      // Step 1: peer certs emit the EKU. Step 2 (operator-driven):
+      // rotate existing peers. Step 3 (#121): server-side /notify
+      // verifies the EKU. Until step 2 completes fleet-wide, #121
+      // can't ship — but this step lands in isolation today.
+      const result = await generateAgentCert({
+        agentName: 'test-agent',
+        caCertPem,
+        caKeyPem,
+      });
+      const cert = new x509Lib.X509Certificate(result.certPem);
+      const ekuExt = cert.getExtension('2.5.29.37'); // extKeyUsage OID
+      expect(ekuExt).toBeDefined();
+      const usages = (ekuExt as unknown as { usages: readonly string[] }).usages;
+      expect(usages).toContain('1.3.6.1.5.5.7.3.2');
+    });
   });
 
   describe('generateCSR', () => {
@@ -92,6 +109,24 @@ describe('agent-cert', () => {
 
       const caCert = new x509Lib.X509Certificate(caCertPem);
       expect(cert.issuer).toBe(caCert.subject);
+    });
+
+    it('CSR-signed cert has clientAuth ExtendedKeyUsage (#125)', async () => {
+      // /sign-endpoint peer certs must also carry the EKU so they
+      // work after #121 tightens server-side verification. Matches
+      // generateAgentCert behavior.
+      const { csrPem } = await generateCSR('csr-agent');
+      const certPem = await signCSR({
+        csrPem,
+        agentName: 'csr-agent',
+        caCertPem,
+        caKeyPem,
+      });
+      const cert = new x509Lib.X509Certificate(certPem);
+      const ekuExt = cert.getExtension('2.5.29.37');
+      expect(ekuExt).toBeDefined();
+      const usages = (ekuExt as unknown as { usages: readonly string[] }).usages;
+      expect(usages).toContain('1.3.6.1.5.5.7.3.2');
     });
 
     it('rejects CSR with CN mismatch', async () => {
