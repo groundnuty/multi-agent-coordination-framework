@@ -88,12 +88,15 @@ Other recent doctrine: **DR-019** codifies the 7 required App permissions
 Key targets:
 - `make -f dev.mk check` — full CI: install + build + lint + test (434+/434 tests
   as of 2026-04-16)
-- `make -f dev.mk build` — type check (`tsc --noEmit`)
+- `make -f dev.mk typecheck` — type check only (`tsc --noEmit`; formerly `build`, renamed per #127)
+- `make -f dev.mk build` — real compile, emits `dist/` (matches `npm run build`)
 - `make -f dev.mk lint` — ESLint
 - `make -f dev.mk test` — unit tests (no API calls)
 - `make -f dev.mk test-e2e` — E2E tests (require real mTLS certs)
 
 One-off test: `devbox run -- npx vitest run test/path/to/file.test.ts`
+
+**Workflow note (after #127):** `make -f dev.mk check` only runs `typecheck`, not `build`. If you've `npm link`ed the CLI for operator use and then modified source, run `make -f dev.mk build` before invoking the linked CLI — otherwise `dist/` is stale and you'll run yesterday's code. Surfaced the hard way during #125 / #126 EKU rollout.
 
 ## Conventions
 
