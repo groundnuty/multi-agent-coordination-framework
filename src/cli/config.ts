@@ -2,6 +2,7 @@ import { z } from 'zod';
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'node:fs';
 import { join, dirname, resolve } from 'node:path';
 import { homedir } from 'node:os';
+import { RegistryConfigSchema } from '../registry/types.js';
 
 // --- Paths ---
 
@@ -117,11 +118,11 @@ export const MacfAgentConfigSchema = z.object({
   agent_name: z.string(),
   agent_role: z.string(),
   agent_type: z.enum(['permanent', 'worker']),
-  registry: z.union([
-    z.object({ type: z.literal('org'), org: z.string() }),
-    z.object({ type: z.literal('profile'), user: z.string() }),
-    z.object({ type: z.literal('repo'), owner: z.string(), repo: z.string() }),
-  ]),
+  // Registry union comes from registry/types.ts as the single source
+  // of truth — previously inlined here with looser constraints (no
+  // `.min(1)` on sub-fields). Import-based unifies the schema and
+  // adopts the stricter validation automatically. Ultrareview A9.
+  registry: RegistryConfigSchema,
   github_app: z.object({
     app_id: z.string(),
     install_id: z.string(),
@@ -163,7 +164,21 @@ export function readAgentConfig(projectDir: string): MacfAgentConfig | null {
   if (!existsSync(path)) return null;
   const raw = JSON.parse(readFileSync(path, 'utf-8'));
   const result = MacfAgentConfigSchema.safeParse(raw);
-  if (!result.success) return null;
+  if (!result.success) {
+    // Previously returned null silently on schema mismatch. That's a
+    // silent upgrade cliff: a newer CLI expecting a new required
+    // field against an old workspace config yielded no diagnostic —
+    // operators saw "workspace skipped" with no explanation. Emit
+    // the Zod error to stderr so the schema drift is visible.
+    // Ultrareview finding (upgrade cliff).
+    const formatted = result.error.issues
+      .map(i => `  - ${i.path.join('.')}: ${i.message}`)
+      .join('\n');
+    process.stderr.write(
+      `Warning: ${path} does not match current schema (run \`macf init --force\` to regenerate):\n${formatted}\n`,
+    );
+    return null;
+  }
   if (!result.data.versions) {
     process.stderr.write(
       `Warning: ${path} has no "versions" section (legacy config). Run \`macf init --force\` to resolve pins.\n`,
