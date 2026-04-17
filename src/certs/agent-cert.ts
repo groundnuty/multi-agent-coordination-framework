@@ -87,6 +87,14 @@ export async function generateAgentCert(config: {
         { type: 'ip', value: '127.0.0.1' },
         { type: 'dns', value: 'localhost' },
       ]),
+      // clientAuth EKU (#125, step 1 of DR-004 v2 EKU rollout). Peer
+      // certs are the mTLS client when calling peer /health, /notify,
+      // /sign — pair them with the server-side /notify EKU check
+      // landing in #121 after rotation. New peer certs carry the EKU
+      // immediately; existing peers adopt it on `macf certs rotate`.
+      new x509.ExtendedKeyUsageExtension([
+        '1.3.6.1.5.5.7.3.2',
+      ]),
     ],
   });
 
@@ -270,6 +278,13 @@ export async function signCSR(config: {
       new x509.SubjectAlternativeNameExtension([
         { type: 'ip', value: '127.0.0.1' },
         { type: 'dns', value: 'localhost' },
+      ]),
+      // clientAuth EKU — same rationale as generateAgentCert above.
+      // CSR-signed peer certs (via /sign endpoint) must also carry
+      // the EKU so they work once #121 tightens server-side
+      // verification. (#125, step 1 of DR-004 v2 EKU rollout)
+      new x509.ExtendedKeyUsageExtension([
+        '1.3.6.1.5.5.7.3.2',
       ]),
     ],
   });
