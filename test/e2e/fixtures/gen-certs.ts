@@ -39,9 +39,25 @@ export function generateTestCerts(): TestCerts {
     '-days', '1', '-subj', '/CN=test-ca',
   ], { stdio: 'pipe' });
 
-  // Write SAN extension file for agent cert (needed for 127.0.0.1)
+  // Write SAN + EKU extension file for agent cert.
+  // - subjectAltName: needed for 127.0.0.1 on server-side TLS.
+  // - extendedKeyUsage=clientAuth: required by src/https.ts since
+  //   #121 — every request (including /health) gets 403 if the peer
+  //   cert lacks the clientAuth EKU. Production peer certs emit it
+  //   via generateAgentCert + signCSR (#125). Test certs must match
+  //   or all E2E tests fail uniformly at the EKU gate, not at the
+  //   code path under test.
   writeFileSync(agentExt, [
     'subjectAltName=IP:127.0.0.1,DNS:localhost',
+    // Test certs double as server AND client: the agent cert terminates
+    // TLS server-side (server purpose: serverAuth) and authenticates the
+    // outbound TLS handshake (client purpose: clientAuth). Production
+    // splits these — routing-client certs get clientAuth only (#119),
+    // agent peer certs get clientAuth (#125) + serverAuth implicitly via
+    // @peculiar/x509's defaults. The test fixture has to carry both
+    // because the client and server roles are played by the same cert
+    // in one process.
+    'extendedKeyUsage=clientAuth,serverAuth',
   ].join('\n'));
 
   // Generate agent key and CSR, sign with CA + SAN
