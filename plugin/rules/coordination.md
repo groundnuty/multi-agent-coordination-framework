@@ -40,6 +40,24 @@ The rules here are topology-agnostic: they work whether the project uses a scien
 
 3. **Never remove your own agent label.** Status labels (`in-progress`, `in-review`, `blocked`) swap as work moves; assignment labels stay.
 
+4. **Issue body is frozen during active work.** Once an assignee has commented "picking up" / added an `in-progress` or `in-review` label / filed a PR referencing the issue, the body **is the assignee's working spec** and should not be edited. Scope corrections, additional requirements, clarifying details, regex fixes — all go as **follow-up comments** in the issue thread.
+
+   **Why:** editing the body mid-flight either changes the target under the assignee's feet (they started on spec v1, are now reading v2) or is silently lost (they don't re-fetch the body after starting). A thread comment is visible, acknowledged, and dated. Both silent failure modes are worse than the tiny friction of posting a comment.
+
+   **When body edits ARE fine:**
+
+   - Before anyone has engaged (issue just-filed, no `in-progress` label, no assignee comments)
+   - The assignee is the one editing their own issue body
+   - Fixing obvious typos or broken links (not scope)
+
+   **When body edits are NOT fine:**
+
+   - Assignee has commented "picking up" / is actively working
+   - An `in-progress` / `in-review` label is set
+   - A PR referencing the issue is open
+
+   If a correction is substantive enough that the assignee would want to re-read from scratch, consider closing the current issue and filing a replacement with a clear back-reference — rather than in-place body rewrite.
+
 ---
 
 ## Communication
@@ -48,7 +66,24 @@ The rules here are topology-agnostic: they work whether the project uses a scien
 
 2. **All discussion in issue comments, not PR comments.** Issue threads are visible on the Projects board and persist after PRs are merged or closed.
 
-3. **Concise comments** — 1-3 sentences unless detail is needed.
+3. **Verify your comment actually posted — describing ≠ doing.** Writing a review / LGTM / close-comment / status-update as prose in your response is NOT the same as posting it to GitHub. Only executed `gh issue comment` / `gh pr comment` / `gh issue close` tool calls reach the repo; chat output is invisible to other agents. Treat the verification step as a **mandatory tail**, not optional, on any review-producing turn.
+
+   **After any `gh ... comment` / `gh ... close`:**
+
+        gh issue view <N> --repo <owner>/<repo> --json comments \
+          --jq '.comments[-1].author.login'
+
+   Confirms (a) the comment exists, (b) attribution is correct (bot not user — see Token & Git Hygiene below).
+
+   **Signs you may have missed the tool call:**
+
+   - Your last action was describing a review / decision / close in prose
+   - The recipient's status comment says "waiting for review" or "ready for you to close" with no reply from you visible on the thread
+   - Time has passed since you "reviewed" but no downstream activity (merge, follow-up questions, re-review request) has happened
+
+   When in doubt, run the `gh issue view` check. Cheap to verify; costly to have the assignee wait on a review that never arrived.
+
+4. **Concise comments** — 1-3 sentences unless detail is needed.
 
 ---
 
