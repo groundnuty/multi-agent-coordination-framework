@@ -203,6 +203,16 @@ We maintain a GitHub [Projects board](https://github.com/groundnuty/macf/project
 - **[Research corpus (16)](research/)** — literature reviews, empirical analysis, comparison to prior multi-agent work.
 - **[`coordination.md`](plugin/rules/coordination.md)** — canonical cross-cutting rules distributed to every agent workspace. Single source of truth; `macf rules refresh` propagates updates.
 
+## Related repositories
+
+MACF spans three repos, each with a distinct lifecycle:
+
+- **[`groundnuty/macf`](https://github.com/groundnuty/macf)** (this repo) — CLI, design decisions, phase specs, research, plugin source, and the `coordination.md` rule-set. Ships the `macf` command.
+- **[`groundnuty/macf-actions`](https://github.com/groundnuty/macf-actions)** — reusable GitHub Actions workflow that routes issue / comment / PR / check-suite events to agents' tmux sessions (Stage 2) or to their channel endpoints (Stage 3, mTLS). Consumed via `uses: groundnuty/macf-actions/.github/workflows/agent-router.yml@v2` in coordination repos.
+- **[`groundnuty/macf-marketplace`](https://github.com/groundnuty/macf-marketplace)** — Claude Code plugin marketplace hosting the `macf-agent` plugin (skills: `/macf-status`, `/macf-peers`, `/macf-ping`, `/macf-issues`; agent identity templates; hooks). `macf init` / `macf update` fetch the plugin at a pinned tag into `<workspace>/.macf/plugin/`; `claude.sh` loads it via `--plugin-dir`.
+
+Releases are tag-versioned per repo; consumers pin to major tags (`@v1`, `@v2`) for routing and to exact versions (`0.1.0`) for the plugin. Design rationale in [DR-013](design/decisions/DR-013-plugin-distribution.md).
+
 ## Status
 
 - **Phases P1–P7**: shipped and on main
@@ -224,3 +234,111 @@ Contributions welcome. File an issue first to discuss scope for anything beyond 
 ## License
 
 MIT (see [LICENSE](LICENSE)).
+
+## Appendix — example configs
+
+Real files, taken from a live deployment. Identifiers and IP addresses replaced with placeholders.
+
+### `agent-config.json` (in the coordination repo's `.github/` directory)
+
+Populated by `macf repo-init`. Read by the routing workflow to decide where to deliver events.
+
+```json
+{
+  "agents": {
+    "code-agent": {
+      "app_name": "macf-code-agent",
+      "host": "<agent-vm-tailscale-ip>",
+      "tmux_session": "project-name",
+      "tmux_window": "code-agent",
+      "tmux_bin": "tmux",
+      "ssh_user": "ubuntu",
+      "ssh_key_secret": "AGENT_SSH_KEY",
+      "workspace_dir": "/home/ubuntu/repos/<owner>/<code-agent-workspace>",
+      "port": 8847
+    },
+    "science-agent": {
+      "app_name": "macf-science-agent",
+      "host": "<agent-vm-tailscale-ip>",
+      "tmux_session": "project-name",
+      "tmux_window": "science-agent",
+      "tmux_bin": "tmux",
+      "ssh_user": "ubuntu",
+      "ssh_key_secret": "AGENT_SSH_KEY",
+      "workspace_dir": "/home/ubuntu/repos/<owner>/<science-agent-workspace>",
+      "port": 8848
+    }
+  },
+  "label_to_status": {
+    "in-progress": "In Progress",
+    "in-review": "In Review",
+    "blocked": "Blocked"
+  }
+}
+```
+
+Field notes:
+
+- `app_name` — the GitHub App slug (used to compute the bot username `<app_name>[bot]` for @mention matching)
+- `host` + `port` — agent's Tailscale IP and channel-server port (Stage 3 mTLS transport only; Stage 2 uses SSH and ignores port)
+- `tmux_session` + `tmux_window` — where the routing workflow delivers the event via `tmux send-keys` (Stage 2)
+- `ssh_key_secret` — repo secret holding the SSH key for VM access
+- `workspace_dir` — the target workspace's path on the VM (for secondary agents whose workspace isn't the coordination repo)
+- `label_to_status` — maps status labels to Projects-V2 board column names
+
+### `claude.sh` (at workspace root)
+
+Launcher script written by `macf init` and refreshed by `macf update`. **Managed — do not edit directly.** Template lives in [`src/cli/claude-sh.ts`](src/cli/claude-sh.ts).
+
+```bash
+#!/usr/bin/env bash
+set -euo pipefail
+
+# MACF Agent Launcher: code-agent
+# This file is managed by `macf`. Do not edit directly — edits are
+# overwritten on the next `macf update`. The template lives at
+# groundnuty/macf:src/cli/claude-sh.ts.
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+cd "$SCRIPT_DIR"
+
+export MACF_AGENT_NAME="code-agent"
+export MACF_PROJECT="project-name"
+export MACF_AGENT_TYPE="permanent"
+export MACF_AGENT_ROLE="code-agent"
+export APP_ID="<YOUR_APP_ID>"
+export INSTALL_ID="<YOUR_INSTALL_ID>"
+export KEY_PATH=".github-app-key.pem"
+export MACF_CA_CERT="$HOME/.macf/certs/project-name/ca-cert.pem"
+export MACF_CA_KEY="$HOME/.macf/certs/project-name/ca-key.pem"
+export MACF_AGENT_CERT="$SCRIPT_DIR/.macf/certs/agent-cert.pem"
+export MACF_AGENT_KEY="$SCRIPT_DIR/.macf/certs/agent-key.pem"
+export MACF_LOG_PATH="$SCRIPT_DIR/.macf/logs/channel.log"
+export MACF_DEBUG="${MACF_DEBUG:-false}"
+
+# Bot token generation — fail loud. The helper validates the ghs_ prefix
+# and surfaces diagnostics (clock drift, bad key, wrong App/install ID).
+# Do NOT inline the bare CLI here — without pipefail, a failed fetch piped
+# through jq would succeed, GH_TOKEN would become "null", and Claude Code
+# would silently fall back to stored `gh auth login` as the user. See
+# coordination.md Token & Git Hygiene.
+GH_TOKEN=$("$SCRIPT_DIR/.claude/scripts/macf-gh-token.sh" \
+    --app-id "$APP_ID" --install-id "$INSTALL_ID" --key "$KEY_PATH") || {
+  echo "FATAL: bot token generation failed — see stderr above." >&2
+  exit 1
+}
+export GH_TOKEN
+
+export GIT_AUTHOR_NAME="code-agent[bot]"
+export GIT_COMMITTER_NAME="code-agent[bot]"
+
+echo "Starting code-agent..."
+exec claude --plugin-dir "$SCRIPT_DIR/.macf/plugin" "$@"
+```
+
+What this launcher handles:
+
+- **Identity exports** — `APP_ID`, `INSTALL_ID`, `KEY_PATH` read from `.macf/macf-agent.json`
+- **Cert paths** — per-project CA at `~/.macf/certs/<project>/`, per-workspace agent cert under `.macf/certs/`
+- **Fail-loud token refresh** — the `macf-gh-token.sh` helper validates the `ghs_` token prefix; if it fails, the launcher exits rather than letting Claude Code silently fall back to a user token
+- **Plugin loading** — `--plugin-dir` points at the version pinned by `macf init`, so new CLI versions don't break older agent sessions until `macf update` runs
