@@ -51,6 +51,16 @@ jobs:
 
       - uses: jetify-com/devbox-install-action@v0.15.0
 
+      # Install node deps before running E2E. Unlike `make check` which
+      # chains `install` as a prerequisite, the `test-e2e` target runs
+      # vitest directly — so CI runners with empty node_modules need an
+      # explicit install step. First E2E workflow run (post-#152 merge,
+      # 2026-04-20) surfaced this the obvious way: vitest not found,
+      # workflow failure, auto-opened #154 per design. The workflow
+      # worked; the dependency was missing. Fix is the install step.
+      - name: Install deps
+        run: make -f dev.mk install
+
       - name: Run E2E suite
         run: make -f dev.mk test-e2e
 
