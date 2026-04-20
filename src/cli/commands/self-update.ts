@@ -98,16 +98,35 @@ export function selfUpdate(sourceRepoDir: string): SelfUpdateResult {
   console.log(`Fast-forwarding ${previousCommit.slice(0, 7)} → ${remoteCommit.slice(0, 7)}...`);
   git(sourceRepoDir, 'merge', '--ff-only', 'origin/main');
 
+  // Only reinstall deps when package-lock.json actually changed between
+  // commits. `npm ci` is load-bearing when deps move (nukes node_modules
+  // and reinstalls from lockfile — correctness-critical for a rebuild)
+  // but on the common case where a PR touches only `src/`, it's
+  // minutes of wasted cold-cache time. Caught in the post-#140 audit
+  // pass, 2026-04-20. `git diff --quiet` exits 0 on no-diff, non-zero
+  // on any diff — exactly the signal we want.
+  let lockChanged = false;
+  try {
+    execFileSync(
+      'git',
+      ['diff', '--quiet', previousCommit, remoteCommit, '--', 'package-lock.json'],
+      { cwd: sourceRepoDir, stdio: 'ignore' },
+    );
+  } catch {
+    lockChanged = true;
+  }
+  if (lockChanged) {
+    console.log('package-lock.json changed; will run `npm ci` to refresh node_modules.');
+  } else {
+    console.log('package-lock.json unchanged; skipping `npm ci` (deps already up-to-date).');
+  }
+
   if (process.env['MACF_SELF_UPDATE_SKIP_BUILD'] !== '1') {
-    console.log('Running `npm ci && npm run build` to refresh dist/...');
-    execFileSync('npm', ['ci'], {
-      cwd: sourceRepoDir,
-      stdio: 'inherit',
-    });
-    execFileSync('npm', ['run', 'build'], {
-      cwd: sourceRepoDir,
-      stdio: 'inherit',
-    });
+    if (lockChanged) {
+      execFileSync('npm', ['ci'], { cwd: sourceRepoDir, stdio: 'inherit' });
+    }
+    console.log('Running `npm run build` to refresh dist/...');
+    execFileSync('npm', ['run', 'build'], { cwd: sourceRepoDir, stdio: 'inherit' });
   }
 
   const newCommit = git(sourceRepoDir, 'rev-parse', 'HEAD');

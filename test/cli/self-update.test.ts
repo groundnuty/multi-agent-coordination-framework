@@ -143,4 +143,47 @@ describe('selfUpdate', () => {
     expect(git(local, 'rev-parse', 'HEAD')).toBe(newHead);
     logSpy.mockRestore();
   });
+
+  // Post-#140-audit finding: `npm ci` was running unconditionally after
+  // every ff-merge. When package-lock.json didn't change between
+  // commits, this wasted cold-cache minutes. Now conditional on a
+  // `git diff --quiet` on the lockfile.
+  describe('conditional npm ci (audit fix)', () => {
+    it('skips `npm ci` when package-lock.json did not change', () => {
+      // Upstream advances with no lockfile change.
+      const pusher = join(tmpRoot, 'pusher-no-lock-change');
+      execFileSync('git', ['clone', '-q', '-b', 'main', upstream, pusher], { stdio: 'ignore' });
+      git(pusher, 'config', 'user.email', 'test@example.invalid');
+      git(pusher, 'config', 'user.name', 'Test');
+      git(pusher, 'commit', '--allow-empty', '-q', '-m', 'src-only change');
+      execFileSync('git', ['-C', pusher, 'push', '-q', 'origin', 'main'], { stdio: 'ignore' });
+
+      const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+      selfUpdate(local);
+      const logged = logSpy.mock.calls.flat().join('\n');
+      expect(logged).toMatch(/package-lock\.json unchanged.*skipping/i);
+      expect(logged).not.toMatch(/will run `npm ci`/);
+      logSpy.mockRestore();
+    });
+
+    it('runs `npm ci` when package-lock.json changed', () => {
+      // Upstream advance that modifies package-lock.json.
+      const pusher = join(tmpRoot, 'pusher-lock-change');
+      execFileSync('git', ['clone', '-q', '-b', 'main', upstream, pusher], { stdio: 'ignore' });
+      git(pusher, 'config', 'user.email', 'test@example.invalid');
+      git(pusher, 'config', 'user.name', 'Test');
+      writeFileSync(join(pusher, 'package-lock.json'), '{"lockfileVersion": 3}\n');
+      git(pusher, 'add', 'package-lock.json');
+      git(pusher, 'commit', '-q', '-m', 'bump dep');
+      execFileSync('git', ['-C', pusher, 'push', '-q', 'origin', 'main'], { stdio: 'ignore' });
+
+      const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+      selfUpdate(local);
+      const logged = logSpy.mock.calls.flat().join('\n');
+      expect(logged).toMatch(/package-lock\.json changed.*will run `npm ci`/i);
+      // MACF_SELF_UPDATE_SKIP_BUILD=1 prevents actual npm ci execution
+      // in tests, so we only assert on the decision log line.
+      logSpy.mockRestore();
+    });
+  });
 });

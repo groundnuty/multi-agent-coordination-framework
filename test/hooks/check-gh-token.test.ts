@@ -157,6 +157,73 @@ describe('check-gh-token.sh (hook)', () => {
       });
       expect(r.status).toBe(2);
     });
+
+    // Shell-wrapper bypass — caught by post-#140 audit. `bash -c "gh ..."`
+    // and `sh -c '...'` invocations were a trivial bypass in the original
+    // regex because `bash`/`sh` weren't in the wrapper allowlist and the
+    // `gh` inside the quoted string wasn't preceded by an allowed
+    // delimiter. The -c flag executes the quoted string AS A COMMAND,
+    // so gh inside it IS an invocation (unlike `echo "gh is cool"` where
+    // gh is just literal data).
+    it('blocks `bash -c "gh issue close"` when token is bad (shell-wrapper bypass)', () => {
+      const r = runHook({
+        command: 'bash -c "gh issue close 42"',
+        env: {},
+      });
+      expect(r.status).toBe(2);
+    });
+
+    it('blocks `bash -c \'gh pr merge\'` (single-quoted form)', () => {
+      const r = runHook({
+        command: "bash -c 'gh pr merge 1'",
+        env: {},
+      });
+      expect(r.status).toBe(2);
+    });
+
+    it('blocks `sh -c "gh api user"` when token is bad', () => {
+      const r = runHook({
+        command: 'sh -c "gh api user"',
+        env: {},
+      });
+      expect(r.status).toBe(2);
+    });
+
+    it('blocks `sudo bash -c "gh issue close"` (chained shell wrapper)', () => {
+      const r = runHook({
+        command: 'sudo bash -c "gh issue close 42"',
+        env: {},
+      });
+      expect(r.status).toBe(2);
+    });
+
+    it('blocks `bash -lc "gh ..."` (login shell flag combined with -c)', () => {
+      // `-lc` is a shorthand for `-l -c` that some operators use. The
+      // regex tolerates the `l` prefix.
+      const r = runHook({
+        command: 'bash -lc "gh issue close 42"',
+        env: {},
+      });
+      expect(r.status).toBe(2);
+    });
+
+    it('blocks `sh -c "git push origin main"` (git-push variant)', () => {
+      const r = runHook({
+        command: 'sh -c "git push origin main"',
+        env: {},
+      });
+      expect(r.status).toBe(2);
+    });
+
+    it('still ALLOWS `echo "gh is cool"` (string-mention, not an invocation)', () => {
+      // Regression guard — the shell-wrapper fix must not trip on
+      // literal `gh` text inside non-executing quoted strings.
+      const r = runHook({
+        command: 'echo "gh is cool"',
+        env: {},
+      });
+      expect(r.status).toBe(0);
+    });
   });
 
   describe('override — MACF_SKIP_TOKEN_CHECK', () => {
