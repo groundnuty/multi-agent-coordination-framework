@@ -34,14 +34,20 @@ COMMAND="$(jq -r '.tool_input.command // ""' <<<"$INPUT_JSON" 2>/dev/null || ech
 GH_PATTERN='(^|[[:space:];|&])(sudo[[:space:]]+|env[[:space:]]+([A-Za-z_][A-Za-z_0-9]*=[^[:space:]]*[[:space:]]+)*|watch[[:space:]]+|ionice[[:space:]]+|setsid[[:space:]]+|nice[[:space:]]+|time[[:space:]]+|[A-Za-z_][A-Za-z_0-9]*=[^[:space:]]*[[:space:]]+)*(gh[[:space:]]|git[[:space:]]+push([[:space:]]|$))'
 
 # Shell-wrapper bypass regex: catches `bash -c "gh ..."`, `sh -c '...'`,
-# and `zsh -c` / `-lc` variants. The shell's -c flag executes the
-# quoted string AS A COMMAND, so `gh` inside it IS a real invocation —
-# unlike `echo "gh is cool"` where the same text is just literal data.
+# `zsh -c`, and flag-prefixed forms like `bash -x -c`, `bash -xc`,
+# `bash -lc`. The shell's -c flag executes its quoted argument AS A
+# COMMAND, so `gh` inside it IS a real invocation — unlike
+# `echo "gh is cool"` where the same text is just literal data.
 # Without this branch, `bash -c "gh issue close"` was a trivial bypass:
 # `bash` isn't in the wrapper allowlist, and `gh` inside the quotes
 # isn't preceded by one of the allowed delimiters `[[:space:];|&]`.
 # Caught in the post-#140 audit pass, 2026-04-20.
-SHELL_C_PATTERN='(^|[[:space:];|&])(sudo[[:space:]]+|env[[:space:]]+([A-Za-z_][A-Za-z_0-9]*=[^[:space:]]*[[:space:]]+)*|[A-Za-z_][A-Za-z_0-9]*=[^[:space:]]*[[:space:]]+)*(bash|sh|zsh)[[:space:]]+-l?c[[:space:]]+[^[:space:]].*(gh[[:space:]]|git[[:space:]]+push([[:space:]]|$))'
+#
+# Flag handling: `(-[a-zA-Z]+[[:space:]]+)*` allows zero or more
+# separate flag groups like `-x ` or `-e `. Final flag uses
+# `-[a-zA-Z]*c` — must end in `c` (the `-c`-ness), optional letters
+# before it cover combined forms like `-xc`, `-lc`, `-exc`.
+SHELL_C_PATTERN='(^|[[:space:];|&])(sudo[[:space:]]+|env[[:space:]]+([A-Za-z_][A-Za-z_0-9]*=[^[:space:]]*[[:space:]]+)*|[A-Za-z_][A-Za-z_0-9]*=[^[:space:]]*[[:space:]]+)*(bash|sh|zsh)[[:space:]]+(-[a-zA-Z]+[[:space:]]+)*-[a-zA-Z]*c[[:space:]]+[^[:space:]].*(gh[[:space:]]|git[[:space:]]+push([[:space:]]|$))'
 
 if [[ ! "$COMMAND" =~ $GH_PATTERN ]] && [[ ! "$COMMAND" =~ $SHELL_C_PATTERN ]]; then
   # Not a gh/git-push command — allow without checking token.

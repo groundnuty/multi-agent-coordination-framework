@@ -29,7 +29,7 @@ describe('createMcpChannel', () => {
     createMcpChannel({ agentName: 'code-agent' });
 
     expect(Server).toHaveBeenCalledWith(
-      { name: 'macf-code-agent', version: '0.1.0' },
+      { name: 'macf-code-agent', version: '0.1.1' },
       expect.objectContaining({
         capabilities: { experimental: { 'claude/channel': {} } },
         instructions: expect.stringContaining('issue_routed'),

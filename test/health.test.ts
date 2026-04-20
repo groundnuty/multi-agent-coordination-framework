@@ -20,7 +20,7 @@ describe('createHealthState', () => {
     expect(health.type).toBe('permanent');
     expect(health.uptime_seconds).toBe(0);
     expect(health.current_issue).toBeNull();
-    expect(health.version).toBe('0.1.0');
+    expect(health.version).toBe('0.1.1');
     expect(health.last_notification).toBeNull();
   });
 

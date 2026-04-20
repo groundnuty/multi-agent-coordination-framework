@@ -215,6 +215,33 @@ describe('check-gh-token.sh (hook)', () => {
       expect(r.status).toBe(2);
     });
 
+    // Flag-prefixed shell forms — caught in the meta-audit on PR #153.
+    // Operators using bash debug flags (`-x` xtrace) before `-c` was a
+    // real bypass in the initial SHELL_C_PATTERN.
+    it('blocks `bash -x -c "gh ..."` (xtrace flag before -c)', () => {
+      const r = runHook({
+        command: 'bash -x -c "gh issue close 42"',
+        env: {},
+      });
+      expect(r.status).toBe(2);
+    });
+
+    it('blocks `bash -xc "gh ..."` (combined xtrace + -c flag)', () => {
+      const r = runHook({
+        command: 'bash -xc "gh issue close 42"',
+        env: {},
+      });
+      expect(r.status).toBe(2);
+    });
+
+    it('blocks `bash -e -xc "gh ..."` (multiple flags + combined form)', () => {
+      const r = runHook({
+        command: 'bash -e -xc "gh issue close 42"',
+        env: {},
+      });
+      expect(r.status).toBe(2);
+    });
+
     it('still ALLOWS `echo "gh is cool"` (string-mention, not an invocation)', () => {
       // Regression guard — the shell-wrapper fix must not trip on
       // literal `gh` text inside non-executing quoted strings.
