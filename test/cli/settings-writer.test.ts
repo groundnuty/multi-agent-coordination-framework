@@ -1,0 +1,153 @@
+/**
+ * Tests for `src/cli/settings-writer.ts` — merge-preserving writer
+ * for `<workspace>/.claude/settings.json` that installs the PreToolUse
+ * entry for `check-gh-token.sh` without clobbering operator-authored
+ * settings (per #140).
+ */
+import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { installGhTokenHook, MACF_HOOK_COMMAND } from '../../src/cli/settings-writer.js';
+
+describe('installGhTokenHook', () => {
+  let tmpRoot: string;
+  let settingsPath: string;
+
+  beforeEach(() => {
+    tmpRoot = mkdtempSync(join(tmpdir(), 'macf-settings-test-'));
+    settingsPath = join(tmpRoot, '.claude', 'settings.json');
+  });
+
+  afterEach(() => {
+    rmSync(tmpRoot, { recursive: true, force: true });
+  });
+
+  it('creates .claude/settings.json when missing, with the hook entry', () => {
+    installGhTokenHook(tmpRoot);
+
+    expect(existsSync(settingsPath)).toBe(true);
+    const s = JSON.parse(readFileSync(settingsPath, 'utf-8'));
+    expect(s.hooks.PreToolUse).toHaveLength(1);
+    expect(s.hooks.PreToolUse[0].matcher).toBe('Bash');
+    expect(s.hooks.PreToolUse[0].hooks[0].command).toBe(MACF_HOOK_COMMAND);
+    expect(s.hooks.PreToolUse[0].hooks[0].type).toBe('command');
+  });
+
+  it('preserves existing unrelated settings keys', () => {
+    mkdirSync(join(tmpRoot, '.claude'), { recursive: true });
+    writeFileSync(settingsPath, JSON.stringify({
+      model: 'opus',
+      env: { DEBUG: 'true' },
+    }, null, 2));
+
+    installGhTokenHook(tmpRoot);
+
+    const s = JSON.parse(readFileSync(settingsPath, 'utf-8'));
+    expect(s.model).toBe('opus');
+    expect(s.env).toEqual({ DEBUG: 'true' });
+    expect(s.hooks.PreToolUse[0].hooks[0].command).toBe(MACF_HOOK_COMMAND);
+  });
+
+  it('preserves other PreToolUse entries when adding ours', () => {
+    mkdirSync(join(tmpRoot, '.claude'), { recursive: true });
+    writeFileSync(settingsPath, JSON.stringify({
+      hooks: {
+        PreToolUse: [
+          { matcher: 'Edit', hooks: [{ type: 'command', command: './user-edit-hook.sh' }] },
+        ],
+      },
+    }, null, 2));
+
+    installGhTokenHook(tmpRoot);
+
+    const s = JSON.parse(readFileSync(settingsPath, 'utf-8'));
+    expect(s.hooks.PreToolUse).toHaveLength(2);
+    const userHook = s.hooks.PreToolUse.find((e: { matcher: string }) => e.matcher === 'Edit');
+    const macfHook = s.hooks.PreToolUse.find((e: { matcher: string }) => e.matcher === 'Bash');
+    expect(userHook).toBeDefined();
+    expect(userHook.hooks[0].command).toBe('./user-edit-hook.sh');
+    expect(macfHook).toBeDefined();
+    expect(macfHook.hooks[0].command).toBe(MACF_HOOK_COMMAND);
+  });
+
+  it('preserves other hook event types (SessionStart, Stop, etc.)', () => {
+    mkdirSync(join(tmpRoot, '.claude'), { recursive: true });
+    writeFileSync(settingsPath, JSON.stringify({
+      hooks: {
+        SessionStart: [{ hooks: [{ type: 'command', command: './user-session-hook.sh' }] }],
+        Stop: [{ hooks: [{ type: 'command', command: './user-stop-hook.sh' }] }],
+      },
+    }, null, 2));
+
+    installGhTokenHook(tmpRoot);
+
+    const s = JSON.parse(readFileSync(settingsPath, 'utf-8'));
+    expect(s.hooks.SessionStart).toHaveLength(1);
+    expect(s.hooks.Stop).toHaveLength(1);
+    expect(s.hooks.PreToolUse[0].hooks[0].command).toBe(MACF_HOOK_COMMAND);
+  });
+
+  it('is idempotent — second call does not duplicate the MACF entry', () => {
+    installGhTokenHook(tmpRoot);
+    installGhTokenHook(tmpRoot);
+
+    const s = JSON.parse(readFileSync(settingsPath, 'utf-8'));
+    const macfEntries = s.hooks.PreToolUse.filter((e: { hooks: { command: string }[] }) =>
+      e.hooks.some((h) => h.command === MACF_HOOK_COMMAND),
+    );
+    expect(macfEntries).toHaveLength(1);
+  });
+
+  it('refreshes a stale MACF entry (replaces by command-path match)', () => {
+    mkdirSync(join(tmpRoot, '.claude'), { recursive: true });
+    writeFileSync(settingsPath, JSON.stringify({
+      hooks: {
+        PreToolUse: [
+          {
+            matcher: 'Bash',
+            hooks: [{ type: 'command', command: '.claude/scripts/check-gh-token.sh --old-flag' }],
+          },
+        ],
+      },
+    }, null, 2));
+
+    installGhTokenHook(tmpRoot);
+
+    const s = JSON.parse(readFileSync(settingsPath, 'utf-8'));
+    const macfEntries = s.hooks.PreToolUse.filter((e: { hooks: { command: string }[] }) =>
+      e.hooks.some((h) => h.command.includes('check-gh-token.sh')),
+    );
+    expect(macfEntries).toHaveLength(1);
+    expect(macfEntries[0].hooks[0].command).toBe(MACF_HOOK_COMMAND);
+    // --old-flag should be gone.
+    expect(macfEntries[0].hooks[0].command).not.toContain('--old-flag');
+  });
+
+  it('handles malformed settings.json by failing loud (does not silently clobber)', () => {
+    mkdirSync(join(tmpRoot, '.claude'), { recursive: true });
+    writeFileSync(settingsPath, '{ not valid json');
+
+    expect(() => installGhTokenHook(tmpRoot)).toThrow(/settings\.json/i);
+    // File should NOT have been overwritten.
+    expect(readFileSync(settingsPath, 'utf-8')).toBe('{ not valid json');
+  });
+
+  it('creates .claude/ directory if missing', () => {
+    // tmpRoot exists but .claude/ does not yet.
+    expect(existsSync(join(tmpRoot, '.claude'))).toBe(false);
+
+    installGhTokenHook(tmpRoot);
+
+    expect(existsSync(join(tmpRoot, '.claude'))).toBe(true);
+    expect(existsSync(settingsPath)).toBe(true);
+  });
+
+  it('writes pretty-printed JSON (readable for operators)', () => {
+    installGhTokenHook(tmpRoot);
+    const raw = readFileSync(settingsPath, 'utf-8');
+    // Pretty-printed JSON has newlines and indentation.
+    expect(raw).toContain('\n');
+    expect(raw).toMatch(/^\{\n  /); // starts with `{` then newline+2-space indent
+  });
+});

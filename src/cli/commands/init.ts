@@ -10,6 +10,7 @@ import {
 import { loadCA } from '../../certs/ca.js';
 import { generateAgentCert } from '../../certs/agent-cert.js';
 import { copyCanonicalRules, copyCanonicalScripts } from '../rules.js';
+import { installGhTokenHook } from '../settings-writer.js';
 import { fetchPluginToWorkspace } from '../plugin-fetcher.js';
 import { writeClaudeSh } from '../claude-sh.js';
 import {
@@ -226,6 +227,13 @@ export async function initAgent(projectDir: string, opts: InitOptions): Promise<
   if (copiedScripts.length > 0) {
     console.log(`  Scripts: copied ${copiedScripts.length} helper script(s) to .claude/scripts/`);
   }
+
+  // Install the attribution-trap PreToolUse hook entry in
+  // .claude/settings.json (merge-preserving). Per #140, structurally
+  // blocks gh / git push calls when GH_TOKEN isn't a ghs_ bot token —
+  // behavioral controls recurred the trap 5 times in a single day.
+  installGhTokenHook(absDir);
+  console.log(`  Hooks: installed gh-token guard in .claude/settings.json`);
 
   // Fetch the macf-agent plugin at the pinned version and place it at
   // .macf/plugin/ so claude.sh can use --plugin-dir (per DR-013).

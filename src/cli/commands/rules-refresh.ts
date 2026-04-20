@@ -19,10 +19,12 @@
  */
 import { existsSync, statSync } from 'node:fs';
 import { copyCanonicalRules, copyCanonicalScripts } from '../rules.js';
+import { installGhTokenHook } from '../settings-writer.js';
 
 export interface RulesRefreshResult {
   readonly rules: readonly string[];
   readonly scripts: readonly string[];
+  readonly hookInstalled: boolean;
 }
 
 /**
@@ -43,6 +45,11 @@ export function rulesRefresh(targetDir: string): RulesRefreshResult {
   const rules = copyCanonicalRules(targetDir);
   const scripts = copyCanonicalScripts(targetDir);
 
+  // Refresh the attribution-trap PreToolUse hook entry (merge-preserving,
+  // per #140). Keeps non-init'd workspaces (the macf repo itself, CV,
+  // etc.) in sync with the same structural guard as macf-init'd agents.
+  installGhTokenHook(targetDir);
+
   if (rules.length > 0) {
     console.log(`Refreshed ${rules.length} canonical rule file(s) in .claude/rules/:`);
     for (const name of rules) console.log(`  ${name}`);
@@ -55,5 +62,7 @@ export function rulesRefresh(targetDir: string): RulesRefreshResult {
     for (const name of scripts) console.log(`  ${name}`);
   }
 
-  return { rules, scripts };
+  console.log('Refreshed gh-token guard hook in .claude/settings.json');
+
+  return { rules, scripts, hookInstalled: true };
 }
