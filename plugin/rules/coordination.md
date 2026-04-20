@@ -144,6 +144,8 @@ The helper is distributed to every agent workspace by `macf init` and refreshed 
 
 6. **Never commit** `.github-app-key.pem`, tokens, or secrets. `.gitignore` should exclude them, but also verify untracked files before staging.
 
+7. **Structural enforcement: the PreToolUse hook.** Every workspace ships with `.claude/scripts/check-gh-token.sh`, wired into `.claude/settings.json` as a PreToolUse hook on `Bash`. It intercepts every `gh` and `git push` invocation (including wrapped forms like `sudo gh ...`, `GH_TOKEN=x gh ...`, `env FOO=bar gh ...`) and blocks with `exit 2` if `GH_TOKEN` is missing or doesn't have the `ghs_` prefix. This moves enforcement from operator discipline (rules 1-3 above) to the harness itself — without it, the attribution trap recurred 5 times in a single day (see #140). If you ever need to run a knowingly user-attributed op (e.g., `gh auth login` during onboarding), set `MACF_SKIP_TOKEN_CHECK=1` for that one call. The hook is installed by `macf init`, refreshed by `macf update` and `macf rules refresh`.
+
 ---
 
 ## When to Read vs. Modify These Rules

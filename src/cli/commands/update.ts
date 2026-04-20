@@ -10,6 +10,7 @@ import { existsSync, readdirSync } from 'node:fs';
 import { readAgentConfig, writeAgentConfig, tokenSourceFromConfig } from '../config.js';
 import { resolveLatestVersions } from '../version-resolver.js';
 import { copyCanonicalRules, copyCanonicalScripts } from '../rules.js';
+import { installGhTokenHook } from '../settings-writer.js';
 import { fetchPluginToWorkspace, workspacePluginDir } from '../plugin-fetcher.js';
 import { writeClaudeSh } from '../claude-sh.js';
 import { createClientFromConfig } from '../registry-helper.js';
@@ -154,6 +155,12 @@ export async function update(
   if (refreshedScripts.length > 0) {
     console.log(`Refreshed ${refreshedScripts.length} helper script(s) in .claude/scripts/`);
   }
+
+  // Refresh the attribution-trap PreToolUse hook entry (merge-preserving,
+  // per #140). Picks up on existing workspaces + keeps the entry current
+  // if the CLI changes its form across releases.
+  installGhTokenHook(projectDir);
+  console.log(`Refreshed gh-token guard hook in .claude/settings.json`);
 
   // Regenerate claude.sh unconditionally — the launcher template changes
   // over time (e.g., #60 added --plugin-dir) and workspaces need those
