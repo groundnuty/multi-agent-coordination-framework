@@ -15,6 +15,17 @@ export interface TestCerts {
   readonly agentKey: string;
   readonly untrustedCert: string;
   readonly untrustedKey: string;
+  /**
+   * CA-signed cert that LACKS the clientAuth EKU. Passes TLS trust
+   * (same CA as agentCert) but fails the #121 EKU gate in src/https.ts.
+   * Used by health-eku.test.ts to exercise the 403 reject path E2E —
+   * without this, the only test of that gate is the unit-level
+   * peerCertHasClientAuthEKU predicate, which doesn't catch a
+   * regression where the predicate passes but the integration wiring
+   * at https.ts breaks (or vice versa).
+   */
+  readonly noEkuCert: string;
+  readonly noEkuKey: string;
 }
 
 export function generateTestCerts(): TestCerts {
@@ -29,6 +40,10 @@ export function generateTestCerts(): TestCerts {
   const agentExt = join(dir, 'agent-ext.cnf');
   const untrustedCert = join(dir, 'untrusted-cert.pem');
   const untrustedKey = join(dir, 'untrusted-key.pem');
+  const noEkuCert = join(dir, 'no-eku-cert.pem');
+  const noEkuKey = join(dir, 'no-eku-key.pem');
+  const noEkuCsr = join(dir, 'no-eku.csr');
+  const noEkuExt = join(dir, 'no-eku-ext.cnf');
 
   // Generate CA key and self-signed cert
   execFileSync('openssl', [
@@ -83,7 +98,44 @@ export function generateTestCerts(): TestCerts {
     '-days', '1', '-subj', '/CN=untrusted',
   ], { stdio: 'pipe' });
 
-  return { dir, caCert, caKey, agentCert, agentKey, untrustedCert, untrustedKey };
+  // Generate no-EKU cert: CA-signed (same CA as agentCert), so the TLS
+  // handshake's trust check passes. Critically, the extfile sets NO
+  // `extendedKeyUsage` at all — a cert with no EKU is treated by Node's
+  // TLS as valid-for-any-purpose (RFC 5280 §4.2.1.12), so it clears both
+  // the client-side server-purpose check AND the server-side
+  // client-purpose check at the TLS layer. Only src/https.ts's
+  // application-layer #121 check then rejects it — which is exactly the
+  // defense-in-depth case the #121 gate exists for. An old peer cert
+  // emitted before #125 has this exact shape (no EKU extension emitted
+  // at all). A cert with `serverAuth` alone would fail at TLS before
+  // ever reaching the application layer, so we can't use that.
+  writeFileSync(noEkuExt, [
+    'subjectAltName=IP:127.0.0.1,DNS:localhost',
+  ].join('\n'));
+  execFileSync('openssl', [
+    'genrsa', '-out', noEkuKey, '2048',
+  ], { stdio: 'pipe' });
+  execFileSync('openssl', [
+    'req', '-new', '-key', noEkuKey, '-out', noEkuCsr,
+    '-subj', '/CN=code-agent',
+  ], { stdio: 'pipe' });
+  execFileSync('openssl', [
+    'x509', '-req', '-in', noEkuCsr, '-CA', caCert, '-CAkey', caKey,
+    '-CAcreateserial', '-out', noEkuCert, '-days', '1',
+    '-extfile', noEkuExt,
+  ], { stdio: 'pipe' });
+
+  return {
+    dir,
+    caCert,
+    caKey,
+    agentCert,
+    agentKey,
+    untrustedCert,
+    untrustedKey,
+    noEkuCert,
+    noEkuKey,
+  };
 }
 
 export function cleanupTestCerts(certs: TestCerts): void {
