@@ -15,13 +15,16 @@ check: install typecheck lint test
 typecheck:
 	devbox run -- npx tsc --noEmit
 
-# Real compile — emits dist/ via tsc config. Matches `npm run build`.
-# Needed when installing the CLI globally (`npm link`) or publishing;
-# the dist/ that npm-link consumes must be rebuilt after source
-# changes. See #127 for the hard-to-debug failure mode surfaced
-# during the #125 / #126 EKU rollout step 2.
+# Real compile — emits dist/ via tsc config, then stamps
+# dist/.build-info.json via the npm postbuild hook so stale-dist
+# detection has data to work with (#144). Must go through
+# `npm run build`, not bare `npx tsc`, or the postbuild hook won't
+# fire. Needed when installing the CLI globally (`npm link`) or
+# publishing; the dist/ that npm-link consumes must be rebuilt after
+# source changes. See #127 for the hard-to-debug failure mode
+# surfaced during the #125 / #126 EKU rollout step 2.
 build:
-	devbox run -- npx tsc
+	devbox run -- npm run build
 
 lint:
 	devbox run -- npx eslint src/
