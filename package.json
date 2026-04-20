@@ -18,6 +18,7 @@
   },
   "scripts": {
     "build": "tsc",
+    "postbuild": "node scripts/write-build-info.mjs",
     "check": "tsc --noEmit && eslint src/ && vitest run",
     "lint": "eslint src/",
     "test": "vitest run",

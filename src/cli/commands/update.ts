@@ -9,8 +9,9 @@ import { createInterface } from 'node:readline';
 import { existsSync, readdirSync } from 'node:fs';
 import { readAgentConfig, writeAgentConfig, tokenSourceFromConfig } from '../config.js';
 import { resolveLatestVersions } from '../version-resolver.js';
-import { copyCanonicalRules, copyCanonicalScripts } from '../rules.js';
+import { copyCanonicalRules, copyCanonicalScripts, findCliPackageRoot } from '../rules.js';
 import { installGhTokenHook } from '../settings-writer.js';
+import { detectStaleDist, detectUnknownFreshness } from '../build-info.js';
 import { fetchPluginToWorkspace, workspacePluginDir } from '../plugin-fetcher.js';
 import { writeClaudeSh } from '../claude-sh.js';
 import { createClientFromConfig } from '../registry-helper.js';
@@ -138,6 +139,33 @@ export async function update(
   if (!config) {
     console.error('No macf-agent.json found. Run `macf init` first.');
     return 1;
+  }
+
+  // Stale-dist detection (#144): warn if the installed CLI's dist/ is
+  // behind the source repo's current HEAD, so operators catch silent
+  // no-op behavior before it bites them. Never blocks the update run.
+  const cliPackageRoot = findCliPackageRoot();
+  const stale = detectStaleDist(cliPackageRoot);
+  if (stale) {
+    console.warn(
+      `Warning: the installed macf CLI dist/ is stale.\n` +
+        `  built from: ${stale.buildCommit.slice(0, 7)} (at ${stale.builtAt})\n` +
+        `  source HEAD: ${stale.currentCommit.slice(0, 7)}\n` +
+        `  Features merged after ${stale.buildCommit.slice(0, 7)} will not apply.\n` +
+        `  Fix: run \`macf self-update\` (or \`cd ${cliPackageRoot} && npm run build\`).\n` +
+        `  Note: stale-dist detection only fires for CLI versions >= 0.1.1 (#144).\n`,
+    );
+  } else {
+    const unknown = detectUnknownFreshness(cliPackageRoot);
+    if (unknown) {
+      console.warn(
+        `Warning: cannot verify macf CLI dist/ freshness ` +
+          `(reason: ${unknown.reason}).\n` +
+          `  dist/.build-info.json is missing or incomplete — likely built via ` +
+          `\`npx tsc\` directly, skipping the canonical build path.\n` +
+          `  Fix: run \`cd ${cliPackageRoot} && npm run build\` to stamp build-info.\n`,
+      );
+    }
   }
 
   // Refresh canonical assets (coordination rules + helper scripts) on

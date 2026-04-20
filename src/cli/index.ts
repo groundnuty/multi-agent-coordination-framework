@@ -13,7 +13,9 @@ import { certsInit, certsRecover, certsRotate, issueRoutingClient } from './comm
 import { repoInit } from './commands/repo-init.js';
 import { rulesRefresh } from './commands/rules-refresh.js';
 import { runDoctor } from './commands/doctor.js';
+import { selfUpdate } from './commands/self-update.js';
 import { findProjectRoot } from './config.js';
+import { findCliPackageRoot } from './rules.js';
 
 /**
  * Resolve the project directory for project-scoped commands.
@@ -182,6 +184,21 @@ certs
       outDir: opts.outDir,
       validityDays,
     });
+  });
+
+program
+  .command('self-update')
+  .description(
+    'Pull origin/main + rebuild the installed CLI\'s dist/ (for npm-link dev installs). ' +
+    'Note: this command only helps CLI versions >= 0.1.1 (#144); pre-#144 installs were silent.',
+  )
+  .action(() => {
+    try {
+      selfUpdate(findCliPackageRoot());
+    } catch (err) {
+      console.error(`self-update failed: ${err instanceof Error ? err.message : String(err)}`);
+      process.exitCode = 1;
+    }
   });
 
 program

@@ -98,6 +98,8 @@ One-off test: `devbox run -- npx vitest run test/path/to/file.test.ts`
 
 **Workflow note (after #127):** `make -f dev.mk check` only runs `typecheck`, not `build`. If you've `npm link`ed the CLI for operator use and then modified source, run `make -f dev.mk build` before invoking the linked CLI — otherwise `dist/` is stale and you'll run yesterday's code. Surfaced the hard way during #125 / #126 EKU rollout.
 
+**Stale-dist detection (after #144):** `macf update` warns when the installed CLI's `dist/` is behind the source repo's current HEAD (build-info stamp comparison). Run `macf self-update` to pull origin/main + rebuild in one step. The `dev.mk build` target now routes through `npm run build` so the `postbuild` hook writes `dist/.build-info.json`. Direct `npx tsc` bypasses the hook and triggers a softer "can't verify freshness" warning on next `macf update`.
+
 ## Conventions
 
 - Immutable interfaces (`readonly` properties); avoid mutable schema types
@@ -123,6 +125,7 @@ One-off test: `devbox run -- npx vitest run test/path/to/file.test.ts`
 - `repo-init` — bootstrap a REPO for routing (agent-config.json, workflow, labels)
 - `doctor` — verify bot token permissions vs DR-019
 - `rules refresh` — distribute canonical rules/scripts into non-init'd workspaces
+- `self-update` — for npm-link dev installs: pull origin/main + rebuild `dist/` (#144)
 - `certs init / recover / rotate` — CA key lifecycle
 - `status / peers / cd / list` — operational helpers
 
