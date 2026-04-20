@@ -64,3 +64,45 @@ describe('coordination.md — Issue Lifecycle rule covers both failure modes (#1
     expect(body()).toMatch(/\.author\.login/);
   });
 });
+
+describe('coordination.md — issue body frozen during active work (#141)', () => {
+  it('codifies the body-freeze rule', () => {
+    const text = body();
+    expect(text).toMatch(/body (is frozen|is the assignee['s]+ working spec|should not be edited)/i);
+  });
+
+  it('names the triggers that freeze the body', () => {
+    const text = body();
+    expect(text).toMatch(/in-progress|in-review|picking up|actively working/i);
+  });
+
+  it('names comments as the channel for scope changes', () => {
+    const text = body();
+    expect(text).toMatch(/follow-up comment|thread comment|issue comment/i);
+  });
+
+  it('allows assignee to edit their own body', () => {
+    const text = body();
+    expect(text).toMatch(/assignee.*editing.*own|own issue body/i);
+  });
+});
+
+describe('coordination.md — verify comment actually posted (#143)', () => {
+  it('states that describing ≠ doing', () => {
+    const text = body();
+    expect(text).toMatch(
+      /describing.*not.*doing|describing.*not.*posting|writing.*is not.*posting|chat output is invisible|prose.*not.*same as posting/i,
+    );
+  });
+
+  it('names the canonical verification command', () => {
+    const text = body();
+    expect(text).toMatch(/gh issue view.*--json comments/);
+    expect(text).toMatch(/author\.login/);
+  });
+
+  it('treats the check as mandatory, not optional', () => {
+    const text = body();
+    expect(text).toMatch(/mandatory tail|not.*optional|treat this as (mandatory|required)/i);
+  });
+});
