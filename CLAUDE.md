@@ -100,6 +100,8 @@ One-off test: `devbox run -- npx vitest run test/path/to/file.test.ts`
 
 **Stale-dist detection (after #144):** `macf update` warns when the installed CLI's `dist/` is behind the source repo's current HEAD (build-info stamp comparison). Run `macf self-update` to pull origin/main + rebuild in one step. The `dev.mk build` target now routes through `npm run build` so the `postbuild` hook writes `dist/.build-info.json`. Direct `npx tsc` bypasses the hook and triggers a softer "can't verify freshness" warning on next `macf update`.
 
+**E2E runs on cadence (after #149):** `.github/workflows/e2e.yml` runs the E2E suite on every push to main + daily at 07:00 UTC + on `workflow_dispatch`. `make check` stays fast by not including E2E; the workflow catches fixture/gate drift within minutes instead of days (two silent-for-days cases surfaced in one session motivated the split). On failure, the workflow auto-opens (or appends to an existing) `code-agent`/`blocked` issue routed to code-agent's tmux via the router.
+
 ## Conventions
 
 - Immutable interfaces (`readonly` properties); avoid mutable schema types

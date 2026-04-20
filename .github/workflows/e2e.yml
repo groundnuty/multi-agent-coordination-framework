@@ -1,0 +1,116 @@
+name: E2E
+
+# Post-merge + cadence E2E suite (#149). The default CI gate
+# (ci.yml → `make check`) doesn't run E2E, so fixture/gate drift can
+# stay silent for days — surfaced twice in one session:
+#
+#   - #121 landed the clientAuth EKU gate on 2026-04-17; the E2E
+#     cert fixture wasn't updated, so every E2E test 403'd.
+#     Invisible until PR #148 tried to add new E2E cases 3 days later.
+#   - CLI-behavior changes that require a rebuild of dist/ can drift
+#     silently for the same reason (#126, #144).
+#
+# Running E2E post-merge catches fixture/gate drift within minutes of
+# landing. Daily cron catches external drift (e.g. upstream openssl
+# defaults shifting). Failures auto-open an issue (or update the
+# existing open one) so code-agent gets routed the breakage.
+#
+# Security note: all GitHub-context interpolations go through `env:`
+# rather than direct `${{ ... }}` expansion inside `run:` scripts.
+# Built-in `github.*` values used here are non-attacker-controlled
+# (sha, run_id, event_name, repository), but the env-var pattern is
+# best practice regardless — future edits that add user-controlled
+# inputs (issue titles, commit messages) stay safe-by-default.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'src/**'
+      - 'test/**'
+      - 'package.json'
+      - 'package-lock.json'
+      - 'tsconfig.json'
+      - 'dev.mk'
+      - 'devbox.json'
+  schedule:
+    # 07:00 UTC daily — off-hours vs. most commit windows, catches
+    # external-drift class without racing active PR merges.
+    - cron: '0 7 * * *'
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  e2e:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: jetify-com/devbox-install-action@v0.15.0
+
+      - name: Run E2E suite
+        run: make -f dev.mk test-e2e
+
+      - name: Auto-open / update issue on E2E failure
+        if: failure()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          COMMIT_SHA: ${{ github.sha }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          EVENT: ${{ github.event_name }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+
+          # Dedup by title prefix rather than by label — no label setup
+          # required, and a human-readable title is a sharper signal
+          # when scanning the issue list than a tag.
+          TITLE_PREFIX="ci(e2e): post-merge suite failing on main"
+          EXISTING=$(gh issue list \
+            --repo "$REPO" \
+            --state open \
+            --search "\"$TITLE_PREFIX\" in:title" \
+            --json number \
+            --jq '.[0].number // ""')
+
+          COMMENT_BODY=$(cat <<EOF
+          New E2E failure detected on \`$COMMIT_SHA\` (event: \`$EVENT\`).
+
+          Run: $RUN_URL
+
+          @macf-code-agent[bot] — E2E suite failing on main. Investigate and fix, or file a revert if the break is urgent.
+          EOF
+          )
+
+          if [ -n "$EXISTING" ]; then
+            gh issue comment "$EXISTING" --repo "$REPO" --body "$COMMENT_BODY"
+            echo "Updated existing issue #$EXISTING"
+          else
+            BODY=$(cat <<EOF
+          The E2E suite (\`make -f dev.mk test-e2e\`) failed on main after the latest merge.
+
+          Initial failure: commit \`$COMMIT_SHA\` (event: \`$EVENT\`).
+          Run: $RUN_URL
+
+          This issue is auto-opened by \`.github/workflows/e2e.yml\` (#149). It stays open until someone closes it manually after the suite is green again. Subsequent failures append a comment rather than opening a new issue.
+
+          @macf-code-agent[bot] — E2E suite failing on main. Investigate and fix, or file a revert if the break is urgent.
+
+          ---
+
+          **Likely causes (session memory):**
+
+          - Fixture/gate drift (E2E cert fixture out-of-sync with a new middleware, e.g. #121 EKU gate → #148 fixture update)
+          - Stale \`dist/\` from CLI changes not yet rebuilt (#144 stale-dist detection covers this locally)
+          - External toolchain drift (openssl defaults, Node TLS behavior, etc.)
+          EOF
+          )
+            gh issue create \
+              --repo "$REPO" \
+              --title "$TITLE_PREFIX — since \`$COMMIT_SHA\`" \
+              --label "code-agent,blocked" \
+              --body "$BODY"
+          fi
