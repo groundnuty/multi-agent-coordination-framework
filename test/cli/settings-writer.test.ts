@@ -150,4 +150,36 @@ describe('installGhTokenHook', () => {
     expect(raw).toContain('\n');
     expect(raw).toMatch(/^\{\n  /); // starts with `{` then newline+2-space indent
   });
+
+  it('does NOT misclassify operator files with similar basenames as MACF-managed', () => {
+    // Per science-agent's #140 review — substring match on
+    // `check-gh-token.sh` would also claim `my-check-gh-token.sh-wrapper`.
+    // We use path-end/basename equality to defend against that.
+    mkdirSync(join(tmpRoot, '.claude'), { recursive: true });
+    writeFileSync(settingsPath, JSON.stringify({
+      hooks: {
+        PreToolUse: [
+          {
+            matcher: 'Bash',
+            hooks: [{ type: 'command', command: './my-check-gh-token.sh-wrapper --flag' }],
+          },
+        ],
+      },
+    }, null, 2));
+
+    installGhTokenHook(tmpRoot);
+
+    const s = JSON.parse(readFileSync(settingsPath, 'utf-8'));
+    // Operator's lookalike hook must still be present.
+    const operatorEntry = s.hooks.PreToolUse.find((e: { hooks: { command: string }[] }) =>
+      e.hooks.some((h) => h.command === './my-check-gh-token.sh-wrapper --flag'),
+    );
+    expect(operatorEntry).toBeDefined();
+    // And the real MACF entry landed alongside it.
+    const macfEntry = s.hooks.PreToolUse.find((e: { hooks: { command: string }[] }) =>
+      e.hooks.some((h) => h.command === MACF_HOOK_COMMAND),
+    );
+    expect(macfEntry).toBeDefined();
+    expect(s.hooks.PreToolUse).toHaveLength(2);
+  });
 });

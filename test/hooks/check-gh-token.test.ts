@@ -162,10 +162,75 @@ describe('check-gh-token.sh (hook)', () => {
   describe('override — MACF_SKIP_TOKEN_CHECK', () => {
     it('bypasses when MACF_SKIP_TOKEN_CHECK=1, even for gh with no token', () => {
       const r = runHook({
-        command: 'gh auth login',
+        command: 'gh issue close 1',
         env: { MACF_SKIP_TOKEN_CHECK: '1' },
       });
       expect(r.status).toBe(0);
+    });
+  });
+
+  // `gh auth *` is identity-management; user-attribution is correct by
+  // design, so the hook must not block it. Without this carve-out, the
+  // first `gh auth login` in a fresh workspace hits a wall of text
+  // before onboarding completes — per science-agent's #140 review.
+  describe('carve-out — gh auth is exempt (identity management)', () => {
+    it('allows `gh auth login` with no GH_TOKEN (onboarding path)', () => {
+      const r = runHook({
+        command: 'gh auth login',
+        env: {},
+      });
+      expect(r.status).toBe(0);
+    });
+
+    it('allows `gh auth status` with no GH_TOKEN', () => {
+      const r = runHook({
+        command: 'gh auth status',
+        env: {},
+      });
+      expect(r.status).toBe(0);
+    });
+
+    it('allows `gh auth token` with no GH_TOKEN', () => {
+      const r = runHook({
+        command: 'gh auth token',
+        env: {},
+      });
+      expect(r.status).toBe(0);
+    });
+
+    it('allows `gh auth refresh` with no GH_TOKEN', () => {
+      const r = runHook({
+        command: 'gh auth refresh',
+        env: {},
+      });
+      expect(r.status).toBe(0);
+    });
+
+    it('allows `gh auth setup-git` with no GH_TOKEN', () => {
+      const r = runHook({
+        command: 'gh auth setup-git',
+        env: {},
+      });
+      expect(r.status).toBe(0);
+    });
+
+    it('allows `sudo gh auth login` (wrapped form) with no GH_TOKEN', () => {
+      const r = runHook({
+        command: 'sudo gh auth login',
+        env: {},
+      });
+      expect(r.status).toBe(0);
+    });
+
+    it('still BLOCKS `gh authorize-team` (not gh auth — similar prefix, different command)', () => {
+      // Defensive: if someone ever adds a command called `authorize-team`
+      // or similar, the carve-out should not leak. `gh auth` requires a
+      // word boundary (space or end) after `auth`.
+      const r = runHook({
+        command: 'gh authorize-team foo',
+        env: {},
+      });
+      expect(r.status).toBe(2);
     });
   });
 

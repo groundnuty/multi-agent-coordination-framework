@@ -38,6 +38,17 @@ if [[ ! "$COMMAND" =~ $GH_PATTERN ]]; then
   exit 0
 fi
 
+# `gh auth *` is identity-management (login, logout, status, token,
+# refresh, setup-git) — user-attribution is correct by design here.
+# Blanket-blocking this subcommand would put the hook directly in the
+# onboarding path (fresh workspace → first `gh auth login` → wall of
+# error text), which is exactly the wrong user experience. Carve it
+# out. Wrapper forms (`sudo gh auth ...`) also match because the regex
+# allows arbitrary wrapper prefix before `gh`.
+if [[ "$COMMAND" =~ (^|[[:space:];|&])(sudo[[:space:]]+|env[[:space:]]+([A-Za-z_][A-Za-z_0-9]*=[^[:space:]]*[[:space:]]+)*|[A-Za-z_][A-Za-z_0-9]*=[^[:space:]]*[[:space:]]+)*gh[[:space:]]+auth([[:space:]]|$) ]]; then
+  exit 0
+fi
+
 # Check GH_TOKEN: must be present AND start with ghs_ (bot token).
 # ghp_/gho_/ghu_ are user tokens; empty falls through to stored
 # `gh auth login` (user). Either case fires the trap.

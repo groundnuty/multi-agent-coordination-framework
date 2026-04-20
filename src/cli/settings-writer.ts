@@ -29,11 +29,27 @@ import { join, resolve } from 'node:path';
 export const MACF_HOOK_COMMAND = '.claude/scripts/check-gh-token.sh';
 
 /**
- * The hook filename used to identify MACF-managed entries on refresh
- * (so older entries with different flags or paths get replaced
- * cleanly).
+ * The hook filename used to identify MACF-managed entries on refresh.
+ * Matched by path-end equality (see isMacfManagedCommand) so operator
+ * files with a similar-but-distinct basename are not misclassified.
  */
 const MACF_HOOK_FILENAME = 'check-gh-token.sh';
+
+/**
+ * True iff the command string represents our managed hook — i.e. the
+ * command invokes a file whose basename equals MACF_HOOK_FILENAME
+ * (ignoring any trailing flags/arguments). Defensive against
+ * operator-authored commands that happen to contain our filename as a
+ * substring (e.g. `./my-check-gh-token.sh-wrapper --flag`).
+ */
+function isMacfManagedCommand(command: string): boolean {
+  // Take the program path (first whitespace-delimited token), then
+  // extract its basename. `/a/b/check-gh-token.sh --v2` → `check-gh-token.sh`.
+  const program = command.trim().split(/\s+/)[0] ?? '';
+  const slash = program.lastIndexOf('/');
+  const basename = slash >= 0 ? program.slice(slash + 1) : program;
+  return basename === MACF_HOOK_FILENAME;
+}
 
 interface HookCommand {
   readonly type: 'command';
@@ -86,11 +102,13 @@ export function installGhTokenHook(workspaceDir: string): void {
   const hooks = settings.hooks ?? {};
   const preToolUse = hooks.PreToolUse ?? [];
 
-  // Drop any prior MACF-managed entries (identified by containing our
-  // hook filename somewhere in a command string) so we can replace
-  // them cleanly — guards against stale flags from older CLI versions.
+  // Drop any prior MACF-managed entries so we can replace them cleanly
+  // — guards against stale flags (e.g. `--old-flag`) from older CLI
+  // versions. Match by path-end equality so an operator-authored file
+  // with a similar-but-distinct name (e.g. `my-check-gh-token.sh-helper.sh`)
+  // doesn't get misclassified as ours and accidentally clobbered.
   const preserved = preToolUse.filter(
-    (entry) => !entry.hooks.some((h) => h.command.includes(MACF_HOOK_FILENAME)),
+    (entry) => !entry.hooks.some((h) => isMacfManagedCommand(h.command)),
   );
 
   const macfEntry: HookEntry = {
