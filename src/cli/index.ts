@@ -61,7 +61,7 @@ const program = new Command();
 program
   .name('macf')
   .description('Multi-Agent Coordination Framework CLI')
-  .version('0.1.0')
+  .version('0.1.1')
   .action(() => {
     listAgents();
   });

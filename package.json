@@ -1,6 +1,6 @@
 {
   "name": "macf",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Multi-Agent Coordination Framework — coordinate Claude Code agents via GitHub and MCP channels",
   "type": "module",
   "main": "dist/index.js",
@@ -26,7 +26,7 @@
     "test:e2e": "vitest run --config vitest.e2e.config.ts"
   },
   "dependencies": {
-    "@modelcontextprotocol/sdk": "^1.12.1",
+    "@modelcontextprotocol/sdk": "~1.29.0",
     "@peculiar/webcrypto": "^1.5.0",
     "@peculiar/x509": "^2.0.0",
     "commander": "^14.0.3",
