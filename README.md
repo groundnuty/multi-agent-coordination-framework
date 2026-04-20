@@ -20,7 +20,7 @@ Design note: agents have **asymmetric contexts**. The orchestrator (typically a 
 
 ### Evidence 1: the framework dogfoods itself
 
-MACF's own development happens through MACF. The maintainers open issues, agents pick them up, write PRs, review each other's work, merge after LGTM. In a single session on 2026-04-20, agents merged **~40 PRs** developing the framework — including a full security-audit-and-fix cycle where the `code-agent` audited its own codebase, filed issues for the bugs it found, and shipped fixes.
+MACF's own development happens through MACF. The maintainers open issues, agents pick them up, write PRs, review each other's work, merge after LGTM. Over the 2026-04-15 through 2026-04-17 development sprint, agents merged **~60 PRs** developing the framework — including a full security-audit-and-fix cycle where the `code-agent` audited its own codebase, filed issues for the bugs it found, and shipped fixes.
 
 If the framework works for the agents building the framework, it works for real project work.
 
@@ -117,6 +117,8 @@ npm link    # or add dist/cli/index.js to PATH
 
 ### 3. Initialize a workspace for each agent
 
+`PROJECT-NAME` below is a short identifier shared by all agents in one swarm (e.g., `macf`, `cv`); all per-agent registry variables get this as a prefix, so it's how agents discover their peers.
+
 ```bash
 cd ~/repos/<owner>/<agent-workspace>
 macf init \
@@ -124,8 +126,8 @@ macf init \
   --role code-agent \
   --app-id <APP_ID> \
   --install-id <INSTALL_ID> \
-  --key /path/to/app-key.pem \
-  --registry repo --registry-repo <owner>/<coordination-repo>
+  --key-path /path/to/app-key.pem \
+  --registry-type repo --registry-repo <owner>/<coordination-repo>
 ```
 
 `macf init` creates `.macf/` (config, certs, plugin), writes a `claude.sh` launcher with fail-loud token helpers, and registers the agent's endpoint in the repo's variables.
@@ -135,7 +137,7 @@ macf init \
 ```bash
 cd ~/repos/<owner>/<coordination-repo>
 macf repo-init \
-  --project <PROJECT-NAME> \
+  --repo <owner>/<coordination-repo> \
   --agents code-agent,science-agent,writing-agent
 ```
 
@@ -198,7 +200,7 @@ We maintain a GitHub [Projects board](https://github.com/groundnuty/macf/project
 
 ## Deeper reading
 
-- **[Design Decisions (19)](design/decisions/)** — architecturally-significant choices with rationale. Entry points: [DR-004 mTLS](design/decisions/DR-004-authentication-mtls.md), [DR-010 challenge-response](design/decisions/DR-010-sign-challenge-response.md), [DR-011 CA key backup](design/decisions/DR-011-ca-key-backup.md), [DR-019 App permissions](design/decisions/DR-019-app-permissions.md).
+- **[Design Decisions (19)](design/decisions/)** — architecturally-significant choices with rationale. Entry points: [DR-004 mTLS](design/decisions/DR-004-authentication-mtls.md), [DR-010 cert signing](design/decisions/DR-010-cert-signing.md), [DR-011 CA key backup](design/decisions/DR-011-ca-key-backup.md), [DR-019 App permissions](design/decisions/DR-019-app-permissions.md).
 - **[Phase specs (7)](design/phases/)** — P1 channel server → P7 agent templates. Each phase maps to a concrete implementation slice.
 - **[Research corpus (16)](research/)** — literature reviews, empirical analysis, comparison to prior multi-agent work.
 - **[`coordination.md`](plugin/rules/coordination.md)** — canonical cross-cutting rules distributed to every agent workspace. Single source of truth; `macf rules refresh` propagates updates.
@@ -211,7 +213,7 @@ MACF spans three repos, each with a distinct lifecycle:
 - **[`groundnuty/macf-actions`](https://github.com/groundnuty/macf-actions)** — reusable GitHub Actions workflow that routes issue / comment / PR / check-suite events to agents' tmux sessions (Stage 2) or to their channel endpoints (Stage 3, mTLS). Consumed via `uses: groundnuty/macf-actions/.github/workflows/agent-router.yml@v2` in coordination repos.
 - **[`groundnuty/macf-marketplace`](https://github.com/groundnuty/macf-marketplace)** — Claude Code plugin marketplace hosting the `macf-agent` plugin (skills: `/macf-status`, `/macf-peers`, `/macf-ping`, `/macf-issues`; agent identity templates; hooks). `macf init` / `macf update` fetch the plugin at a pinned tag into `<workspace>/.macf/plugin/`; `claude.sh` loads it via `--plugin-dir`.
 
-Releases are tag-versioned per repo; consumers pin to major tags (`@v1`, `@v2`) for routing and to exact versions (`0.1.0`) for the plugin. Design rationale in [DR-013](design/decisions/DR-013-plugin-distribution.md).
+Releases are tag-versioned per repo; consumers pin to major tags (`@v1`, `@v2`) for routing and to exact versions (`0.1.0`) for the plugin. Design rationale in [DR-013](design/decisions/DR-013-plugin-versioning.md).
 
 ## Status
 
@@ -233,7 +235,7 @@ Contributions welcome. File an issue first to discuss scope for anything beyond 
 
 ## License
 
-MIT (see [LICENSE](LICENSE)).
+License TBD (intent: MIT — `LICENSE` file to be added by the repo owner).
 
 ## Appendix — example configs
 
