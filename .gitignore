@@ -1,4 +1,11 @@
 .claude/settings.local.json
+# `.claude/rules/` holds workspace refresh artifacts (written by
+# `macf rules refresh`), not source. Canonical rule files live at
+# `plugin/rules/`. Without this ignore, the refresh-produced copy
+# appears as a persistent untracked file and causes `macf self-update`
+# to refuse with a dirty-tree error. Both agents hit this same day
+# — see `project_untracked_coordination_artifact.md`.
+.claude/rules/
 node_modules/
 dist/
 *.log

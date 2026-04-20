@@ -80,6 +80,25 @@ describe('selfUpdate', () => {
     expect(() => selfUpdate(local)).toThrow(/working tree.*dirty/i);
   });
 
+  it('clamps dirty-tree error to 20 lines for pathological cases', () => {
+    // Stage 30 untracked files so the raw `git status --porcelain`
+    // output would be 30 lines. The error message should cap at 20 +
+    // a "N more" truncation footer.
+    for (let i = 0; i < 30; i++) {
+      writeFileSync(join(local, `file-${i}.txt`), 'x');
+    }
+    try {
+      selfUpdate(local);
+      throw new Error('expected selfUpdate to throw');
+    } catch (err) {
+      const msg = (err as Error).message;
+      // Count status-line-looking lines (prefix `?? file-N`).
+      const statusLines = msg.split('\n').filter((l) => /^\?\? file-\d+\.txt/.test(l));
+      expect(statusLines.length).toBe(20);
+      expect(msg).toMatch(/\(10 more; run `git status`/);
+    }
+  });
+
   it('throws when local has diverged (ff-only would fail)', () => {
     // Advance upstream by one commit AND local by a different commit.
     // To advance upstream: push from the seed-clone mechanism. Simpler:

@@ -50,10 +50,21 @@ export function selfUpdate(sourceRepoDir: string): SelfUpdateResult {
   }
 
   // Refuse dirty trees — operator may have in-flight work we'd lose.
+  // Clamp the status output to the first 20 lines so a pathological
+  // dirty state (e.g. `rm -rf node_modules/` before the rebuild) doesn't
+  // produce a wall of text in the error. 20 lines is enough context for
+  // a typical few-modified-files case; beyond that the operator needs
+  // to run `git status` themselves anyway. Per science-agent's #144
+  // review non-blocker.
   const status = git(sourceRepoDir, 'status', '--porcelain');
   if (status !== '') {
+    const lines = status.split('\n');
+    const shown = lines.slice(0, 20).join('\n');
+    const truncation = lines.length > 20
+      ? `\n... (${lines.length - 20} more; run \`git status\` to see them all)`
+      : '';
     throw new Error(
-      `working tree is dirty in ${sourceRepoDir}:\n${status}\n` +
+      `working tree is dirty in ${sourceRepoDir}:\n${shown}${truncation}\n` +
         `self-update refuses to overwrite uncommitted changes. ` +
         `Commit or stash first, then re-run.`,
     );
