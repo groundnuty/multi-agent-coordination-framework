@@ -27,6 +27,12 @@ function buildFakeMarketplace(rootDir: string): { bareUrl: string } {
   execFileSync('git', ['clone', bare, work]);
   execFileSync('git', ['-C', work, 'config', 'user.email', 'test@example.com']);
   execFileSync('git', ['-C', work, 'config', 'user.name', 'test']);
+  // Override global signing config: devs with `commit.gpgsign=true` /
+  // `tag.gpgsign=true` globally would otherwise make the lightweight
+  // `git tag <name>` below promote to a signed annotated tag, which
+  // demands `-m <msg>` and fails with "fatal: no tag message?".
+  execFileSync('git', ['-C', work, 'config', 'commit.gpgsign', 'false']);
+  execFileSync('git', ['-C', work, 'config', 'tag.gpgsign', 'false']);
 
   const plugin = join(work, 'macf-agent');
   mkdirSync(join(plugin, 'agents'), { recursive: true });
