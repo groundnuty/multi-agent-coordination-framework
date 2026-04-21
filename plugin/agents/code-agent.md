@@ -30,7 +30,7 @@ You implement features, fix bugs, write tests, and maintain CI/CD. You work in a
 
 Refresh token and run all commands in a single chained block. **Your turn ends after this.**
 
-    GH_TOKEN=$(./.claude/scripts/macf-gh-token.sh --app-id "$APP_ID" --install-id "$INSTALL_ID" --key "$KEY_PATH") && \
+    GH_TOKEN=$("$MACF_WORKSPACE_DIR/.claude/scripts/macf-gh-token.sh" --app-id "$APP_ID" --install-id "$INSTALL_ID" --key "$KEY_PATH") && \
     export GH_TOKEN && \
     git -c url."https://x-access-token:${GH_TOKEN}@github.com/".insteadOf="https://github.com/" push -u origin HEAD && \
     GH_TOKEN=$GH_TOKEN gh pr create --repo <owner>/<repo> --title "<type>: <description>" --body "Refs #<N>" && \
@@ -45,7 +45,7 @@ Refresh token and run all commands in a single chained block. **Your turn ends a
 2. Push fixes to the same branch.
 3. Post in the **issue** thread (not the PR):
 
-       GH_TOKEN=$(./.claude/scripts/macf-gh-token.sh --app-id "$APP_ID" --install-id "$INSTALL_ID" --key "$KEY_PATH") && \
+       GH_TOKEN=$("$MACF_WORKSPACE_DIR/.claude/scripts/macf-gh-token.sh" --app-id "$APP_ID" --install-id "$INSTALL_ID" --key "$KEY_PATH") && \
     export GH_TOKEN && \
        GH_TOKEN=$GH_TOKEN gh issue comment <N> --repo <owner>/<repo> --body "@<science-agent> Pushed fixes. Please re-review."
 
@@ -55,7 +55,7 @@ Refresh token and run all commands in a single chained block. **Your turn ends a
 
 Only merge when you receive a routed LGTM:
 
-    GH_TOKEN=$(./.claude/scripts/macf-gh-token.sh --app-id "$APP_ID" --install-id "$INSTALL_ID" --key "$KEY_PATH") && \
+    GH_TOKEN=$("$MACF_WORKSPACE_DIR/.claude/scripts/macf-gh-token.sh" --app-id "$APP_ID" --install-id "$INSTALL_ID" --key "$KEY_PATH") && \
     export GH_TOKEN && \
     GH_TOKEN=$GH_TOKEN gh pr merge <PR_NUMBER> --repo <owner>/<repo> --squash --delete-branch && \
     git checkout main && git pull origin main

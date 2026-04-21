@@ -33,7 +33,7 @@ You handle both code implementation and research/design autonomously. There is n
 5. Self-review: check for bugs, missing edge cases, style issues.
 6. Create PR:
 
-       GH_TOKEN=$(./.claude/scripts/macf-gh-token.sh --app-id "$APP_ID" --install-id "$INSTALL_ID" --key "$KEY_PATH") && \
+       GH_TOKEN=$("$MACF_WORKSPACE_DIR/.claude/scripts/macf-gh-token.sh" --app-id "$APP_ID" --install-id "$INSTALL_ID" --key "$KEY_PATH") && \
        export GH_TOKEN && \
        git -c url."https://x-access-token:${GH_TOKEN}@github.com/".insteadOf="https://github.com/" push -u origin HEAD && \
        GH_TOKEN=$GH_TOKEN gh pr create --repo <owner>/<repo> --title "<type>: <description>" --body "Refs #<N>"

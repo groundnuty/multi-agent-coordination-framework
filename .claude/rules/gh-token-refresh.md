@@ -7,7 +7,7 @@ Your `GH_TOKEN` is a short-lived (1 hour) installation token generated from the 
 **Always use this exact pattern.** Bare `export GH_TOKEN=$(gh token generate ... | jq ...)` is the attribution trap — if token generation fails, the string `"null"` becomes your token, `gh` silently falls back to stored user auth, and your PRs post as the user. We've hit this five times across agents; the fail-loud pattern is the default now.
 
 ```bash
-GH_TOKEN=$(./.claude/scripts/macf-gh-token.sh \
+GH_TOKEN=$("$MACF_WORKSPACE_DIR/.claude/scripts/macf-gh-token.sh" \
   --app-id "$APP_ID" --install-id "$INSTALL_ID" --key "$KEY_PATH") || exit 1
 export GH_TOKEN
 ```
@@ -35,7 +35,7 @@ Use `-c url.insteadOf` for the push (don't bake the token into the remote URL):
 For operations that MUST succeed (PR creation, merge, any push), chain the refresh directly:
 
 ```bash
-GH_TOKEN=$(./.claude/scripts/macf-gh-token.sh \
+GH_TOKEN=$("$MACF_WORKSPACE_DIR/.claude/scripts/macf-gh-token.sh" \
   --app-id "$APP_ID" --install-id "$INSTALL_ID" --key "$KEY_PATH") || exit 1
 export GH_TOKEN && \
   gh pr create --repo groundnuty/macf ...
