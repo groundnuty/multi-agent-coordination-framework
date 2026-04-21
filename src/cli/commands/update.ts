@@ -51,7 +51,7 @@ interface DiffRow {
   // see the actual reason (not yet published vs network down vs
   // malformed response) — not_published was noise for normal
   // pre-release state when conflated with fetch_failed (#111 C2).
-  readonly status: 'update' | 'same' | 'not_published' | 'network_error' | 'invalid_response';
+  readonly status: 'update' | 'same' | 'not_published' | 'network_error' | 'rate_limited' | 'invalid_response';
 }
 
 export function buildDiff(
@@ -98,6 +98,7 @@ function formatRow(row: DiffRow): string {
     // been published yet (#111 C2).
     case 'not_published': statusText = '· not yet published (using cached)'; break;
     case 'network_error': statusText = '? fetch failed (network) — using cached'; break;
+    case 'rate_limited': statusText = '? rate-limited (set GH_TOKEN to raise anon 60 req/h) — using cached'; break;
     case 'invalid_response': statusText = '? unexpected response — using cached'; break;
   }
   return `${name}  ${cur}  ${lat}  ${statusText}`;

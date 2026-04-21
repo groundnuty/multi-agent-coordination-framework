@@ -7,6 +7,11 @@
  *   - ok            → value fetched successfully
  *   - not_published → HTTP 404 (package/release doesn't exist yet)
  *   - network_error → fetch threw (connection refused, timeout, DNS, ...)
+ *   - rate_limited  → HTTP 403/429 from GitHub API, typically anon
+ *                     rate-limit (60 req/h). See authHeaders() — if
+ *                     `GH_TOKEN` is set in the environment the fetcher
+ *                     uses it automatically (5000 req/h), so this
+ *                     status fires only when anon AND quota-exhausted.
  *   - invalid_response → HTTP 200 but unparseable/schema-invalid
  *
  * The caller can produce clearer warnings than the old single "network
@@ -20,7 +25,36 @@ export interface VersionSet {
   readonly actions: string;
 }
 
-export type FetchStatus = 'ok' | 'not_published' | 'network_error' | 'invalid_response';
+export type FetchStatus = 'ok' | 'not_published' | 'network_error' | 'rate_limited' | 'invalid_response';
+
+/**
+ * GitHub API headers. Uses `GH_TOKEN` from env if present — raises the
+ * anonymous 60 req/h limit to 5000 req/h. Primary #186 fix: operators
+ * on shared IPs (Tailscale, CI runners) were burning anon quota across
+ * sessions + getting opaque "invalid_response" on subsequent runs.
+ * `claude.sh` exports GH_TOKEN before `macf update` invocations, so
+ * the token is available in the typical run path.
+ */
+function githubHeaders(): Record<string, string> {
+  const headers: Record<string, string> = { 'Accept': 'application/vnd.github+json' };
+  const token = process.env['GH_TOKEN'];
+  if (token !== undefined && token !== '' && token !== 'null') {
+    headers['Authorization'] = `Bearer ${token}`;
+  }
+  return headers;
+}
+
+/**
+ * Map a non-ok GitHub API response to the appropriate FetchStatus.
+ * 403/429 (rate-limit) and 401 (bad auth) both surface as `rate_limited`
+ * — operator-facing warning distinguishes them from other schema/5xx
+ * errors that come back as `invalid_response`.
+ */
+function classifyGithubError(status: number): FetchStatus {
+  if (status === 404) return 'not_published';
+  if (status === 401 || status === 403 || status === 429) return 'rate_limited';
+  return 'invalid_response';
+}
 
 export interface FetchResult {
   readonly status: FetchStatus;
@@ -77,10 +111,9 @@ export function compareSemver(a: string, b: string): number {
 async function fetchHighestTag(repo: string): Promise<FetchResult> {
   try {
     const res = await fetch(`https://api.github.com/repos/${repo}/tags`, {
-      headers: { 'Accept': 'application/vnd.github+json' },
+      headers: githubHeaders(),
     });
-    if (res.status === 404) return { status: 'not_published', value: null };
-    if (!res.ok) return { status: 'invalid_response', value: null };
+    if (!res.ok) return { status: classifyGithubError(res.status), value: null };
     const data = await res.json() as Array<{ name?: unknown }>;
     if (!Array.isArray(data)) return { status: 'invalid_response', value: null };
 
@@ -128,7 +161,7 @@ export async function fetchLatestPluginVersion(): Promise<FetchResult> {
   // Try /releases/latest first
   try {
     const res = await fetch(`https://api.github.com/repos/${repo}/releases/latest`, {
-      headers: { 'Accept': 'application/vnd.github+json' },
+      headers: githubHeaders(),
     });
     if (res.ok) {
       const data = await res.json() as { tag_name?: string };
@@ -139,8 +172,8 @@ export async function fetchLatestPluginVersion(): Promise<FetchResult> {
       }
       return { status: 'invalid_response', value: null };
     }
-    if (res.status !== 404) return { status: 'invalid_response', value: null };
-    // fall through to /tags
+    if (res.status !== 404) return { status: classifyGithubError(res.status), value: null };
+    // fall through to /tags (404 = no Release object; marketplace uses bare tags)
   } catch {
     return { status: 'network_error', value: null };
   }
@@ -162,7 +195,7 @@ export async function fetchLatestActionsVersion(): Promise<FetchResult> {
 
   try {
     const res = await fetch(`https://api.github.com/repos/${repo}/releases/latest`, {
-      headers: { 'Accept': 'application/vnd.github+json' },
+      headers: githubHeaders(),
     });
     if (res.ok) {
       const data = await res.json() as { tag_name?: string };
@@ -173,7 +206,7 @@ export async function fetchLatestActionsVersion(): Promise<FetchResult> {
       }
       return { status: 'invalid_response', value: null };
     }
-    if (res.status !== 404) return { status: 'invalid_response', value: null };
+    if (res.status !== 404) return { status: classifyGithubError(res.status), value: null };
   } catch {
     return { status: 'network_error', value: null };
   }
@@ -220,6 +253,7 @@ export function statusMessage(component: string, status: FetchStatus): string {
     case 'ok': return `${component}: ok`;
     case 'not_published': return `${component}: no published release found (using default)`;
     case 'network_error': return `${component}: network fetch failed (using default)`;
+    case 'rate_limited': return `${component}: GitHub API rate-limited or unauthorized — set GH_TOKEN to raise the anon 60 req/h limit (using default)`;
     case 'invalid_response': return `${component}: unexpected response format (using default)`;
   }
 }

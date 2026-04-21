@@ -271,9 +271,91 @@ describe('statusMessage', () => {
     expect(statusMessage('cli', 'not_published')).toContain('no published release');
     expect(statusMessage('cli', 'network_error')).toContain('network fetch failed');
     expect(statusMessage('cli', 'invalid_response')).toContain('unexpected response');
+    expect(statusMessage('cli', 'rate_limited')).toContain('rate-limited');
+    expect(statusMessage('cli', 'rate_limited')).toContain('GH_TOKEN');
   });
 
   it('includes component name', () => {
     expect(statusMessage('actions', 'not_published')).toContain('actions');
+  });
+});
+
+describe('GitHub API auth (#186)', () => {
+  const originalToken = process.env['GH_TOKEN'];
+  afterEach(() => {
+    if (originalToken === undefined) delete process.env['GH_TOKEN'];
+    else process.env['GH_TOKEN'] = originalToken;
+  });
+
+  it('sends Authorization header when GH_TOKEN is set (plugin fetch)', async () => {
+    process.env['GH_TOKEN'] = 'ghs_faketoken123';
+    const capturedHeaders: Record<string, string>[] = [];
+    globalThis.fetch = vi.fn().mockImplementation((_url: string, opts?: { headers?: Record<string, string> }) => {
+      capturedHeaders.push(opts?.headers ?? {});
+      return Promise.resolve({
+        ok: true, status: 200,
+        json: async () => ({ tag_name: 'v0.1.0' }),
+      });
+    }) as typeof fetch;
+
+    await fetchLatestPluginVersion();
+    expect(capturedHeaders[0]?.['Authorization']).toBe('Bearer ghs_faketoken123');
+  });
+
+  it('omits Authorization header when GH_TOKEN is unset', async () => {
+    delete process.env['GH_TOKEN'];
+    const capturedHeaders: Record<string, string>[] = [];
+    globalThis.fetch = vi.fn().mockImplementation((_url: string, opts?: { headers?: Record<string, string> }) => {
+      capturedHeaders.push(opts?.headers ?? {});
+      return Promise.resolve({
+        ok: true, status: 200,
+        json: async () => ({ tag_name: 'v1.0.0' }),
+      });
+    }) as typeof fetch;
+
+    await fetchLatestActionsVersion();
+    expect(capturedHeaders[0]?.['Authorization']).toBeUndefined();
+  });
+
+  it('omits Authorization when GH_TOKEN is empty string or literal "null"', async () => {
+    const capturedHeaders: Record<string, string>[] = [];
+    globalThis.fetch = vi.fn().mockImplementation((_url: string, opts?: { headers?: Record<string, string> }) => {
+      capturedHeaders.push(opts?.headers ?? {});
+      return Promise.resolve({ ok: true, status: 200, json: async () => ({ tag_name: 'v1.0.0' }) });
+    }) as typeof fetch;
+
+    // Empty string — e.g., env expanded from a missing shell var
+    process.env['GH_TOKEN'] = '';
+    await fetchLatestActionsVersion();
+    expect(capturedHeaders[0]?.['Authorization']).toBeUndefined();
+
+    // Literal "null" — the classic attribution-trap fallout from
+    // `GH_TOKEN=$(... | jq '.token')` when jq gets no token.
+    process.env['GH_TOKEN'] = 'null';
+    await fetchLatestActionsVersion();
+    expect(capturedHeaders[1]?.['Authorization']).toBeUndefined();
+  });
+
+  it('classifies 403 as rate_limited (plugin)', async () => {
+    delete process.env['GH_TOKEN'];
+    globalThis.fetch = vi.fn().mockResolvedValue({ ok: false, status: 403 }) as typeof fetch;
+    expect(await fetchLatestPluginVersion()).toEqual({ status: 'rate_limited', value: null });
+  });
+
+  it('classifies 429 as rate_limited (actions)', async () => {
+    delete process.env['GH_TOKEN'];
+    globalThis.fetch = vi.fn().mockResolvedValue({ ok: false, status: 429 }) as typeof fetch;
+    expect(await fetchLatestActionsVersion()).toEqual({ status: 'rate_limited', value: null });
+  });
+
+  it('classifies 401 as rate_limited (bad auth)', async () => {
+    process.env['GH_TOKEN'] = 'bad';
+    globalThis.fetch = vi.fn().mockResolvedValue({ ok: false, status: 401 }) as typeof fetch;
+    expect(await fetchLatestPluginVersion()).toEqual({ status: 'rate_limited', value: null });
+  });
+
+  it('keeps 500 classified as invalid_response (non-auth server error)', async () => {
+    globalThis.fetch = vi.fn().mockResolvedValue({ ok: false, status: 500 }) as typeof fetch;
+    expect(await fetchLatestPluginVersion()).toEqual({ status: 'invalid_response', value: null });
   });
 });
