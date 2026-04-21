@@ -38,6 +38,15 @@ export interface InitOptions {
    * network (Tailscale IP / DNS) must set this. See macf#178.
    */
   readonly advertiseHost?: string;
+  /**
+   * Tmux session + (optional) window for the on-notify wake path
+   * (macf#185). When set, the channel server's onNotify shells out
+   * to tmux-send-to-claude.sh to inject the notification prompt
+   * into a running Claude TUI. When unset, the server auto-detects
+   * from $TMUX if launched inside a tmux pane.
+   */
+  readonly tmuxSession?: string;
+  readonly tmuxWindow?: string;
   readonly cliVersion?: string;
   readonly pluginVersion?: string;
   readonly actionsVersion?: string;
@@ -207,6 +216,8 @@ export async function initAgent(projectDir: string, opts: InitOptions): Promise<
       key_path: opts.keyPath,
     },
     ...(opts.advertiseHost !== undefined ? { advertise_host: opts.advertiseHost } : {}),
+    ...(opts.tmuxSession !== undefined ? { tmux_session: opts.tmuxSession } : {}),
+    ...(opts.tmuxWindow !== undefined ? { tmux_window: opts.tmuxWindow } : {}),
     versions,
   };
 

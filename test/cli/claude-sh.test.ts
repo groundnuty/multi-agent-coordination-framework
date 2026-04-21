@@ -131,6 +131,37 @@ describe('generateClaudeSh', () => {
     });
   });
 
+  describe('tmux-wake env exports (macf#185)', () => {
+    it('emits MACF_TMUX_SESSION when tmux_session set in config', () => {
+      const cfg: MacfAgentConfig = { ...sampleConfig, tmux_session: 'cv-project' };
+      const output = generateClaudeSh(cfg);
+      expect(output).toContain('export MACF_TMUX_SESSION="cv-project"');
+    });
+
+    it('emits MACF_TMUX_WINDOW when tmux_window set', () => {
+      const cfg: MacfAgentConfig = {
+        ...sampleConfig,
+        tmux_session: 'cv-project',
+        tmux_window: 'cv-architect',
+      };
+      const output = generateClaudeSh(cfg);
+      expect(output).toContain('export MACF_TMUX_WINDOW="cv-architect"');
+    });
+
+    it('omits both exports when neither field set (auto-detect path)', () => {
+      const output = generateClaudeSh(sampleConfig);
+      expect(output).not.toContain('MACF_TMUX_SESSION');
+      expect(output).not.toContain('MACF_TMUX_WINDOW');
+    });
+
+    it('emits session alone when window not set', () => {
+      const cfg: MacfAgentConfig = { ...sampleConfig, tmux_session: 'macf-code' };
+      const output = generateClaudeSh(cfg);
+      expect(output).toContain('export MACF_TMUX_SESSION="macf-code"');
+      expect(output).not.toContain('MACF_TMUX_WINDOW');
+    });
+  });
+
   describe('advertise-host env export (macf#178 Gap 2)', () => {
     it('emits MACF_HOST=0.0.0.0 + MACF_ADVERTISE_HOST from config when set', () => {
       const cfg: MacfAgentConfig = { ...sampleConfig, advertise_host: '100.124.163.105' };

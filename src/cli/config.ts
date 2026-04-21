@@ -137,6 +137,16 @@ export const MacfAgentConfigSchema = z.object({
   // on the agent's mTLS cert so hostname verification succeeds.
   // See macf#178.
   advertise_host: z.string().min(1).optional(),
+  // Tmux session + (optional) window for the on-notify wake path
+  // (macf#185). When set, the channel server's onNotify handler
+  // shells out to `tmux-send-to-claude.sh <session>:<window> <prompt>`
+  // after the MCP push, injecting the notification as the TUI's
+  // next input turn so a running Claude actually processes the
+  // new work. When unset, the wake path auto-detects from `$TMUX`
+  // if the server was launched inside a tmux pane; otherwise
+  // no-ops silently.
+  tmux_session: z.string().min(1).optional(),
+  tmux_window: z.string().min(1).optional(),
   // Optional for backward compat: legacy configs (pre-P6) lack this field.
   // `macf init --force` rewrites with resolved versions; `macf update` (PR #5) bumps.
   versions: VersionPinsSchema.optional(),
