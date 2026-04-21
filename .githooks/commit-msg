@@ -1,0 +1,39 @@
+#!/usr/bin/env bash
+# commit-msg hook — runs commitlint locally against the staged commit
+# subject so violations (length, type, case) are caught before the
+# commit lands, not on CI pushback. Per #158.
+#
+# Wired via `make -f dev.mk install-hooks` which sets
+# `git config core.hooksPath .githooks`. One-time per clone; no effect
+# on clones that haven't opted in.
+set -euo pipefail
+
+# $1 is the path to the file containing the commit message git
+# prepared. commitlint's `--edit` flag points at that same file.
+COMMIT_MSG_FILE="${1:-}"
+if [[ -z "$COMMIT_MSG_FILE" ]]; then
+  echo "commit-msg hook: expected commit message file as \$1 — skipping" >&2
+  exit 0
+fi
+
+REPO_ROOT="$(git rev-parse --show-toplevel)"
+CONFIG="$REPO_ROOT/commitlint.config.mjs"
+
+if [[ ! -f "$CONFIG" ]]; then
+  # No commitlint config — not a commitlint-governed repo. No-op.
+  exit 0
+fi
+
+# Check that the commitlint binary is available. We don't auto-install
+# here — if `npm ci` hasn't run yet, the operator is in a pre-build
+# state and shouldn't be blocked by the hook. Fall through silently.
+if ! [[ -x "$REPO_ROOT/node_modules/.bin/commitlint" ]]; then
+  echo "commit-msg hook: commitlint not found in node_modules; run 'npm ci' to install — skipping local check (CI will still catch)" >&2
+  exit 0
+fi
+
+# Run commitlint against the staged message. `--edit <file>` strips
+# comment lines (matching git's own treatment) + runs the configured
+# rules. Non-zero exit here aborts the commit.
+cd "$REPO_ROOT"
+exec "$REPO_ROOT/node_modules/.bin/commitlint" --edit "$COMMIT_MSG_FILE" --config "$CONFIG"
