@@ -9,6 +9,70 @@ Plugin + routing-workflow changes ship from separate repos
 [`groundnuty/macf-actions`](https://github.com/groundnuty/macf-actions))
 and are not included here — pin them explicitly in each workspace.
 
+## [Unreleased]
+
+Merged after the `v0.1.1` tag on 2026-04-20/21. Will be included in the
+next tag (candidate `v0.1.2` unless a breaking change lands first).
+
+### Security
+- **Cross-repo absolute-path token refresh ([#161])** — `claude.sh`
+  exports `MACF_WORKSPACE_DIR` and absolutizes `KEY_PATH`. 7 agent
+  templates + workspace rules rewritten from `./.claude/scripts/` to
+  `$MACF_WORKSPACE_DIR/.claude/scripts/`. Closes the 6th attribution-
+  trap recurrence (cross-repo cwd variant).
+
+### Reliability / CI
+- **E2E workflow install step ([#156], fixes [#154])** — adds
+  `make -f dev.mk install` before `test-e2e` on CI runners.
+- **E2E self-close on green ([#166], fixes [#163])** — post-merge
+  push + schedule runs auto-close open auto-opened incident issues
+  when E2E passes. Machine-enforces the "stays open until green"
+  contract.
+- **E2E cert-tmpdir race + version-bump completeness ([#162], fixes
+  [#160])** — `randomUUID()` suffix for parallel-safe temp dirs; 3
+  missed E2E version assertions aligned with v0.1.1.
+- **`INCIDENT_TITLE_PREFIX` env extraction ([#168])** — job-level env
+  so auto-open + self-close share a single title-prefix source.
+
+### Tests
+- **Pre-commit commitlint hook ([#159], fixes [#158])** —
+  `.githooks/commit-msg` + `make -f dev.mk install-hooks` target.
+- **Real-SDK MCP smoke test ([#169])** — `test/mcp-integration.test.ts`
+  with `CapturingTransport` verifies `notifications/claude/channel`
+  reaches the transport. Catches silent SDK framing drift the mocks
+  can't see.
+- **Version-literal helper ([#167])** — `test/version-helper.ts`
+  exports `EXPECTED_VERSION` from `package.json`; 5 test sites
+  rewritten. Next bump is single-site.
+
+### Docs
+- **Coordination.md auto-opened-issue rule ([#165], fixes [#164])** —
+  Issue Lifecycle rule 5 codifies `Refs #N` (not `Closes`) on bot-
+  filed issues, explicit reviewer ping (not bot-reporter echo), and
+  wait-for-green-before-close doctrine.
+- **Post-session CLAUDE.md refresh ([#170])** — test count, security
+  landings, scripts list, debugging table updated. Rule 5 staleness
+  fix post-#166 merge.
+- **Dogfood hook install ([#175])** — `.claude/scripts/check-gh-token.sh`
+  added to match existing workspace-script convention.
+
+[#154]: https://github.com/groundnuty/macf/issues/154
+[#158]: https://github.com/groundnuty/macf/issues/158
+[#160]: https://github.com/groundnuty/macf/issues/160
+[#163]: https://github.com/groundnuty/macf/issues/163
+[#164]: https://github.com/groundnuty/macf/issues/164
+[#156]: https://github.com/groundnuty/macf/pull/156
+[#159]: https://github.com/groundnuty/macf/pull/159
+[#161]: https://github.com/groundnuty/macf/pull/161
+[#162]: https://github.com/groundnuty/macf/pull/162
+[#165]: https://github.com/groundnuty/macf/pull/165
+[#166]: https://github.com/groundnuty/macf/pull/166
+[#167]: https://github.com/groundnuty/macf/pull/167
+[#168]: https://github.com/groundnuty/macf/pull/168
+[#169]: https://github.com/groundnuty/macf/pull/169
+[#170]: https://github.com/groundnuty/macf/pull/170
+[#175]: https://github.com/groundnuty/macf/pull/175
+
 ## [0.1.1] — 2026-04-20
 
 First release after the 2026-04-17 ultrareview + 2026-04-20 audit arc.
