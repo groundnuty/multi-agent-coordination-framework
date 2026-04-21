@@ -93,12 +93,21 @@ function hostToSan(host: string): { type: 'ip' | 'dns'; value: string } {
  *       flows — curl-to-localhost for /health etc.) plus any caller-
  *       supplied extraSans (typically the agent's advertised host per
  *       macf#178 Gap 3)
- *   - ExtendedKeyUsage: clientAuth (#125, DR-004 v2 EKU rollout)
+ *   - ExtendedKeyUsage: serverAuth + clientAuth. Agents are dual-role
+ *       peers — they act as TLS SERVERS when receiving /notify, /health,
+ *       /sign POSTs, and as TLS CLIENTS when originating POSTs to other
+ *       peers. Without serverAuth, OpenSSL/curl server-role validation
+ *       rejects the presented cert with "unsuitable certificate purpose"
+ *       (curl error 60). See macf#180. #121 still enforces clientAuth
+ *       server-side at /health + /notify + /sign; serverAuth is purely
+ *       additive for the client-side TLS validation of agents-as-servers.
+ *       `generateClientCert` (routing-action) stays client-only — it's
+ *       a pure client with no server role.
  *
  * Extracted per ultrareview finding A10 — both callers previously
  * duplicated this ~25-line extension list. When DR-004 extensions
- * evolve (e.g. serverAuth EKU, per-host SAN), a single edit here
- * affects both paths instead of two in lockstep.
+ * evolve, a single edit here affects both paths instead of two in
+ * lockstep.
  */
 async function buildPeerCert(opts: {
   readonly subject: string;
@@ -143,8 +152,14 @@ async function buildPeerCert(opts: {
       ),
       new x509.SubjectAlternativeNameExtension(sans),
       new x509.ExtendedKeyUsageExtension([
-        // clientAuth OID (#125) — per DR-004 v2 EKU rollout. Enforced
-        // server-side at /health + /notify + /sign per #121.
+        // serverAuth OID — agents are TLS servers on /notify, /health,
+        // /sign. Without this, OpenSSL/curl server-role validation
+        // rejects with "unsuitable certificate purpose" (curl error
+        // 60). See macf#180.
+        '1.3.6.1.5.5.7.3.1',
+        // clientAuth OID (#125) — agents are also TLS clients when
+        // originating POSTs to peers. Enforced server-side at /health
+        // + /notify + /sign per #121.
         '1.3.6.1.5.5.7.3.2',
       ]),
     ],

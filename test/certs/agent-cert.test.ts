@@ -61,11 +61,11 @@ describe('agent-cert', () => {
       expect(cert.issuer).toBe(caCert.subject);
     });
 
-    it('cert has clientAuth ExtendedKeyUsage (#125, step 1 of DR-004 v2 EKU rollout)', async () => {
-      // Step 1: peer certs emit the EKU. Step 2 (operator-driven):
-      // rotate existing peers. Step 3 (#121): server-side /notify
-      // verifies the EKU. Until step 2 completes fleet-wide, #121
-      // can't ship — but this step lands in isolation today.
+    it('cert has serverAuth + clientAuth ExtendedKeyUsage (macf#180 + #125)', async () => {
+      // Agents are dual-role peers — TLS servers on /notify/health/sign
+      // (needs serverAuth, macf#180) AND TLS clients when POSTing to
+      // peers (needs clientAuth, #125 / DR-004 v2). Pin the exact pair
+      // so accidental addition/removal of other EKUs is caught.
       const result = await generateAgentCert({
         agentName: 'test-agent',
         caCertPem,
@@ -75,10 +75,10 @@ describe('agent-cert', () => {
       const ekuExt = cert.getExtension('2.5.29.37'); // extKeyUsage OID
       expect(ekuExt).toBeDefined();
       const usages = (ekuExt as unknown as { usages: readonly string[] }).usages;
-      // Belt-and-suspenders: pin exactly clientAuth, nothing else.
-      // Catches future regressions that accidentally add e.g.
-      // serverAuth to peer certs.
-      expect([...usages]).toEqual(['1.3.6.1.5.5.7.3.2']);
+      expect([...usages]).toEqual([
+        '1.3.6.1.5.5.7.3.1', // serverAuth
+        '1.3.6.1.5.5.7.3.2', // clientAuth
+      ]);
     });
 
     it('emits default SAN [127.0.0.1, localhost] when no advertiseHost', async () => {
@@ -212,9 +212,13 @@ describe('agent-cert', () => {
       const ekuExt = cert.getExtension('2.5.29.37');
       expect(ekuExt).toBeDefined();
       const usages = (ekuExt as unknown as { usages: readonly string[] }).usages;
-      // Exactly clientAuth — no serverAuth or others. See the
-      // matching generateAgentCert test for rationale.
-      expect([...usages]).toEqual(['1.3.6.1.5.5.7.3.2']);
+      // serverAuth + clientAuth — CSR-signed certs are peer (dual-role)
+      // certs same as macf-issued ones, so the EKU pair matches
+      // generateAgentCert. See macf#180.
+      expect([...usages]).toEqual([
+        '1.3.6.1.5.5.7.3.1', // serverAuth
+        '1.3.6.1.5.5.7.3.2', // clientAuth
+      ]);
     });
 
     it('rejects CSR with CN mismatch', async () => {
