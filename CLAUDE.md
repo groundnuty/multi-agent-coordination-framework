@@ -102,6 +102,8 @@ One-off test: `devbox run -- npx vitest run test/path/to/file.test.ts`
 
 **E2E runs on cadence (after #149):** `.github/workflows/e2e.yml` runs the E2E suite on every push to main + daily at 07:00 UTC + on `workflow_dispatch`. `make check` stays fast by not including E2E; the workflow catches fixture/gate drift within minutes instead of days (two silent-for-days cases surfaced in one session motivated the split). On failure, the workflow auto-opens (or appends to an existing) `code-agent`/`blocked` issue routed to code-agent's tmux via the router.
 
+**Pre-commit commitlint (after #158):** `.githooks/commit-msg` runs commitlint locally against every staged commit so subject violations (length, type, case) are caught before the commit lands. One-time per clone — run `make -f dev.mk install-hooks` to wire it via `git config core.hooksPath .githooks`. CI keeps the check as a backstop; local runs it too. Clones that haven't opted in are unaffected (no global hooks install).
+
 ## Conventions
 
 - Immutable interfaces (`readonly` properties); avoid mutable schema types

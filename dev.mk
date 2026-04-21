@@ -1,4 +1,4 @@
-.PHONY: install check test lint typecheck build clean test-e2e
+.PHONY: install check test lint typecheck build clean test-e2e install-hooks
 
 install:
 	devbox run -- npm ci
@@ -37,3 +37,14 @@ test-e2e:
 
 clean:
 	rm -rf dist coverage
+
+# Wire the repo-local commit-msg hook that runs commitlint against
+# every local commit. One-time per clone; sets `core.hooksPath` to
+# `.githooks/` so the hook is picked up going forward. Closes the
+# loop on #158 (three commitlint violations in a week caught on CI
+# rather than locally). Opt-in by design — operators who use their
+# own shared hook infrastructure (global hooksPath, husky, etc.) can
+# skip this step; CI keeps enforcing as a backstop.
+install-hooks:
+	git config core.hooksPath .githooks
+	@echo "Installed commit-msg hook. Future commits will run commitlint locally before landing."
