@@ -81,6 +81,8 @@ program
   .option('--registry-user <user>', 'User name (for profile registry)')
   .option('--registry-repo <repo>', 'owner/repo (for repo registry)')
   .option('--advertise-host <host>', 'Host the channel server advertises in its registry entry + includes in its cert SAN (e.g., Tailscale IP). Defaults to 127.0.0.1 when unset.')
+  .option('--tmux-session <name>', 'Tmux session name for on-notify wake (macf#185). When set, channel server\'s /notify handler injects the prompt into this tmux session via tmux-send-to-claude.sh after the MCP push. If unset, auto-detects from $TMUX.')
+  .option('--tmux-window <idx-or-name>', 'Tmux window index or name within the session (e.g., "0", "cv-architect"). Optional — defaults to the session\'s current window.')
   .option('--cli-version <semver>', 'Pin @macf/cli version (e.g., 0.1.0)')
   .option('--plugin-version <semver>', 'Pin macf-agent plugin version (e.g., 0.1.0)')
   .option('--actions-version <tag>', 'Pin macf-actions version (e.g., v1, v1.0.0)')
@@ -100,6 +102,8 @@ program
       registryUser: opts.registryUser,
       registryRepo: opts.registryRepo,
       advertiseHost: opts.advertiseHost,
+      tmuxSession: opts.tmuxSession,
+      tmuxWindow: opts.tmuxWindow,
       cliVersion: opts.cliVersion,
       pluginVersion: opts.pluginVersion,
       actionsVersion: opts.actionsVersion,

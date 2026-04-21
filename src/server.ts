@@ -14,6 +14,7 @@ import { signCSR } from './certs/agent-cert.js';
 import { loadCA } from './certs/ca.js';
 import { HttpError } from './errors.js';
 import { formatNotifyContent } from './notify-formatter.js';
+import { wakeViaTmux } from './tmux-wake.js';
 import type { NotifyPayload, SignRequest } from './types.js';
 import type { AgentInfo } from './registry/types.js';
 
@@ -71,6 +72,31 @@ async function main(): Promise<void> {
       type: payload.type,
       issue: payload.issue_number,
     });
+
+    // macf#185: sidecar wake via tmux-send-to-claude.sh. The MCP push
+    // above deposits the notification in the channel-server's
+    // observable state but does NOT interrupt a running Claude TUI
+    // with a new prompt — /notify ≠ wake without this step. Tmux
+    // injection surfaces the notification as the TUI's next input
+    // turn, so the agent actually processes it. Fail-silent on any
+    // path where tmux isn't available (no workspace dir, no tmux
+    // session, helper missing, tmux command errors).
+    if (config.workspaceDir !== undefined) {
+      // Use the formatted content as the wake prompt — same text
+      // Claude would see via the MCP channel, just delivered
+      // through the input buffer path so it becomes an actual turn.
+      wakeViaTmux(content, {
+        workspaceDir: config.workspaceDir,
+        session: config.tmuxSession,
+        window: config.tmuxWindow,
+        logger,
+      });
+    } else {
+      logger.info('tmux_wake_skipped', {
+        reason: 'no_workspace_dir',
+        detail: 'MACF_WORKSPACE_DIR unset',
+      });
+    }
   };
 
   // P2: Generate token early — needed for /sign endpoint and registry

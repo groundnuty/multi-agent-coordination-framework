@@ -103,6 +103,21 @@ export interface AgentConfig {
   readonly project: string;
   readonly instanceId: string;
   readonly registry: import('./registry/types.js').RegistryConfig;
+  /**
+   * Workspace root directory. Used to locate helper scripts
+   * (.claude/scripts/tmux-send-to-claude.sh) for the on-notify tmux
+   * wake path (macf#185). Sourced from the `MACF_WORKSPACE_DIR` env
+   * that claude.sh exports.
+   */
+  readonly workspaceDir: string | undefined;
+  /**
+   * Tmux session:window target for on-notify wake via
+   * `tmux-send-to-claude.sh`. Optional — when unset, the wake path
+   * auto-detects from `$TMUX` + `tmux display-message`, and no-ops
+   * outside tmux entirely. See macf#185 + `src/tmux-wake.ts`.
+   */
+  readonly tmuxSession: string | undefined;
+  readonly tmuxWindow: string | undefined;
 }
 
 // --- Sign request (POST /sign body) ---

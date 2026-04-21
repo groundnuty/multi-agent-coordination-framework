@@ -123,6 +123,17 @@ export function generateClaudeSh(config: MacfAgentConfig): string {
     // workspaces that haven't set the field yet). See macf#178.
     'export MACF_HOST="0.0.0.0"',
     `export MACF_ADVERTISE_HOST="${config.advertise_host ?? '127.0.0.1'}"`,
+    // macf#185: tmux session:window for on-notify wake via
+    // tmux-send-to-claude.sh. If unset, the server auto-detects
+    // from $TMUX when launched inside a tmux pane. Explicit-env
+    // takes priority — handy when the agent is launched outside
+    // tmux by a supervisor and still wants to target a named pane.
+    ...(config.tmux_session !== undefined
+      ? [`export MACF_TMUX_SESSION="${config.tmux_session}"`]
+      : []),
+    ...(config.tmux_window !== undefined
+      ? [`export MACF_TMUX_WINDOW="${config.tmux_window}"`]
+      : []),
     ...registryEnvLines(config),
     '',
     '# Bot token generation — fail loud. The helper validates the ghs_ prefix',
