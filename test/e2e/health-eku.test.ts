@@ -190,7 +190,7 @@ describe('clientAuth EKU gate E2E (#121, #137 Chunk 3)', () => {
         type: 'permanent',
         uptime_seconds: 100,
         current_issue: null,
-        version: '0.1.0',
+        version: '0.1.1',
         last_notification: null,
       };
       const { port, stop } = await startServer({ healthData });

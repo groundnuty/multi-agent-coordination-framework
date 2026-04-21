@@ -6,6 +6,7 @@ import { execFileSync } from 'node:child_process';
 import { mkdirSync, existsSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
+import { randomUUID } from 'node:crypto';
 
 export interface TestCerts {
   readonly dir: string;
@@ -29,7 +30,12 @@ export interface TestCerts {
 }
 
 export function generateTestCerts(): TestCerts {
-  const dir = join(tmpdir(), `macf-test-certs-${Date.now()}`);
+  // UUID suffix instead of Date.now() — two parallel test files calling
+  // generateTestCerts() in the same millisecond would otherwise resolve
+  // to the same tmpdir, with the first file's afterAll cleanup deleting
+  // the second file's certs mid-run → ENOENT cascade. Observed in CI
+  // run 24697614872 (2026-04-21, #160). UUID eliminates the collision.
+  const dir = join(tmpdir(), `macf-test-certs-${randomUUID()}`);
   mkdirSync(dir, { recursive: true });
 
   const caCert = join(dir, 'ca-cert.pem');

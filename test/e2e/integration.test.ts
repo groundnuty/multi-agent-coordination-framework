@@ -124,7 +124,7 @@ describe('integration', () => {
     expect(body.status).toBe('online');
     expect(body.type).toBe('permanent');
     expect(body.current_issue).toBeNull();
-    expect(body.version).toBe('0.1.0');
+    expect(body.version).toBe('0.1.1');
   });
 
   it('notify endpoint receives and records notifications', async () => {
