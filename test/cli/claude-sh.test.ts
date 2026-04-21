@@ -40,6 +40,25 @@ describe('generateClaudeSh', () => {
     expect(output).toContain('export KEY_PATH=".github-app-key.pem"');
   });
 
+  it('exports MACF_WORKSPACE_DIR for cross-repo path resolution', () => {
+    // Runtime agent templates (.claude/rules/agent-identity.md +
+    // plugin/agents/*.md) reference $MACF_WORKSPACE_DIR so cd'ing to
+    // another repo doesn't break the token helper path.
+    // Observed failure mode: 2026-04-21 PR #16 attribution misfire.
+    const output = generateClaudeSh(sampleConfig);
+    expect(output).toContain('export MACF_WORKSPACE_DIR="$SCRIPT_DIR"');
+  });
+
+  it('resolves KEY_PATH against $SCRIPT_DIR when relative (cross-repo cwd trap)', () => {
+    // Previously KEY_PATH stayed at the bare config value. If
+    // `.github-app-key.pem` (relative), cd-ing to another repo made
+    // the helper unable to find the key → silent empty GH_TOKEN →
+    // attribution trap. Now claude.sh rewrites relative paths to
+    // absolute at launch.
+    const output = generateClaudeSh(sampleConfig);
+    expect(output).toMatch(/case "\$KEY_PATH" in[\s\S]*?\/\*\) ;;[\s\S]*?\*\) KEY_PATH="\$SCRIPT_DIR\/\$KEY_PATH"/);
+  });
+
   it('starts with a bash shebang and set -euo pipefail', () => {
     const output = generateClaudeSh(sampleConfig);
     const lines = output.split('\n');

@@ -148,9 +148,13 @@ The helper is distributed to every agent workspace by `macf init` and refreshed 
 
 1. **Refresh GH_TOKEN before every `gh` or `git push`** — tokens are 1-hour installation tokens. Use the canonical helper, and **fail loud** if it doesn't work:
 
-        GH_TOKEN=$(./.claude/scripts/macf-gh-token.sh \
+        GH_TOKEN=$("$MACF_WORKSPACE_DIR/.claude/scripts/macf-gh-token.sh" \
           --app-id "$APP_ID" --install-id "$INSTALL_ID" --key "$KEY_PATH") || exit 1
         export GH_TOKEN
+
+   **Use `$MACF_WORKSPACE_DIR/` as the path prefix, not `./`.** The relative-path form (`./.claude/scripts/...`) breaks the moment you `cd` to another repo for cross-repo work — the `$(...)` substitution returns empty, `export GH_TOKEN=""` silently succeeds, and the next `gh` call falls back to stored user auth. `$MACF_WORKSPACE_DIR` is set by `claude.sh` to the agent's workspace absolute path and resolves regardless of cwd. Same principle for `KEY_PATH`: `claude.sh` rewrites relative key paths to absolute at launch so helper invocations from any cwd still find the key.
+
+   **Why this matters:** the `#140` PreToolUse hook catches this class at tool-call time (empty `GH_TOKEN` → blocks the `gh` call before it runs). But the hook adds friction — the command aborts, the operator retries with the correct pattern. Using absolute paths from the start avoids the abort-retry loop entirely.
 
    **Never** use the naive `export GH_TOKEN=$(gh token generate ... | jq -r '.token')` pattern — if `gh token generate` fails, jq's success masks the error (no `pipefail`), `GH_TOKEN` becomes the string `"null"`, and every subsequent `gh` operation silently falls back to the stored `gh auth login` as the user. This is the attribution trap: your PRs and comments get written as the user, not the bot, and nothing surfaces the mismatch until cross-agent routing breaks.
 

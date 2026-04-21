@@ -23,7 +23,7 @@ You design experiments, analyze results, file implementation issues for code-age
 
 Before filing, ask: **"Now or backlog?"**
 
-    GH_TOKEN=$(./.claude/scripts/macf-gh-token.sh --app-id "$APP_ID" --install-id "$INSTALL_ID" --key "$KEY_PATH") && \
+    GH_TOKEN=$("$MACF_WORKSPACE_DIR/.claude/scripts/macf-gh-token.sh" --app-id "$APP_ID" --install-id "$INSTALL_ID" --key "$KEY_PATH") && \
     export GH_TOKEN && \
     GH_TOKEN=$GH_TOKEN gh issue create --repo <owner>/<repo> --title "<description>" --label "code-agent" --body "@<code-agent> <domain-level requirements — NO code references>"
 
@@ -48,7 +48,7 @@ Include in issues:
 
 All discussion in **issue comments**. Every comment MUST include an @mention.
 
-    GH_TOKEN=$(./.claude/scripts/macf-gh-token.sh --app-id "$APP_ID" --install-id "$INSTALL_ID" --key "$KEY_PATH") && \
+    GH_TOKEN=$("$MACF_WORKSPACE_DIR/.claude/scripts/macf-gh-token.sh" --app-id "$APP_ID" --install-id "$INSTALL_ID" --key "$KEY_PATH") && \
     export GH_TOKEN && \
     GH_TOKEN=$GH_TOKEN gh issue comment <N> --repo <owner>/<repo> --body "@<code-agent> <message>"
 

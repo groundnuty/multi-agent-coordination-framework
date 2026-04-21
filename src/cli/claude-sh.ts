@@ -36,6 +36,13 @@ export function generateClaudeSh(config: MacfAgentConfig): string {
     'SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"',
     'cd "$SCRIPT_DIR"',
     '',
+    // Export MACF_WORKSPACE_DIR so runtime agent templates
+    // (.claude/rules/agent-identity.md + plugin/agents/*.md) can
+    // reference the workspace root as an absolute path. Relative
+    // paths break the moment the agent cd's to another repo for
+    // cross-repo work — attribution trap fires. See #140 + the
+    // cross-repo cwd trap note in coordination.md Token & Git Hygiene.
+    'export MACF_WORKSPACE_DIR="$SCRIPT_DIR"',
     `export MACF_AGENT_NAME="${config.agent_name}"`,
     `export MACF_PROJECT="${config.project}"`,
     `export MACF_AGENT_TYPE="${config.agent_type}"`,
@@ -43,6 +50,17 @@ export function generateClaudeSh(config: MacfAgentConfig): string {
     `export APP_ID="${config.github_app.app_id}"`,
     `export INSTALL_ID="${config.github_app.install_id}"`,
     `export KEY_PATH="${config.github_app.key_path}"`,
+    // Resolve KEY_PATH against $SCRIPT_DIR if it's relative. Absolute
+    // paths (e.g., operators who stored the key under /etc or /opt)
+    // pass through unchanged. Previously KEY_PATH stayed relative and
+    // broke the moment the agent cd'd to another repo — attribution
+    // trap fires on the next `gh` call. See #140 + coordination.md
+    // Token & Git Hygiene (cross-repo cwd trap note).
+    'case "$KEY_PATH" in',
+    '  /*) ;;  # already absolute',
+    '  *) KEY_PATH="$SCRIPT_DIR/$KEY_PATH" ;;',
+    'esac',
+    'export KEY_PATH',
     `export MACF_CA_CERT="$HOME/.macf/certs/${config.project}/ca-cert.pem"`,
     `export MACF_CA_KEY="$HOME/.macf/certs/${config.project}/ca-key.pem"`,
     'export MACF_AGENT_CERT="$SCRIPT_DIR/.macf/certs/agent-cert.pem"',
