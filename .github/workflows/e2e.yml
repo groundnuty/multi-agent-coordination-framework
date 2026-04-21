@@ -105,7 +105,7 @@ jobs:
           Initial failure: commit \`$COMMIT_SHA\` (event: \`$EVENT\`).
           Run: $RUN_URL
 
-          This issue is auto-opened by \`.github/workflows/e2e.yml\` (#149). It stays open until someone closes it manually after the suite is green again. Subsequent failures append a comment rather than opening a new issue.
+          This issue is auto-opened by \`.github/workflows/e2e.yml\` (#149) and will **auto-close on the next green E2E run** via the self-close-on-green step (#163). Subsequent failures before that green run append a comment rather than opening a new issue.
 
           @macf-code-agent[bot] — E2E suite failing on main. Investigate and fix, or file a revert if the break is urgent.
 
@@ -124,3 +124,51 @@ jobs:
               --label "code-agent,blocked" \
               --body "$BODY"
           fi
+
+      # Self-close-on-green (#163). Companion to the auto-open step
+      # above: after a GREEN E2E run on main (push or schedule — both
+      # indicate a genuine on-main pass), close any open auto-opened
+      # issue with a comment citing the green run's SHA + URL.
+      # Machine-enforces the "stays open until green" contract the
+      # auto-open body sets — previously operator-disciplined and lost
+      # to lucky-timing auto-close on PR merge (see #154 / #160 / #162).
+      #
+      # Why the event filter excludes workflow_dispatch: operators may
+      # manually dispatch to investigate a suspected-flake; we don't
+      # want that to close an open incident issue. push + schedule
+      # cover the "main is genuinely green" signals.
+      - name: Self-close auto-opened issue on green
+        if: success() && (github.event_name == 'push' || github.event_name == 'schedule')
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          COMMIT_SHA: ${{ github.sha }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          EVENT: ${{ github.event_name }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+
+          TITLE_PREFIX="ci(e2e): post-merge suite failing on main"
+          EXISTING=$(gh issue list \
+            --repo "$REPO" \
+            --state open \
+            --search "\"$TITLE_PREFIX\" in:title" \
+            --json number \
+            --jq '.[0].number // ""')
+
+          if [ -z "$EXISTING" ]; then
+            echo "No auto-opened E2E issue open — no-op."
+            exit 0
+          fi
+
+          CLOSE_BODY=$(cat <<EOF
+          E2E suite GREEN on \`$COMMIT_SHA\` (event: \`$EVENT\`).
+
+          Run: $RUN_URL
+
+          Auto-closed by the self-close-on-green step (#163) per coordination.md Issue Lifecycle rule 5 ("wait for the next auto-run to confirm green, then close with evidence"). If the fix was incomplete, the next E2E failure re-opens via the title-prefix dedup path.
+          EOF
+          )
+
+          gh issue close "$EXISTING" --repo "$REPO" --reason completed --comment "$CLOSE_BODY"
+          echo "Closed issue #$EXISTING"
