@@ -24,9 +24,17 @@ const sampleConfig: MacfAgentConfig = {
 };
 
 describe('generateClaudeSh', () => {
-  it('includes the current --plugin-dir flag', () => {
+  it('includes the --plugin-dir flag + -c for permanent agents', () => {
     const output = generateClaudeSh(sampleConfig);
+    // Permanent agent → `-c` reattaches to prior session (macf#178 Gap 5).
+    expect(output).toContain('exec claude -c --plugin-dir "$SCRIPT_DIR/.macf/plugin" "$@"');
+  });
+
+  it('omits -c for worker agents (each invocation is fresh by design)', () => {
+    const workerConfig: MacfAgentConfig = { ...sampleConfig, agent_type: 'worker' };
+    const output = generateClaudeSh(workerConfig);
     expect(output).toContain('exec claude --plugin-dir "$SCRIPT_DIR/.macf/plugin" "$@"');
+    expect(output).not.toContain('exec claude -c');
   });
 
   it('exports the expected environment variables from config', () => {
@@ -85,6 +93,68 @@ describe('generateClaudeSh', () => {
     expect(output).toContain('export MACF_CA_KEY="$HOME/.macf/certs/TEST/ca-key.pem"');
   });
 
+  describe('registry env exports (macf#178 Gap 1)', () => {
+    it('emits MACF_REGISTRY_TYPE + MACF_REGISTRY_REPO for repo-scoped registry', () => {
+      const cfg: MacfAgentConfig = {
+        ...sampleConfig,
+        registry: { type: 'repo', owner: 'groundnuty', repo: 'macf' },
+      };
+      const output = generateClaudeSh(cfg);
+      expect(output).toContain('export MACF_REGISTRY_TYPE="repo"');
+      expect(output).toContain('export MACF_REGISTRY_REPO="groundnuty/macf"');
+      expect(output).not.toContain('MACF_REGISTRY_ORG');
+      expect(output).not.toContain('MACF_REGISTRY_USER');
+    });
+
+    it('emits MACF_REGISTRY_TYPE + MACF_REGISTRY_ORG for org-scoped registry', () => {
+      const cfg: MacfAgentConfig = {
+        ...sampleConfig,
+        registry: { type: 'org', org: 'papers-org' },
+      };
+      const output = generateClaudeSh(cfg);
+      expect(output).toContain('export MACF_REGISTRY_TYPE="org"');
+      expect(output).toContain('export MACF_REGISTRY_ORG="papers-org"');
+      expect(output).not.toContain('MACF_REGISTRY_REPO');
+      expect(output).not.toContain('MACF_REGISTRY_USER');
+    });
+
+    it('emits MACF_REGISTRY_TYPE + MACF_REGISTRY_USER for profile-scoped registry', () => {
+      const cfg: MacfAgentConfig = {
+        ...sampleConfig,
+        registry: { type: 'profile', user: 'groundnuty' },
+      };
+      const output = generateClaudeSh(cfg);
+      expect(output).toContain('export MACF_REGISTRY_TYPE="profile"');
+      expect(output).toContain('export MACF_REGISTRY_USER="groundnuty"');
+      expect(output).not.toContain('MACF_REGISTRY_REPO');
+      expect(output).not.toContain('MACF_REGISTRY_ORG');
+    });
+  });
+
+  describe('advertise-host env export (macf#178 Gap 2)', () => {
+    it('emits MACF_HOST=0.0.0.0 + MACF_ADVERTISE_HOST from config when set', () => {
+      const cfg: MacfAgentConfig = { ...sampleConfig, advertise_host: '100.124.163.105' };
+      const output = generateClaudeSh(cfg);
+      expect(output).toContain('export MACF_HOST="0.0.0.0"');
+      expect(output).toContain('export MACF_ADVERTISE_HOST="100.124.163.105"');
+    });
+
+    it('falls back to MACF_ADVERTISE_HOST=127.0.0.1 when config.advertise_host is unset', () => {
+      // Matches plugin's internal default in src/config.ts — keeps
+      // backward-compat for workspaces that haven't opted into off-box
+      // routing. The env is always emitted so `echo $MACF_ADVERTISE_HOST`
+      // shows the active value regardless.
+      const output = generateClaudeSh(sampleConfig);
+      expect(output).toContain('export MACF_ADVERTISE_HOST="127.0.0.1"');
+    });
+
+    it('accepts a DNS name as advertise-host', () => {
+      const cfg: MacfAgentConfig = { ...sampleConfig, advertise_host: 'agent.tailnet.ts.net' };
+      const output = generateClaudeSh(cfg);
+      expect(output).toContain('export MACF_ADVERTISE_HOST="agent.tailnet.ts.net"');
+    });
+  });
+
   it('uses the fail-loud token helper (no naive gh token generate | jq)', () => {
     // #67: the launcher must not embed the silent-fallback anti-pattern.
     const output = generateClaudeSh(sampleConfig);
@@ -129,7 +199,7 @@ describe('writeClaudeSh', () => {
 
     const after = readFileSync(path, 'utf-8');
     expect(after).not.toContain('stale user edits');
-    expect(after).toContain('exec claude --plugin-dir');
+    expect(after).toContain('exec claude -c --plugin-dir');
     expect(statSync(path).mode & 0o777).toBe(0o755);
   });
 

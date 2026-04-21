@@ -13,6 +13,56 @@ import { chmodSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import type { MacfAgentConfig } from './config.js';
 
+/**
+ * Emit shell `export MACF_REGISTRY_*` lines matching the registry
+ * scope in `cfg`. The plugin's `src/config.ts` reads these three env
+ * vars (MACF_REGISTRY_TYPE + per-type ORG / USER / REPO) on startup;
+ * without them the plugin falls back to a hardcoded default repo and
+ * 403s every registry op on consumers in other scopes. See macf#178.
+ *
+ * Exhaustive switch on the discriminated union — if a new RegistryConfig
+ * variant is ever added, TypeScript fails the build here, forcing a
+ * paired env-line update.
+ */
+function registryEnvLines(cfg: MacfAgentConfig): string[] {
+  switch (cfg.registry.type) {
+    case 'repo':
+      return [
+        `export MACF_REGISTRY_TYPE="repo"`,
+        `export MACF_REGISTRY_REPO="${cfg.registry.owner}/${cfg.registry.repo}"`,
+      ];
+    case 'org':
+      return [
+        `export MACF_REGISTRY_TYPE="org"`,
+        `export MACF_REGISTRY_ORG="${cfg.registry.org}"`,
+      ];
+    case 'profile':
+      return [
+        `export MACF_REGISTRY_TYPE="profile"`,
+        `export MACF_REGISTRY_USER="${cfg.registry.user}"`,
+      ];
+  }
+}
+
+/**
+ * Claude Code session-resume flags for the final `exec claude ...`.
+ * Permanent agents reattach to the prior session so context persists
+ * across relaunches (same ergonomics as macf-science-agent /
+ * macf-code-agent's existing tmux wrappers). Worker agents skip `-c`
+ * because every invocation is fresh by design. See macf#178 Gap 5.
+ *
+ * Exhaustive switch on `agent_type` so adding a new type is a compile
+ * error that forces a paired flag policy decision.
+ */
+function resumeFlags(cfg: MacfAgentConfig): string[] {
+  switch (cfg.agent_type) {
+    case 'permanent':
+      return ['-c'];
+    case 'worker':
+      return [];
+  }
+}
+
 const MANAGED_HEADER_LINES = [
   '# This file is managed by `macf`. Do not edit directly — edits are',
   '# overwritten on the next `macf update`. The template lives at',
@@ -67,6 +117,13 @@ export function generateClaudeSh(config: MacfAgentConfig): string {
     'export MACF_AGENT_KEY="$SCRIPT_DIR/.macf/certs/agent-key.pem"',
     'export MACF_LOG_PATH="$SCRIPT_DIR/.macf/logs/channel.log"',
     'export MACF_DEBUG="${MACF_DEBUG:-false}"',
+    // Listen on all interfaces; advertise the routable host below. When
+    // advertise_host is unset in macf-agent.json, fall back to 127.0.0.1
+    // (the plugin's existing default — keeps backward compat for
+    // workspaces that haven't set the field yet). See macf#178.
+    'export MACF_HOST="0.0.0.0"',
+    `export MACF_ADVERTISE_HOST="${config.advertise_host ?? '127.0.0.1'}"`,
+    ...registryEnvLines(config),
     '',
     '# Bot token generation — fail loud. The helper validates the ghs_ prefix',
     '# and surfaces diagnostics (clock drift, bad key, wrong App/install ID).',
@@ -87,7 +144,10 @@ export function generateClaudeSh(config: MacfAgentConfig): string {
     `echo "Starting ${config.agent_name} (${config.agent_role})..."`,
     // --plugin-dir loads the pinned macf-agent plugin from this workspace
     // (per DR-013). Additive — user-scope plugins still load alongside.
-    'exec claude --plugin-dir "$SCRIPT_DIR/.macf/plugin" "$@"',
+    // `-c` (for permanent agents) reattaches to the prior Claude Code
+    // session so context persists across relaunches; worker agents skip
+    // it so every invocation is fresh. See macf#178 Gap 5.
+    `exec claude ${[...resumeFlags(config), '--plugin-dir', '"$SCRIPT_DIR/.macf/plugin"'].join(' ')} "$@"`,
     '',
   ].join('\n');
 }

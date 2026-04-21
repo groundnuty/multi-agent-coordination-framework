@@ -80,6 +80,56 @@ describe('agent-cert', () => {
       // serverAuth to peer certs.
       expect([...usages]).toEqual(['1.3.6.1.5.5.7.3.2']);
     });
+
+    it('emits default SAN [127.0.0.1, localhost] when no advertiseHost', async () => {
+      const result = await generateAgentCert({
+        agentName: 'test-agent',
+        caCertPem,
+        caKeyPem,
+      });
+      const cert = new x509Lib.X509Certificate(result.certPem);
+      const sanExt = cert.getExtension('2.5.29.17'); // subjectAltName OID
+      expect(sanExt).toBeDefined();
+      const names = (sanExt as unknown as { names: { items: readonly { type: string; value: string }[] } }).names.items;
+      expect(names.map(n => ({ type: n.type, value: n.value }))).toEqual([
+        { type: 'ip', value: '127.0.0.1' },
+        { type: 'dns', value: 'localhost' },
+      ]);
+    });
+
+    it('appends IPv4 advertiseHost as IP entry after the defaults (macf#178 Gap 3)', async () => {
+      const result = await generateAgentCert({
+        agentName: 'test-agent',
+        caCertPem,
+        caKeyPem,
+        advertiseHost: '100.124.163.105',
+      });
+      const cert = new x509Lib.X509Certificate(result.certPem);
+      const sanExt = cert.getExtension('2.5.29.17');
+      const names = (sanExt as unknown as { names: { items: readonly { type: string; value: string }[] } }).names.items;
+      expect(names.map(n => ({ type: n.type, value: n.value }))).toEqual([
+        { type: 'ip', value: '127.0.0.1' },
+        { type: 'dns', value: 'localhost' },
+        { type: 'ip', value: '100.124.163.105' },
+      ]);
+    });
+
+    it('appends non-IPv4 advertiseHost as DNS entry (Tailscale *.ts.net etc.)', async () => {
+      const result = await generateAgentCert({
+        agentName: 'test-agent',
+        caCertPem,
+        caKeyPem,
+        advertiseHost: 'agent.tailnet.ts.net',
+      });
+      const cert = new x509Lib.X509Certificate(result.certPem);
+      const sanExt = cert.getExtension('2.5.29.17');
+      const names = (sanExt as unknown as { names: { items: readonly { type: string; value: string }[] } }).names.items;
+      expect(names.map(n => ({ type: n.type, value: n.value }))).toEqual([
+        { type: 'ip', value: '127.0.0.1' },
+        { type: 'dns', value: 'localhost' },
+        { type: 'dns', value: 'agent.tailnet.ts.net' },
+      ]);
+    });
   });
 
   describe('generateCSR', () => {

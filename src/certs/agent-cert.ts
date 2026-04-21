@@ -69,13 +69,30 @@ export async function importPrivateKey(keyPem: string): Promise<CryptoKey> {
 }
 
 /**
+ * Classify a host string as an IP or DNS name for SubjectAlternativeName
+ * entries. Shape-only check (matches `999.999.999.999` too — cert
+ * generation doesn't validate octet ranges, and we'd rather keep the
+ * classifier forgiving than have it silently misclassify a typo'd IP
+ * as DNS). IPv6 not handled here; add `:` detection + `[]` URL-wrapping
+ * when there's an actual ask.
+ */
+function hostToSan(host: string): { type: 'ip' | 'dns'; value: string } {
+  const ipv4Shape = /^(\d{1,3}\.){3}\d{1,3}$/;
+  return ipv4Shape.test(host)
+    ? { type: 'ip', value: host }
+    : { type: 'dns', value: host };
+}
+
+/**
  * Shared peer-cert builder used by both generateAgentCert (new peer
  * certs via `macf certs init`) and signCSR (CSR-signed peer certs
  * via `/sign`). Produces the DR-004-compliant extension set:
  *
  *   - KeyUsage: digitalSignature | keyEncipherment (mTLS client+server use)
- *   - SubjectAlternativeName: 127.0.0.1 / localhost (per DR-004; SAN
- *       across Tailscale hosts is a known follow-up per `phase2 backlog`)
+ *   - SubjectAlternativeName: 127.0.0.1 / localhost (always, for local-debug
+ *       flows — curl-to-localhost for /health etc.) plus any caller-
+ *       supplied extraSans (typically the agent's advertised host per
+ *       macf#178 Gap 3)
  *   - ExtendedKeyUsage: clientAuth (#125, DR-004 v2 EKU rollout)
  *
  * Extracted per ultrareview finding A10 — both callers previously
@@ -91,6 +108,11 @@ async function buildPeerCert(opts: {
   // or x509.PublicKey (from a parsed CSR's .publicKey) — the peculiar
   // x509 generator internally accepts both via its overloaded type.
   readonly publicKey: CryptoKey | x509.PublicKey;
+  // Extra SubjectAlternativeName entries appended after the default
+  // [127.0.0.1, localhost] pair. Typically the agent's advertise_host
+  // classified via hostToSan(). Caller is responsible for
+  // deduping — duplicates in the SAN list are harmless but noisy.
+  readonly extraSans?: readonly { readonly type: 'ip' | 'dns'; readonly value: string }[];
 }): Promise<string> {
   const caCert = new x509.X509Certificate(opts.caCertPem);
   const caKey = await importPrivateKey(opts.caKeyPem);
@@ -98,6 +120,12 @@ async function buildPeerCert(opts: {
   const notBefore = new Date();
   const notAfter = new Date();
   notAfter.setFullYear(notAfter.getFullYear() + AGENT_CERT_VALIDITY_YEARS);
+
+  const sans: { type: 'ip' | 'dns'; value: string }[] = [
+    { type: 'ip', value: '127.0.0.1' },
+    { type: 'dns', value: 'localhost' },
+    ...(opts.extraSans ?? []),
+  ];
 
   const cert = await x509.X509CertificateGenerator.create({
     serialNumber: randomBytes(8).toString('hex'),
@@ -113,10 +141,7 @@ async function buildPeerCert(opts: {
         x509.KeyUsageFlags.digitalSignature | x509.KeyUsageFlags.keyEncipherment,
         true,
       ),
-      new x509.SubjectAlternativeNameExtension([
-        { type: 'ip', value: '127.0.0.1' },
-        { type: 'dns', value: 'localhost' },
-      ]),
+      new x509.SubjectAlternativeNameExtension(sans),
       new x509.ExtendedKeyUsageExtension([
         // clientAuth OID (#125) — per DR-004 v2 EKU rollout. Enforced
         // server-side at /health + /notify + /sign per #121.
@@ -131,15 +156,23 @@ async function buildPeerCert(opts: {
 /**
  * Generate agent certificate signed by the CA.
  * Used when the CA key is available locally.
+ *
+ * `advertiseHost`, when supplied, is added to the cert's SAN list on
+ * top of the default [127.0.0.1, localhost] pair. This is how an agent
+ * reachable at a Tailscale IP / DNS name passes server-hostname
+ * verification when the routing Action (or a sibling agent) connects
+ * over the network. Classification is IPv4-shape vs DNS via
+ * `hostToSan()`. See macf#178 Gap 3.
  */
 export async function generateAgentCert(config: {
   readonly agentName: string;
   readonly caCertPem: string;
   readonly caKeyPem: string;
+  readonly advertiseHost?: string;
   readonly certPath?: string;
   readonly keyPath?: string;
 }): Promise<AgentCertResult> {
-  const { agentName, caCertPem, caKeyPem, certPath, keyPath } = config;
+  const { agentName, caCertPem, caKeyPem, advertiseHost, certPath, keyPath } = config;
 
   const agentKeys = await webcrypto.subtle.generateKey(
     RSA_ALGORITHM,
@@ -152,6 +185,7 @@ export async function generateAgentCert(config: {
     caCertPem,
     caKeyPem,
     publicKey: agentKeys.publicKey,
+    extraSans: advertiseHost ? [hostToSan(advertiseHost)] : undefined,
   });
   const exported = await webcrypto.subtle.exportKey('pkcs8', agentKeys.privateKey);
   const agentKeyPem = exportKeyToPem(exported);

@@ -80,6 +80,7 @@ program
   .option('--registry-org <org>', 'Org name (for org registry)')
   .option('--registry-user <user>', 'User name (for profile registry)')
   .option('--registry-repo <repo>', 'owner/repo (for repo registry)')
+  .option('--advertise-host <host>', 'Host the channel server advertises in its registry entry + includes in its cert SAN (e.g., Tailscale IP). Defaults to 127.0.0.1 when unset.')
   .option('--cli-version <semver>', 'Pin @macf/cli version (e.g., 0.1.0)')
   .option('--plugin-version <semver>', 'Pin macf-agent plugin version (e.g., 0.1.0)')
   .option('--actions-version <tag>', 'Pin macf-actions version (e.g., v1, v1.0.0)')
@@ -98,6 +99,7 @@ program
       registryOrg: opts.registryOrg,
       registryUser: opts.registryUser,
       registryRepo: opts.registryRepo,
+      advertiseHost: opts.advertiseHost,
       cliVersion: opts.cliVersion,
       pluginVersion: opts.pluginVersion,
       actionsVersion: opts.actionsVersion,
