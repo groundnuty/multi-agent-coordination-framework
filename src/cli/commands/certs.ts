@@ -153,6 +153,10 @@ export async function certsRotate(projectDir: string): Promise<void> {
     agentName: config.agent_name,
     caCertPem: ca.certPem,
     caKeyPem: ca.keyPem,
+    // Flow the advertised host into the cert SAN so TLS hostname
+    // verification succeeds when an off-box consumer (routing Action,
+    // sibling agent) connects over the network. macf#178 Gap 3.
+    ...(config.advertise_host !== undefined ? { advertiseHost: config.advertise_host } : {}),
     certPath: certP,
     keyPath: keyP,
   });

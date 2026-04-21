@@ -128,6 +128,15 @@ export const MacfAgentConfigSchema = z.object({
     install_id: z.string(),
     key_path: z.string(),
   }),
+  // Host the agent advertises in its registry entry (written by the
+  // channel server on bind). When unset, claude.sh falls back to
+  // 127.0.0.1 — matches the plugin's existing default. Set this to a
+  // Tailscale IP / DNS name when the agent is routed-to by an off-box
+  // consumer (GHA runner, sibling agent on another machine). Flows to
+  // (a) MACF_ADVERTISE_HOST env in claude.sh, (b) SubjectAlternativeName
+  // on the agent's mTLS cert so hostname verification succeeds.
+  // See macf#178.
+  advertise_host: z.string().min(1).optional(),
   // Optional for backward compat: legacy configs (pre-P6) lack this field.
   // `macf init --force` rewrites with resolved versions; `macf update` (PR #5) bumps.
   versions: VersionPinsSchema.optional(),

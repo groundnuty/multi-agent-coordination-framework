@@ -31,6 +31,13 @@ export interface InitOptions {
   readonly registryOrg?: string;
   readonly registryUser?: string;
   readonly registryRepo?: string;
+  /**
+   * Host the channel server advertises to the registry + includes in
+   * its mTLS cert SAN. When unset, launcher falls back to 127.0.0.1
+   * (matches plugin default). Operators routing to agents over the
+   * network (Tailscale IP / DNS) must set this. See macf#178.
+   */
+  readonly advertiseHost?: string;
   readonly cliVersion?: string;
   readonly pluginVersion?: string;
   readonly actionsVersion?: string;
@@ -199,6 +206,7 @@ export async function initAgent(projectDir: string, opts: InitOptions): Promise<
       install_id: opts.installId,
       key_path: opts.keyPath,
     },
+    ...(opts.advertiseHost !== undefined ? { advertise_host: opts.advertiseHost } : {}),
     versions,
   };
 
@@ -259,6 +267,7 @@ export async function initAgent(projectDir: string, opts: InitOptions): Promise<
         agentName,
         caCertPem: ca.certPem,
         caKeyPem: ca.keyPem,
+        ...(opts.advertiseHost !== undefined ? { advertiseHost: opts.advertiseHost } : {}),
         certPath: agentCertPath(absDir),
         keyPath: agentKeyPath(absDir),
       });
