@@ -58,6 +58,16 @@ The rules here are topology-agnostic: they work whether the project uses a scien
 
    If a correction is substantive enough that the assignee would want to re-read from scratch, consider closing the current issue and filing a replacement with a clear back-reference — rather than in-place body rewrite.
 
+5. **Auto-opened issues break the peer-agent-reporter assumptions.** When an issue is filed by `github-actions[bot]` or any other non-human/non-agent bot, the peer-reviewer-verifies-the-fix loop that rules 1-4 assume doesn't apply — the bot-reporter can't verify, can't be routed-to as a reviewer, and can't sanity-check closure. Three specific adaptations:
+
+   - **Use `Refs #N`, not `Closes #N`, in the fix PR body.** The auto-close keyword bypasses the verification step the bot-reporter can't perform. Prefer an explicit close after the next post-merge run independently confirms the fix worked — not the PR merge itself, which fires before verification.
+   - **Route the review ping to `@macf-science-agent[bot]`** (or whichever peer agent would normally review), **not by echoing the `@<bot-reporter>` mention from the auto-open body.** The auto-open's `@mention` addresses the agent who should FIX, not the one who should REVIEW. Self-mention loops don't fire the routing workflow — the PR sits unreviewed.
+   - **Wait for the next auto-run to confirm green, then close with a comment citing the green run's SHA + URL.** If the auto-opening workflow has a self-close-on-green step (e.g., `e2e.yml`), trust it — don't pre-empt by closing manually or via PR auto-close keyword. Until self-close-on-green is wired, the manual-close-with-evidence pattern is the concrete fallback.
+
+   **Why this rule matters:** lucky timing isn't a verification gate. If a fix is incomplete, auto-close on PR merge closes the issue 2 seconds before the next run fails anew — producing a misleading closure trail. The "stays open until green" contract the auto-open body sets needs to be honored on the machine-enforced side, not relied on operator-discipline.
+
+   **Example auto-opened issues in this repo:** E2E cadence failures on `main` (#149 workflow auto-opens a `code-agent`/`blocked` issue with title prefix `ci(e2e): post-merge suite failing on main`); dependency-drift alerts; future `/sign` / cert-rotation health alarms. The pattern generalizes to any workflow that files on failure.
+
 ---
 
 ## Communication

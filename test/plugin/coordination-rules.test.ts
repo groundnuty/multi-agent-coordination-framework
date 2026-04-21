@@ -106,3 +106,25 @@ describe('coordination.md — verify comment actually posted (#143)', () => {
     expect(text).toMatch(/mandatory tail|not.*optional|treat this as (mandatory|required)/i);
   });
 });
+
+describe('coordination.md — auto-opened issue handling (#164)', () => {
+  it('differentiates bot-reporter from peer-reporter rules', () => {
+    const text = body();
+    expect(text).toMatch(/auto-opened|github-actions\[bot\]|non-human.*bot/i);
+  });
+
+  it('forbids Closes keyword on bot-filed issues', () => {
+    const text = body();
+    expect(text).toMatch(/Refs.*not.*Closes|don't use.*auto-close|not `Closes/i);
+  });
+
+  it('routes reviews to reviewer, not echoes back to the bot-reporter', () => {
+    const text = body();
+    expect(text).toMatch(/don't echo.*@mention|not by echoing|route.*to.*@macf-science-agent/i);
+  });
+
+  it('waits for next-run verification before closing', () => {
+    const text = body();
+    expect(text).toMatch(/next.*auto-run|post-merge.*confirm|next.*run.*green|wait for the next auto-run/i);
+  });
+});
