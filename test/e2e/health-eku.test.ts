@@ -22,6 +22,7 @@ import { request } from 'node:https';
 import { createHttpsServer } from '../../src/https.js';
 import type { HealthResponse, Logger, SignRequest } from '../../src/types.js';
 import { generateTestCerts, cleanupTestCerts, type TestCerts } from './fixtures/gen-certs.js';
+import { EXPECTED_VERSION } from '../version-helper.js';
 
 let certs: TestCerts;
 
@@ -190,7 +191,7 @@ describe('clientAuth EKU gate E2E (#121, #137 Chunk 3)', () => {
         type: 'permanent',
         uptime_seconds: 100,
         current_issue: null,
-        version: '0.1.1',
+        version: EXPECTED_VERSION,
         last_notification: null,
       };
       const { port, stop } = await startServer({ healthData });
