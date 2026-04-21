@@ -204,6 +204,7 @@ We maintain a GitHub [Projects board](https://github.com/groundnuty/macf/project
 - **[Phase specs (7)](design/phases/)** — P1 channel server → P7 agent templates. Each phase maps to a concrete implementation slice.
 - **[Research corpus (16)](research/)** — literature reviews, empirical analysis, comparison to prior multi-agent work.
 - **[`coordination.md`](plugin/rules/coordination.md)** — canonical cross-cutting rules distributed to every agent workspace. Single source of truth; `macf rules refresh` propagates updates.
+- **[`CHANGELOG.md`](CHANGELOG.md)** — per-release notes. Keep-a-Changelog format.
 
 ## Related repositories
 
@@ -217,10 +218,12 @@ Releases are tag-versioned per repo; consumers pin to major tags (`@v1`, `@v2`) 
 
 ## Status
 
+- **Latest CLI release**: [`v0.1.1`](CHANGELOG.md#011--2026-04-20) (2026-04-20)
 - **Phases P1–P7**: shipped and on main
 - **Stage 2 routing** (SSH + tmux): production
 - **Stage 3 routing** (mTLS HTTPS POST): shipped in `macf-actions@v2`, opt-in per consumer repo
-- **Security hardening**: PBKDF2 at OWASP 2023 levels, clientAuth EKU enforcement, attribution-trap PreToolUse hook, `/sign` challenge verification, schema-validated payloads
+- **Security hardening**: PBKDF2 at OWASP 2023 levels, clientAuth EKU enforcement, attribution-trap PreToolUse hook (structural, not behavioral), `/sign` challenge verification, schema-validated payloads
+- **Operator reliability**: stale-dist detection + `macf self-update`, E2E suite running post-merge + daily cron on the CLI repo, auto-opened issues on drift
 - **CV deployment** (first external project using MACF): Phase 6 launch pending
 - **Research paper**: drafting; target venues ASE NIER / ESEM 2026
 
