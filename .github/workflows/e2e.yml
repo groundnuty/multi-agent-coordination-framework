@@ -46,6 +46,15 @@ permissions:
 jobs:
   e2e:
     runs-on: ubuntu-latest
+    # Job-level env shared by auto-open + self-close steps. Both need
+    # the same title-prefix string to stay in lockstep on the dedup
+    # search — previously duplicated across the two `run:` blocks as
+    # a literal, which would drift if one step's title updated without
+    # the other. Extracted here so a single edit updates both.
+    # (If a 2nd auto-opened incident class appears, promote this to a
+    # reusable composite action; see memory/project_title_prefix_extraction.md.)
+    env:
+      INCIDENT_TITLE_PREFIX: "ci(e2e): post-merge suite failing on main"
     steps:
       - uses: actions/checkout@v6
 
@@ -78,11 +87,10 @@ jobs:
           # Dedup by title prefix rather than by label — no label setup
           # required, and a human-readable title is a sharper signal
           # when scanning the issue list than a tag.
-          TITLE_PREFIX="ci(e2e): post-merge suite failing on main"
           EXISTING=$(gh issue list \
             --repo "$REPO" \
             --state open \
-            --search "\"$TITLE_PREFIX\" in:title" \
+            --search "\"$INCIDENT_TITLE_PREFIX\" in:title" \
             --json number \
             --jq '.[0].number // ""')
 
@@ -120,7 +128,7 @@ jobs:
           )
             gh issue create \
               --repo "$REPO" \
-              --title "$TITLE_PREFIX — since \`$COMMIT_SHA\`" \
+              --title "$INCIDENT_TITLE_PREFIX — since \`$COMMIT_SHA\`" \
               --label "code-agent,blocked" \
               --body "$BODY"
           fi
@@ -148,11 +156,10 @@ jobs:
         run: |
           set -euo pipefail
 
-          TITLE_PREFIX="ci(e2e): post-merge suite failing on main"
           EXISTING=$(gh issue list \
             --repo "$REPO" \
             --state open \
-            --search "\"$TITLE_PREFIX\" in:title" \
+            --search "\"$INCIDENT_TITLE_PREFIX\" in:title" \
             --json number \
             --jq '.[0].number // ""')
 
