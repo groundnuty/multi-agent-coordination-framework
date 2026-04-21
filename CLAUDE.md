@@ -25,6 +25,8 @@ scripts/          ← shipped with CLI, copied into <workspace>/.claude/scripts/
   macf-gh-token.sh       ← fail-loud token helper (#61)
   macf-whoami.sh         ← identity/attribution check (#61)
   tmux-send-to-claude.sh ← canonical tmux-submit pattern (#56)
+  check-gh-token.sh      ← PreToolUse attribution-trap hook (#140)
+  write-build-info.mjs   ← postbuild: stamps dist/.build-info.json for stale-dist detection (#144)
 
 templates/
   macf-app-manifest.json ← GitHub App manifest with DR-019 permissions
@@ -50,8 +52,18 @@ test/             ← unit tests (default vitest run) + test/e2e/ (excluded)
 ## Implementation Status
 
 P1–P7 all implemented. Post-P7 work is bug-fix + security + hardening driven
-by issue queue and periodic audits. Recent security-critical landings:
+by issue queue and periodic audits. Currently at **v0.1.1** (see `CHANGELOG.md`).
+Recent security-critical landings:
 
+- **#140 / attribution-trap PreToolUse hook** — structural block of `gh` /
+  `git push` invocations when `GH_TOKEN` isn't a `ghs_` bot token.
+  Catches `sudo gh`, `bash -c "gh ..."`, `bash -xc`, `GH_TOKEN=x gh`,
+  and other wrapped forms. Moved the attribution trap from behavioral
+  (5 recurrences in one day) to structural.
+- **#161 / cross-repo token paths** — `claude.sh` exports
+  `MACF_WORKSPACE_DIR` and absolutizes `KEY_PATH` so the token helper
+  resolves from any cwd. Closes the cross-repo cwd variant of the
+  attribution trap (6th recurrence).
 - **#87 / DR-010 fix** — `/sign` challenge-response now actually verifies
   (was tautological; any mTLS cert holder could obtain certs for arbitrary
   agent names before fix). In-memory challenge store with 5-min TTL.
@@ -86,8 +98,8 @@ Other recent doctrine: **DR-019** codifies the 7 required App permissions
   first-order workflows; `make -f dev.mk check` is the canonical gate
 
 Key targets:
-- `make -f dev.mk check` — full CI: install + build + lint + test (434+/434 tests
-  as of 2026-04-16)
+- `make -f dev.mk check` — full CI: install + typecheck + lint + test (671/671 tests
+  as of 2026-04-21)
 - `make -f dev.mk typecheck` — type check only (`tsc --noEmit`; formerly `build`, renamed per #127)
 - `make -f dev.mk build` — real compile, emits `dist/` (matches `npm run build`)
 - `make -f dev.mk lint` — ESLint
@@ -147,8 +159,9 @@ One-off test: `devbox run -- npx vitest run test/path/to/file.test.ts`
   reference it from their `.github/workflows/agent-router.yml` via
   `uses: groundnuty/macf-actions/.github/workflows/agent-router.yml@v1`
 - Canonical helpers (coordination.md, tmux-send-to-claude.sh,
-  macf-gh-token.sh, macf-whoami.sh) ship IN the CLI package and are
-  distributed to workspaces at `macf init` / `macf update` / `macf rules refresh`
+  macf-gh-token.sh, macf-whoami.sh, check-gh-token.sh) ship IN the
+  CLI package and are distributed to workspaces at `macf init` /
+  `macf update` / `macf rules refresh`
 
 ## Where to Start When Debugging
 
@@ -160,3 +173,6 @@ One-off test: `devbox run -- npx vitest run test/path/to/file.test.ts`
 | `/sign` unexpected behavior                  | `src/certs/challenge.ts` + `challenge-store.ts` + DR-010 |
 | Version pins weirdness                       | `src/cli/version-resolver.ts` + `macf-agent.json.versions` |
 | Agent template out of sync across workspaces | `plugin/rules/coordination.md` (canonical); re-run `macf rules refresh` |
+| PreToolUse hook blocks legitimate `gh` call  | `GH_TOKEN` not `ghs_`-prefixed; refresh via `macf-gh-token.sh`; see `scripts/check-gh-token.sh` + #140 |
+| E2E suite failing silently / fixture drift   | `.github/workflows/e2e.yml` + auto-opened `code-agent/blocked` issue on main |
+| Linked CLI behavior doesn't match main       | Stale `dist/`; run `macf self-update` (or `make -f dev.mk build`); see #144 |
