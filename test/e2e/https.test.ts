@@ -5,6 +5,7 @@ import { createServer as createNetServer } from 'node:net';
 import { createHttpsServer } from '../../src/https.js';
 import type { HealthResponse, Logger } from '../../src/types.js';
 import { generateTestCerts, cleanupTestCerts, type TestCerts } from './fixtures/gen-certs.js';
+import { EXPECTED_VERSION } from '../version-helper.js';
 
 let certs: TestCerts;
 
@@ -76,7 +77,7 @@ describe('createHttpsServer', () => {
       type: 'permanent',
       uptime_seconds: 42,
       current_issue: null,
-      version: '0.1.1',
+      version: EXPECTED_VERSION,
       last_notification: null,
     };
 

@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { createHealthState } from '../src/health.js';
+import { EXPECTED_VERSION } from './version-helper.js';
 
 describe('createHealthState', () => {
   beforeEach(() => {
@@ -20,7 +21,7 @@ describe('createHealthState', () => {
     expect(health.type).toBe('permanent');
     expect(health.uptime_seconds).toBe(0);
     expect(health.current_issue).toBeNull();
-    expect(health.version).toBe('0.1.1');
+    expect(health.version).toBe(EXPECTED_VERSION);
     expect(health.last_notification).toBeNull();
   });
 

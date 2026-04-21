@@ -11,6 +11,7 @@ import { createHealthState } from '../../src/health.js';
 import { createLogger } from '../../src/logger.js';
 import type { NotifyPayload, HttpsServer } from '../../src/types.js';
 import { generateTestCerts, cleanupTestCerts, type TestCerts } from './fixtures/gen-certs.js';
+import { EXPECTED_VERSION } from '../version-helper.js';
 
 let certs: TestCerts;
 let server: HttpsServer;
@@ -124,7 +125,7 @@ describe('integration', () => {
     expect(body.status).toBe('online');
     expect(body.type).toBe('permanent');
     expect(body.current_issue).toBeNull();
-    expect(body.version).toBe('0.1.1');
+    expect(body.version).toBe(EXPECTED_VERSION);
   });
 
   it('notify endpoint receives and records notifications', async () => {

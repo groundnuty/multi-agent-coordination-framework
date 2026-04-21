@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { McpChannelError } from '../src/errors.js';
+import { EXPECTED_VERSION } from './version-helper.js';
 
 // Mock the MCP SDK before importing the module under test
 const mockConnect = vi.fn().mockResolvedValue(undefined);
@@ -29,7 +30,7 @@ describe('createMcpChannel', () => {
     createMcpChannel({ agentName: 'code-agent' });
 
     expect(Server).toHaveBeenCalledWith(
-      { name: 'macf-code-agent', version: '0.1.1' },
+      { name: 'macf-code-agent', version: EXPECTED_VERSION },
       expect.objectContaining({
         capabilities: { experimental: { 'claude/channel': {} } },
         instructions: expect.stringContaining('issue_routed'),
