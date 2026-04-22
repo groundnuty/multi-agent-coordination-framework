@@ -71,10 +71,26 @@ export interface WakeOptions {
  * + auto-detection fallback. Returns the target string to pass as the
  * script's first arg, or `null` if no target resolvable.
  *
- *   session + window set     → "session:window"
- *   session only             → "session"
- *   neither + $TMUX present  → auto-detect via `tmux display-message`
- *   neither + no $TMUX       → null (no-op)
+ * Priority order:
+ *
+ *   1. Explicit `session` + optional `window`
+ *       → `"session:window"` / `"session"`
+ *   2. `$TMUX_PANE` set (e.g. `%87`)
+ *       → that pane ID — deterministic per-pane identity, inherited
+ *         by every child of the pane. This is the ground truth when
+ *         the server was launched inside a tmux pane: no matter how
+ *         many sessions/windows exist or whether `display-message`
+ *         would resolve ambiguously, `$TMUX_PANE` points at exactly
+ *         the pane our process belongs to. See macf#189 sub-item 3 —
+ *         the bilateral e2e demo exposed the ambiguity of
+ *         `display-message` on a shared tmux socket with multiple
+ *         windows; wake landed on the wrong pane.
+ *   3. `$TMUX` set (generic tmux presence)
+ *       → fall back to `tmux display-message -p '...'` for the
+ *         common case where `$TMUX_PANE` isn't exported (older tmux
+ *         or non-interactive invocations).
+ *   4. None of the above
+ *       → null (wake path no-ops; log "no_target" skip).
  *
  * Exported for unit tests.
  */
@@ -91,7 +107,15 @@ export function resolveTmuxTarget(opts: {
     return target;
   }
 
-  // Auto-detect: only if launched from inside tmux.
+  // TMUX_PANE is the most deterministic auto-detect: tmux sets it
+  // per-pane (e.g. `%87`) and every child process of the pane
+  // inherits it. A pane ID is a valid `tmux -t` target, so we can
+  // pass it straight through to the helper.
+  const pane = env['TMUX_PANE'];
+  if (pane !== undefined && pane !== '') return pane;
+
+  // Fall back to display-message when $TMUX is set but $TMUX_PANE
+  // isn't (older tmux versions or unusual launch paths).
   if (!env['TMUX']) return null;
   try {
     const out = execFileSync('tmux', ['display-message', '-p', '#{session_name}:#{window_index}'], {

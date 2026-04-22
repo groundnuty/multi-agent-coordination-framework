@@ -24,17 +24,42 @@ const sampleConfig: MacfAgentConfig = {
 };
 
 describe('generateClaudeSh', () => {
-  it('includes the --plugin-dir flag + -c for permanent agents', () => {
+  it('includes the --plugin-dir flag + -c for permanent agents (default branch)', () => {
     const output = generateClaudeSh(sampleConfig);
     // Permanent agent → `-c` reattaches to prior session (macf#178 Gap 5).
+    // The -c path lives inside the `else` branch; MACF_TEST-unset takes it.
     expect(output).toContain('exec claude -c --plugin-dir "$SCRIPT_DIR/.macf/plugin" "$@"');
   });
 
   it('omits -c for worker agents (each invocation is fresh by design)', () => {
     const workerConfig: MacfAgentConfig = { ...sampleConfig, agent_type: 'worker' };
     const output = generateClaudeSh(workerConfig);
+    // Worker has no -c in either MACF_TEST branch, so both lines look the same.
     expect(output).toContain('exec claude --plugin-dir "$SCRIPT_DIR/.macf/plugin" "$@"');
     expect(output).not.toContain('exec claude -c');
+  });
+
+  describe('MACF_TEST escape hatch (macf#189 sub-item 4)', () => {
+    it('generates a conditional exec: MACF_TEST set → no -c, else → -c (permanent)', () => {
+      const output = generateClaudeSh(sampleConfig);
+      // The template emits an if/else in the shell; both execs appear
+      // in source, guarded at RUNTIME by the env check. Just assert
+      // the conditional is there + both branches produce the expected
+      // exec line.
+      expect(output).toContain('if [ -n "${MACF_TEST:-}" ]; then');
+      expect(output).toContain('exec claude --plugin-dir "$SCRIPT_DIR/.macf/plugin" "$@"');
+      expect(output).toContain('exec claude -c --plugin-dir "$SCRIPT_DIR/.macf/plugin" "$@"');
+      // Closing fi present.
+      expect(output).toMatch(/fi[\s\n]*$/);
+    });
+
+    it('worker agents get the same conditional shape (both branches have no -c)', () => {
+      // MACF_TEST doesn't change behavior for workers (already no -c),
+      // but the if/else still gets emitted — the template is uniform.
+      const workerConfig: MacfAgentConfig = { ...sampleConfig, agent_type: 'worker' };
+      const output = generateClaudeSh(workerConfig);
+      expect(output).toContain('if [ -n "${MACF_TEST:-}" ]; then');
+    });
   });
 
   it('exports the expected environment variables from config', () => {
