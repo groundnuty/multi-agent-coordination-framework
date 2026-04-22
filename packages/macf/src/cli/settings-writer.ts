@@ -114,7 +114,7 @@ export const PLUGIN_SKILL_PERMISSIONS: readonly string[] = [
 
 /**
  * Sandbox filesystem read-allow pattern for Claude Code's Bash-tool
- * harness. Every Bash invocation's spawned zsh reads `/proc/self/fd/3`
+ * harness. Every Bash invocation's spawned shell reads `/proc/self/fd/3`
  * (or higher fds in future builds) for stdin / command-input passed
  * by the harness. Without this pattern in the sandbox allowlist, the
  * read is denied → `zsh:4: permission denied: /proc/self/fd/3` →
@@ -122,11 +122,15 @@ export const PLUGIN_SKILL_PERMISSIONS: readonly string[] = [
  * `dangerouslyDisableSandbox`, defeating isolation). Hit every MACF
  * agent before macf#200.
  *
- * The `**` glob is future-proof — current builds use fd 3; future
- * builds may use 4, 5, etc. Still scoped to the calling process's
- * own descriptors, not a broader `/proc/*` allowance.
+ * Claude Code's `sandbox.filesystem.allowRead` takes **literal path
+ * prefixes**, not globs. Bare `/proc/self/fd` matches every
+ * descriptor at any depth (`/proc/self/fd/3`, `/proc/self/fd/4`, ...)
+ * via prefix semantics. An earlier draft used `/proc/self/fd/**` on
+ * the assumption it was a glob; it isn't — the double-star was
+ * treated as a literal and didn't match. See macf#208 for the
+ * empirical surfacing of the bug.
  */
-export const SANDBOX_FD_READ_PATTERN = '/proc/self/fd/**';
+export const SANDBOX_FD_READ_PATTERN = '/proc/self/fd';
 
 /**
  * Read `.claude/settings.json`'s `sandbox.filesystem.allowRead` array
@@ -137,7 +141,7 @@ export const SANDBOX_FD_READ_PATTERN = '/proc/self/fd/**';
  * mask operator-authored state).
  *
  * Used by `macf doctor` (macf#202) to report whether the workspace
- * has the `/proc/self/fd/**` pattern without duplicating the
+ * has the `/proc/self/fd` prefix pattern without duplicating the
  * JSON-read + deep-narrow logic in two places.
  */
 export function getSandboxAllowRead(workspaceDir: string): readonly string[] {
@@ -152,11 +156,24 @@ export function getSandboxAllowRead(workspaceDir: string): readonly string[] {
 }
 
 /**
- * Install (or refresh) the `/proc/self/fd/**` entry in
+ * Legacy MACF-managed patterns that earlier CLI versions wrote to
+ * `allowRead`. Dropped from the array before installing the current
+ * `SANDBOX_FD_READ_PATTERN` — the `/**` glob suffix was treated
+ * literally by the sandbox (not as a glob) and silently didn't
+ * match, leaving the fd read denied. See macf#208.
+ */
+const MACF_LEGACY_FD_PATTERNS: readonly string[] = [
+  '/proc/self/fd/**',
+];
+
+/**
+ * Install (or refresh) the `/proc/self/fd` entry in
  * `.claude/settings.json`'s `sandbox.filesystem.allowRead` array.
  * Creates each nested key if absent. Idempotent — repeated calls
  * don't duplicate. Operator-authored `allowRead` entries are
- * preserved.
+ * preserved; stale MACF-managed patterns (see
+ * MACF_LEGACY_FD_PATTERNS) are dropped before the current pattern
+ * is installed.
  *
  * Opt-out: if `MACF_SANDBOX_FD_FIX_SKIP` is `1` or `true` at call
  * time (during `macf init` / `macf update`), no change is made. Lets
@@ -164,7 +181,7 @@ export function getSandboxAllowRead(workspaceDir: string): readonly string[] {
  * shapes to stay aligned with `MACF_OTEL_DISABLED` (see
  * `claude-sh.ts` — same family of opt-out env knobs).
  *
- * See macf#200.
+ * See macf#200 (original fd-deny bug), macf#208 (pattern-literal fix).
  */
 export function installSandboxFdAllowRead(workspaceDir: string): void {
   const skip = process.env['MACF_SANDBOX_FD_FIX_SKIP'];
@@ -185,7 +202,21 @@ export function installSandboxFdAllowRead(workspaceDir: string): void {
     ? (filesystemRaw['allowRead'] as readonly unknown[]).filter((v): v is string => typeof v === 'string')
     : [];
 
-  if (existingAllow.includes(SANDBOX_FD_READ_PATTERN)) return;
+  // Preserve operator-authored entries; drop any known-legacy MACF
+  // patterns so the workspace ends up with exactly the current one.
+  const preserved = existingAllow.filter(
+    (entry) => !MACF_LEGACY_FD_PATTERNS.includes(entry),
+  );
+
+  // Idempotent short-circuit: only skip if the current pattern is
+  // already present AND there's no legacy pattern to clean up.
+  if (preserved.length === existingAllow.length && preserved.includes(SANDBOX_FD_READ_PATTERN)) {
+    return;
+  }
+
+  const allowRead = preserved.includes(SANDBOX_FD_READ_PATTERN)
+    ? preserved
+    : [...preserved, SANDBOX_FD_READ_PATTERN];
 
   const updated: Settings = {
     ...settings,
@@ -193,7 +224,7 @@ export function installSandboxFdAllowRead(workspaceDir: string): void {
       ...sandboxRaw,
       filesystem: {
         ...filesystemRaw,
-        allowRead: [...existingAllow, SANDBOX_FD_READ_PATTERN],
+        allowRead,
       },
     },
   };
