@@ -145,37 +145,41 @@ jobs:
           echo "//registry.npmjs.org/:_authToken=${NPM_TOKEN}" >> "$HOME/.npmrc"
           echo "registry=https://registry.npmjs.org/" >> "$HOME/.npmrc"
 
+      # `devbox run -- npm publish` runs from the devbox project root
+      # (the monorepo root) regardless of any preceding `cd`. Using
+      # `cd packages/<name>` before the command was a silent no-op —
+      # npm packed the private monorepo-root package instead of the
+      # intended sub-package, failing with EPRIVATE. Use `npm`'s
+      # workspace flag to target each sub-package by name from root.
+      # See the v0.2.0-rc.0 failed publish run for the diagnostic.
       - name: Publish @groundnuty/macf-core (first, consumers depend on it)
         env:
           DRY_RUN: ${{ github.event.inputs.dry-run }}
         run: |
-          cd packages/macf-core
           if [[ "$DRY_RUN" == "true" ]]; then
-            devbox run -- npm publish --provenance --access public --dry-run
+            devbox run -- npm publish --workspace=@groundnuty/macf-core --provenance --access public --dry-run
           else
-            devbox run -- npm publish --provenance --access public
+            devbox run -- npm publish --workspace=@groundnuty/macf-core --provenance --access public
           fi
 
       - name: Publish @groundnuty/macf (CLI)
         env:
           DRY_RUN: ${{ github.event.inputs.dry-run }}
         run: |
-          cd packages/macf
           if [[ "$DRY_RUN" == "true" ]]; then
-            devbox run -- npm publish --provenance --access public --dry-run
+            devbox run -- npm publish --workspace=@groundnuty/macf --provenance --access public --dry-run
           else
-            devbox run -- npm publish --provenance --access public
+            devbox run -- npm publish --workspace=@groundnuty/macf --provenance --access public
           fi
 
       - name: Publish @groundnuty/macf-channel-server
         env:
           DRY_RUN: ${{ github.event.inputs.dry-run }}
         run: |
-          cd packages/macf-channel-server
           if [[ "$DRY_RUN" == "true" ]]; then
-            devbox run -- npm publish --provenance --access public --dry-run
+            devbox run -- npm publish --workspace=@groundnuty/macf-channel-server --provenance --access public --dry-run
           else
-            devbox run -- npm publish --provenance --access public
+            devbox run -- npm publish --workspace=@groundnuty/macf-channel-server --provenance --access public
           fi
 
       - name: Summary
