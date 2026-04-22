@@ -2,9 +2,11 @@ import { createServer, type Server as NodeHttpsServer } from 'node:https';
 import type { TLSSocket } from 'node:tls';
 import { readFileSync } from 'node:fs';
 import { randomInt } from 'node:crypto';
+import { context, propagation, SpanKind, SpanStatusCode } from '@opentelemetry/api';
 import { NotifyPayloadSchema, SignRequestSchema } from './types.js';
 import type { NotifyPayload, SignRequest, HealthResponse, HttpsServer, Logger } from './types.js';
 import { PortExhaustedError, PortUnavailableError, HttpsServerError, HttpError } from './errors.js';
+import { getTracer, SpanNames, Attr, GenAiAttr, operationNameForNotifyType } from './tracing.js';
 
 const MAX_BODY_BYTES = 64 * 1024; // 64KB
 export const PORT_RANGE_START = 8800;
@@ -196,15 +198,51 @@ export function createHttpsServer(config: {
         return;
       }
 
-      try {
-        await onNotify(result.data);
-        sendJson(res, 200, { status: 'received' });
-      } catch (err) {
-        logger.error('notify_push_failed', {
-          error: err instanceof Error ? err.message : String(err),
-        });
-        sendJson(res, 500, { error: 'Failed to push notification' });
-      }
+      // macf#194: wrap onNotify in a SERVER span so child operations
+      // (MCP push, tmux wake) attach to it via active-context
+      // propagation. Parent context extracted from W3C `traceparent`
+      // header if the routing Action sent one; otherwise a new root.
+      // Span + any mcp/tmux children roll up to the same trace-id
+      // in Langfuse/SigNoz, giving one unified trace per coord event.
+      const parentCtx = propagation.extract(context.active(), req.headers);
+      const clientCn = (req.socket as import('node:tls').TLSSocket)
+        .getPeerCertificate()?.subject?.CN ?? 'unknown';
+      const tracer = getTracer();
+      await tracer.startActiveSpan(
+        SpanNames.NotifyReceived,
+        {
+          kind: SpanKind.SERVER,
+          attributes: {
+            [GenAiAttr.System]: 'macf',
+            [GenAiAttr.OperationName]: operationNameForNotifyType(result.data.type),
+            [Attr.NotifyType]: result.data.type,
+            [Attr.RemoteCn]: clientCn,
+            ...(result.data.issue_number !== undefined
+              ? { [Attr.IssueNumber]: result.data.issue_number }
+              : {}),
+          },
+        },
+        parentCtx,
+        async (span) => {
+          try {
+            await onNotify(result.data);
+            sendJson(res, 200, { status: 'received' });
+            span.setStatus({ code: SpanStatusCode.OK });
+          } catch (err) {
+            logger.error('notify_push_failed', {
+              error: err instanceof Error ? err.message : String(err),
+            });
+            span.recordException(err as Error);
+            span.setStatus({
+              code: SpanStatusCode.ERROR,
+              message: err instanceof Error ? err.message : String(err),
+            });
+            sendJson(res, 500, { error: 'Failed to push notification' });
+          } finally {
+            span.end();
+          }
+        },
+      );
       return;
     }
 
@@ -242,17 +280,47 @@ export function createHttpsServer(config: {
         return;
       }
 
-      try {
-        const response = await onSign(result.data);
-        sendJson(res, 200, response);
-      } catch (err) {
-        // Typed HttpError carries a specific intended status; anything
-        // else is an unexpected server-side failure → 500.
-        const status = err instanceof HttpError ? err.httpStatus : 500;
-        sendJson(res, status, {
-          error: err instanceof Error ? err.message : 'Signing failed',
-        });
-      }
+      // macf#194: /sign SERVER span. Audit-trail value — every cert
+      // issuance gets a trace entry correlatable to the requester
+      // (cn + agent_name) + the trace-parent (who kicked off the
+      // rotation?).
+      const signParentCtx = propagation.extract(context.active(), req.headers);
+      const signClientCn = (req.socket as import('node:tls').TLSSocket)
+        .getPeerCertificate()?.subject?.CN ?? 'unknown';
+      const signTracer = getTracer();
+      await signTracer.startActiveSpan(
+        SpanNames.SignCsr,
+        {
+          kind: SpanKind.SERVER,
+          attributes: {
+            [GenAiAttr.System]: 'macf',
+            [Attr.RemoteCn]: signClientCn,
+            [GenAiAttr.AgentName]: result.data.agent_name,
+          },
+        },
+        signParentCtx,
+        async (span) => {
+          try {
+            const response = await onSign(result.data);
+            sendJson(res, 200, response);
+            span.setStatus({ code: SpanStatusCode.OK });
+          } catch (err) {
+            // Typed HttpError carries a specific intended status;
+            // anything else is an unexpected server-side failure → 500.
+            const status = err instanceof HttpError ? err.httpStatus : 500;
+            sendJson(res, status, {
+              error: err instanceof Error ? err.message : 'Signing failed',
+            });
+            span.recordException(err as Error);
+            span.setStatus({
+              code: SpanStatusCode.ERROR,
+              message: err instanceof Error ? err.message : String(err),
+            });
+          } finally {
+            span.end();
+          }
+        },
+      );
       return;
     }
 
