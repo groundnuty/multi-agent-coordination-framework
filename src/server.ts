@@ -1,3 +1,11 @@
+// macf#194: OTEL bootstrap must run BEFORE any module calls
+// `trace.getTracer()` at import-eval time. Side-effect import; no-op
+// when OTEL_EXPORTER_OTLP_ENDPOINT is unset. Keep this the FIRST line
+// of server.ts entrypoint.
+import './otel.js';
+
+import { SpanKind, SpanStatusCode } from '@opentelemetry/api';
+import { getTracer, SpanNames } from './tracing.js';
 import { loadConfig } from './config.js';
 import { createLogger } from './logger.js';
 import { createMcpChannel } from './mcp.js';
@@ -77,7 +85,29 @@ async function main(): Promise<void> {
       issue: payload.issue_number,
     });
 
-    await mcp.pushNotification(content, meta);
+    // macf#194: wrap MCP push in an INTERNAL child span of the active
+    // notify span. Shows up in Langfuse as a timed hop between the
+    // inbound HTTP and the tmux wake.
+    const tracer = getTracer();
+    await tracer.startActiveSpan(
+      SpanNames.McpPush,
+      { kind: SpanKind.INTERNAL },
+      async (span) => {
+        try {
+          await mcp.pushNotification(content, meta);
+          span.setStatus({ code: SpanStatusCode.OK });
+        } catch (err) {
+          span.recordException(err as Error);
+          span.setStatus({
+            code: SpanStatusCode.ERROR,
+            message: err instanceof Error ? err.message : String(err),
+          });
+          throw err;
+        } finally {
+          span.end();
+        }
+      },
+    );
     health.recordNotification();
 
     logger.info('mcp_pushed', {

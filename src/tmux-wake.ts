@@ -53,7 +53,9 @@
 import { execFileSync, spawnSync } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
+import { SpanKind, SpanStatusCode } from '@opentelemetry/api';
 import type { Logger } from './types.js';
+import { getTracer, SpanNames, Attr } from './tracing.js';
 
 export interface WakeOptions {
   /** Workspace root for locating `.claude/scripts/tmux-send-to-claude.sh`. */
@@ -143,50 +145,75 @@ export function resolveTmuxTarget(opts: {
  * prompt as a separate argv to the helper (no shell interpolation).
  */
 export function wakeViaTmux(prompt: string, opts: WakeOptions): boolean {
-  const scriptPath = join(opts.workspaceDir, '.claude', 'scripts', 'tmux-send-to-claude.sh');
-  if (!existsSync(scriptPath)) {
-    opts.logger.info('tmux_wake_skipped', {
-      reason: 'helper_missing',
-      path: scriptPath,
-    });
-    return false;
-  }
+  const tracer = getTracer();
+  // startActiveSpan with sync callback: the wake-path is sync shell-
+  // out via spawnSync, so no async context-propagation complexity.
+  // Span attached to whatever parent is active (typically
+  // macf.server.notify_received when called from the onNotify chain).
+  return tracer.startActiveSpan(
+    SpanNames.TmuxWakeDeliver,
+    { kind: SpanKind.INTERNAL },
+    (span): boolean => {
+      try {
+        const scriptPath = join(opts.workspaceDir, '.claude', 'scripts', 'tmux-send-to-claude.sh');
+        if (!existsSync(scriptPath)) {
+          opts.logger.info('tmux_wake_skipped', {
+            reason: 'helper_missing',
+            path: scriptPath,
+          });
+          span.setAttribute(Attr.WakeOutcome, 'helper_missing');
+          return false;
+        }
 
-  const target = resolveTmuxTarget({ session: opts.session, window: opts.window });
-  if (target === null) {
-    opts.logger.info('tmux_wake_skipped', {
-      reason: 'no_target',
-      detail: 'MACF_TMUX_SESSION unset and $TMUX auto-detect unavailable',
-    });
-    return false;
-  }
+        const target = resolveTmuxTarget({ session: opts.session, window: opts.window });
+        if (target === null) {
+          opts.logger.info('tmux_wake_skipped', {
+            reason: 'no_target',
+            detail: 'MACF_TMUX_SESSION unset and $TMUX auto-detect unavailable',
+          });
+          span.setAttribute(Attr.WakeOutcome, 'no_target');
+          return false;
+        }
+        span.setAttribute(Attr.TmuxTarget, target);
 
-  const result = spawnSync(scriptPath, [target, prompt], {
-    encoding: 'utf-8',
-    // Helper sleeps 1s between the two Enters; give headroom for
-    // pane startup + tmux IPC.
-    timeout: 10_000,
-  });
+        const result = spawnSync(scriptPath, [target, prompt], {
+          encoding: 'utf-8',
+          // Helper sleeps 1s between the two Enters; give headroom for
+          // pane startup + tmux IPC.
+          timeout: 10_000,
+        });
 
-  if (result.error !== undefined) {
-    opts.logger.warn('tmux_wake_failed', {
-      reason: 'spawn_error',
-      error: result.error.message,
-    });
-    return false;
-  }
-  if (result.status !== 0) {
-    opts.logger.warn('tmux_wake_failed', {
-      reason: 'nonzero_exit',
-      status: result.status,
-      stderr: result.stderr.slice(0, 200),
-    });
-    return false;
-  }
+        if (result.error !== undefined) {
+          opts.logger.warn('tmux_wake_failed', {
+            reason: 'spawn_error',
+            error: result.error.message,
+          });
+          span.setAttribute(Attr.WakeOutcome, 'spawn_error');
+          span.recordException(result.error);
+          span.setStatus({ code: SpanStatusCode.ERROR, message: result.error.message });
+          return false;
+        }
+        if (result.status !== 0) {
+          opts.logger.warn('tmux_wake_failed', {
+            reason: 'nonzero_exit',
+            status: result.status,
+            stderr: result.stderr.slice(0, 200),
+          });
+          span.setAttribute(Attr.WakeOutcome, 'nonzero_exit');
+          span.setStatus({ code: SpanStatusCode.ERROR, message: `exit ${String(result.status)}` });
+          return false;
+        }
 
-  opts.logger.info('tmux_wake_delivered', {
-    target,
-    prompt_length: prompt.length,
-  });
-  return true;
+        opts.logger.info('tmux_wake_delivered', {
+          target,
+          prompt_length: prompt.length,
+        });
+        span.setAttribute(Attr.WakeOutcome, 'delivered');
+        span.setStatus({ code: SpanStatusCode.OK });
+        return true;
+      } finally {
+        span.end();
+      }
+    },
+  );
 }
