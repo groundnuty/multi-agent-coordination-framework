@@ -15,7 +15,7 @@ import {
   GenAiAttr,
   operationNameForNotifyType,
 } from '../src/tracing.js';
-import type { NotifyPayload } from 'macf-core';
+import type { NotifyPayload } from '@groundnuty/macf-core';
 
 describe('operationNameForNotifyType', () => {
   it('maps mention → invoke_agent (GenAI semconv vocabulary)', () => {

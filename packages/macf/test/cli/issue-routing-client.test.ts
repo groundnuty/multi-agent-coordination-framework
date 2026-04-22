@@ -24,12 +24,12 @@ import * as x509Lib from '@peculiar/x509';
 
 // Mock the token + registry layers BEFORE importing the module under
 // test. Post #206 phase 1b both layers ship from `macf-core` — a single
-// `vi.mock('macf-core', ...)` with `vi.importActual` to preserve
+// `vi.mock('@groundnuty/macf-core', ...)` with `vi.importActual` to preserve
 // everything else is the cleanest way to intercept just the two
 // functions under test without rebuilding the whole barrel.
 const mockRegistryGet = vi.fn<(name: string) => Promise<unknown>>();
-vi.mock('macf-core', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('macf-core')>();
+vi.mock('@groundnuty/macf-core', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@groundnuty/macf-core')>();
   return {
     ...actual,
     generateToken: vi.fn().mockResolvedValue('fake-token-for-tests'),
@@ -45,9 +45,9 @@ vi.mock('macf-core', async (importOriginal) => {
 // Crypto provider must be initialized before @peculiar/x509 is used.
 // Lives in macf-core post-#206 phase 1b — the bare import triggers
 // the provider's module-scoped initialization.
-import 'macf-core';
+import '@groundnuty/macf-core';
 import { issueRoutingClient } from '../../src/cli/commands/certs.js';
-import { createCA } from 'macf-core';
+import { createCA } from '@groundnuty/macf-core';
 import { writeAgentConfig } from '../../src/cli/config.js';
 import { caDir, caCertPath, caKeyPath } from '../../src/cli/config.js';
 import type { MacfAgentConfig } from '../../src/cli/config.js';

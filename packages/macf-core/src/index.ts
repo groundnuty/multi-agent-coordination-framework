@@ -7,9 +7,9 @@
  * publish per DR-022 Amendment A).
  *
  * Re-exports everything the consumers need so they can
- * `import { X } from 'macf-core'` instead of reaching into
- * subpaths. Subpath imports are still supported via the `exports`
- * map in package.json for consumers that need a specific module.
+ * `import { X } from '@groundnuty/macf-core'` instead of reaching
+ * into subpaths. Subpath imports are still supported via normal
+ * node-resolution for consumers that need a specific module.
  */
 export * from './errors.js';
 export * from './logger.js';

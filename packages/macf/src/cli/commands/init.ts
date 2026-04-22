@@ -7,8 +7,8 @@ import {
   caCertPath as caCertPathFor, caKeyPath as caKeyPathFor,
   isValidProjectName,
 } from '../config.js';
-import { loadCA } from 'macf-core';
-import { generateAgentCert } from 'macf-core';
+import { loadCA } from '@groundnuty/macf-core';
+import { generateAgentCert } from '@groundnuty/macf-core';
 import { copyCanonicalRules, copyCanonicalScripts } from '../rules.js';
 import { installGhTokenHook, installPluginSkillPermissions, installSandboxFdAllowRead } from '../settings-writer.js';
 import { fetchPluginToWorkspace } from '../plugin-fetcher.js';

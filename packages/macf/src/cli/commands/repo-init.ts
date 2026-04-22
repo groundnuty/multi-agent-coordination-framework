@@ -1,7 +1,7 @@
 import { execFileSync } from 'node:child_process';
 import { mkdirSync, writeFileSync, readFileSync, existsSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
-import { generateToken } from 'macf-core';
+import { generateToken } from '@groundnuty/macf-core';
 
 export interface RepoInitOptions {
   readonly repo?: string;

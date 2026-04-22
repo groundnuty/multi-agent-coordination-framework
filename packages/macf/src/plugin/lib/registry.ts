@@ -1,4 +1,4 @@
-import type { AgentInfo, Registry } from 'macf-core';
+import type { AgentInfo, Registry } from '@groundnuty/macf-core';
 
 export interface OwnRegistration {
   readonly name: string;

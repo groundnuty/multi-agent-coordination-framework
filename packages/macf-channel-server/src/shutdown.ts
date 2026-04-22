@@ -1,5 +1,5 @@
-import type { Registry } from 'macf-core';
-import type { HttpsServer, Logger } from 'macf-core';
+import type { Registry } from '@groundnuty/macf-core';
+import type { HttpsServer, Logger } from '@groundnuty/macf-core';
 
 /**
  * Registers SIGTERM and SIGINT handlers that clean up the agent's

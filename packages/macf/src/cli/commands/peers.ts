@@ -1,6 +1,6 @@
 import { loadAllAgents, readAgentConfig, tokenSourceFromConfig } from '../config.js';
-import { createRegistryFromConfig } from 'macf-core';
-import { generateToken } from 'macf-core';
+import { createRegistryFromConfig } from '@groundnuty/macf-core';
+import { generateToken } from '@groundnuty/macf-core';
 
 /**
  * List peers from the registry.

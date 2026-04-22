@@ -16,7 +16,7 @@ describe('findCliPackageRoot', () => {
     expect(existsSync(join(root, 'package.json'))).toBe(true);
     // The repo package.json contains our bin entry — sanity check.
     const pkg = JSON.parse(readFileSync(join(root, 'package.json'), 'utf-8'));
-    expect(pkg.name).toBe('macf');
+    expect(pkg.name).toBe('@groundnuty/macf');
   });
 });
 

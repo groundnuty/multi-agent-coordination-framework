@@ -1,7 +1,7 @@
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
-import { McpChannelError } from 'macf-core';
-import type { McpChannel } from 'macf-core';
+import { McpChannelError } from '@groundnuty/macf-core';
+import type { McpChannel } from '@groundnuty/macf-core';
 
 const CHANNEL_INSTRUCTIONS = `Events arrive as <channel source="macf-agent" type="..." ...>.
 

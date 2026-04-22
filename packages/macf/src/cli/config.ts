@@ -2,7 +2,7 @@ import { z } from 'zod';
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'node:fs';
 import { join, dirname, resolve } from 'node:path';
 import { homedir } from 'node:os';
-import { RegistryConfigSchema } from 'macf-core';
+import { RegistryConfigSchema } from '@groundnuty/macf-core';
 
 // --- Paths ---
 

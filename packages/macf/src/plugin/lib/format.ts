@@ -1,4 +1,4 @@
-import type { HealthResponse } from 'macf-core';
+import type { HealthResponse } from '@groundnuty/macf-core';
 import type { OwnRegistration, PeerEntry } from './registry.js';
 
 function formatUptime(seconds: number): string {

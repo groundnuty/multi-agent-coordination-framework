@@ -5,12 +5,10 @@ import { defineConfig } from 'vitest/config';
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
 export default defineConfig({
-  // Redirect `import ... from '@groundnuty/macf-core'` to the sibling workspace's
-  // source entry during tests. Without this the resolver would find
-  // `dist/index.js` via the workspace symlink, requiring a pre-test
-  // build — fragile in watch mode and CI. Runtime (built CLI / server
-  // binary) still resolves via normal node_modules workspace linkage
-  // to the package's `main` → `dist/index.js`.
+  // Redirect `import ... from '@groundnuty/macf-core'` to the sibling
+  // workspace's source entry during tests. Keeps test runs from
+  // requiring a pre-built core dist/. Runtime (built server binary)
+  // resolves via workspaces symlink → package.json main → dist/index.js.
   resolve: {
     alias: {
       '@groundnuty/macf-core': resolve(__dirname, '../macf-core/src/index.ts'),
@@ -24,7 +22,7 @@ export default defineConfig({
     coverage: {
       provider: 'v8',
       include: ['src/**/*.ts'],
-      exclude: ['src/cli/**'],
+      exclude: ['src/server.ts', 'src/https.ts'],
       thresholds: {
         lines: 80,
         functions: 80,

@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import type { Registry, AgentInfo } from 'macf-core';
-import type { Logger } from 'macf-core';
+import type { Registry, AgentInfo } from '@groundnuty/macf-core';
+import type { Logger } from '@groundnuty/macf-core';
 
 // Mock node:https request to avoid real network calls
 vi.mock('node:https', () => ({
