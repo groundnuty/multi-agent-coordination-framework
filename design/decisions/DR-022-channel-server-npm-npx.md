@@ -362,3 +362,29 @@ npm allows unpublish for 72 h after publish; after that, remediation is publish 
 ### Amendment I — Marketplace plugin repo location unchanged
 
 Post-cutover the marketplace plugin is config-only (agents, skills, hooks, rules, `plugin.json`) and small. No restructuring needed — `groundnuty/macf-marketplace/macf-agent/` stays as-is. The marketplace repo remains the canonical discovery path for Claude Code plugin installs.
+
+### Amendment J — First-publish-path gotchas (observed 2026-04-22 bootstrap)
+
+The `v0.2.0-rc.0` → `v0.2.0-rc.1` bootstrap surfaced **four structural error classes** that each only visible via the real `npm publish` run — every one a silent misconfiguration until the registry-side validator spoke up. Captured here so the next scoped-npm-publish bootstrap (any future `@<scope>/*` framework offshoot from the MACF lineage) runs through in ≤1 cycle instead of 4.
+
+**Pre-bootstrap checklist** (verify all before pushing the first `v*` tag):
+
+1. **Workflow publish commands use `npm publish --workspace=<name>` from monorepo root**, not `cd packages/<name> && devbox run -- npm publish`. Rationale: `devbox run` resets cwd to the devbox project root regardless of preceding `cd`, so the inner `npm publish` runs from monorepo root and packs the (usually private) root `package.json`. Symptom: `EPRIVATE` on first publish step. Cross-ref: [macf#217](https://github.com/groundnuty/macf/pull/217).
+
+2. **Granular NPM_TOKEN has "Bypass 2FA" checkbox explicitly enabled** during token creation on npmjs.com — even if the npm account has no 2FA. Rationale: npm's registry-side publish policy treats bypass-2FA as a per-token capability, not inherited from account 2FA state. Symptom: `403 2FA required` on publish step. No workflow change; operator regenerates the token with the box checked. Cross-ref: science-agent's 2026-04-22 finding on [macf#206](https://github.com/groundnuty/macf/issues/206).
+
+3. **Every package.json has `repository` with `type + url + directory`**, plus `homepage`, `bugs`, and `license` for hygiene. Rationale: `npm publish --provenance` signs a sigstore attestation that includes the OIDC-asserted source repo URL; npm's server-side validator cross-checks `package.json.repository.url` against that URL. Missing → `422 Unprocessable Entity — Failed to validate repository information`. In a monorepo, also include `directory` so npm registry metadata links to the package's subpath. Cross-ref: [macf#218](https://github.com/groundnuty/macf/pull/218).
+
+4. **Every file listed in `package.json.bin` has `#!/usr/bin/env node` as literal line 1**. Rationale: npm's install `chmod +x`'s bin files + shells invoke them directly; without a shebang, the OS can't dispatch to node. TypeScript preserves shebangs only when at file offset 0 — a leading blank line or BOM kills it. Symptom: `Syntax error: "(" unexpected` when `npx`-ing the bin. Regression guard filed as [macf#220](https://github.com/groundnuty/macf/issues/220). Cross-ref: [macf#219](https://github.com/groundnuty/macf/pull/219).
+
+**Operator post-bootstrap actions** (once the above four are verified + first `v*` tag publishes cleanly):
+
+5. **Configure OIDC trusted-publishing per package** on each npmjs package settings page (one-time, ~5 min/package). Once trust is configured, subsequent publishes use OIDC for auth AND provenance signing; `NPM_TOKEN` becomes a fallback/emergency mechanism. The chicken-and-egg (can't configure OIDC trust on a package that doesn't exist yet) is the reason the publish workflow uses a dual-path auth shape per Amendment B.
+
+6. **Rotate `NPM_TOKEN`** after the bootstrap publish succeeds + OIDC is configured. The bootstrap token was present in at least one ephemeral CI context + any console paste during setup; rotation closes that exposure loop without impacting future publishes (OIDC is now the primary path).
+
+7. **Deprecate broken bootstrap versions on npm** via `npm deprecate @<scope>/<pkg>@<bad-version> "<reason>"`. Specifically, any rc versions that predate the shebang fix or other boot-time bugs should be marked deprecated so casual consumers don't accidentally install them.
+
+8. **Add a top-level `LICENSE` file** to the monorepo matching the `license` field in each package.json. npm warns (not errors) on publish when the package claims a license without a LICENSE file adjacent. Trivial hygiene; typical MIT template.
+
+**Why four cycles on this bootstrap:** MACF is the first `@groundnuty`-scoped publish. Every error class 1–4 is observable only through real-registry behavior; no dry-run or CI-time check catches them. Future frameworks published under the same scope skip errors 1–3 automatically because the workflow template, token, and package.json shape all exist; error 4 (shebang) is per-package and needs the `macf#220` regression guard to prevent.
