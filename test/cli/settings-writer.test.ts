@@ -385,6 +385,13 @@ describe('installSandboxFdAllowRead (macf#200)', () => {
     expect(existsSync(settingsPath)).toBe(false);
   });
 
+  it('f2) respects MACF_SANDBOX_FD_FIX_SKIP=true opt-out (aligned with MACF_OTEL_DISABLED)', () => {
+    process.env['MACF_SANDBOX_FD_FIX_SKIP'] = 'true';
+    installSandboxFdAllowRead(tmpRoot);
+
+    expect(existsSync(settingsPath)).toBe(false);
+  });
+
   it('g) throws on malformed settings.json (consistent with installGhTokenHook)', () => {
     mkdirSync(join(tmpRoot, '.claude'), { recursive: true });
     writeFileSync(settingsPath, '{ not valid json');
