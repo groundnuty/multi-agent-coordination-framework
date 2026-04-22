@@ -46,9 +46,15 @@ Research conducted during the design of the Multi-Agent Coordination Framework, 
 | [conference-venue-analysis](2026-03-28-conference-venue-analysis.md) | Which conferences to target? 20+ venues evaluated. | Best fits: ASE NIER (~Jul), ESEM Technical (May 18), ICSE SEIP (Oct 23). All publish in indexed proceedings. |
 | [controlled-experiment-design](2026-03-28-controlled-experiment-design.md) | DayTrader experiment: single-agent vs multi-agent. | 45 runs (5 tasks × 3 conditions × 3 reps) on WASdev/sample.daytrader7. Measures tokens, time, quality, review findings. 8-day execution timeline. |
 
+## Observability & Tooling
+
+| File | Topic | Key Finding |
+|---|---|---|
+| [agent-observability-telemetry-stack](2026-04-22-agent-observability-telemetry-stack.md) | OSS observability stack for multi-agent MACF (2026-04 refresh) — debugging + paper-grade data collection. | Pure-OSS path: **OpenLLMetry (Apache 2.0) + Langfuse (MIT) + OTEL GenAI agent semconv**. Phoenix is Elastic License 2.0 — source-available, NOT OSI-OSS. Honeycomb/Datadog/LangSmith are proprietary SaaS. Tier-1 (stdlib + `tools/trace-round-trip.py`) available today; Tier-2 (OTEL + Langfuse self-hosted) recommended before paper data collection. |
+
 ## Summary Statistics
 
-- **14 research documents**
+- **15 research documents**
 - **~253K words** of analysis
 - **32+ academic papers** cited
 - **35+ industry sources** referenced
