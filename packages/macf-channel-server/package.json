@@ -11,6 +11,14 @@
   "files": [
     "dist/"
   ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/groundnuty/macf.git",
+    "directory": "packages/macf-channel-server"
+  },
+  "homepage": "https://github.com/groundnuty/macf#readme",
+  "bugs": "https://github.com/groundnuty/macf/issues",
+  "license": "MIT",
   "engines": {
     "node": ">=22"
   },
