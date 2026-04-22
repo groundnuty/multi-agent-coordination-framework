@@ -102,9 +102,13 @@ export function formatPermissionRow(
 
 /**
  * Result of the sandbox-filesystem check (macf#202). PASS iff the
- * workspace's `.claude/settings.json` has `/proc/self/fd/**` in
+ * workspace's `.claude/settings.json` has `/proc/self/fd` in
  * `sandbox.filesystem.allowRead`. FAIL if absent, or if reading the
  * file threw (malformed JSON → we don't silently report PASS).
+ *
+ * Note: an earlier CLI version wrote `/proc/self/fd/**` (glob) which
+ * the sandbox treated as a literal — silently didn't match; macf#208
+ * corrected the pattern to bare `/proc/self/fd`.
  */
 export interface SandboxFdCheck {
   readonly status: 'PASS' | 'FAIL';
@@ -114,8 +118,9 @@ export interface SandboxFdCheck {
 
 /**
  * Pure check: does this workspace's `.claude/settings.json` contain
- * the `/proc/self/fd/**` sandbox pattern? See macf#200 for why this
- * matters (without it every Bash tool call fails on the harness fd).
+ * the `/proc/self/fd` sandbox pattern? See macf#200 for why this
+ * matters (without it every Bash tool call fails on the harness fd),
+ * and macf#208 for why the pattern is bare (not a glob).
  *
  * Uses `getSandboxAllowRead` from `settings-writer.ts` so the JSON-
  * read + deep-narrow logic lives in one place. Malformed JSON

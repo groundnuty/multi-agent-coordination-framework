@@ -409,6 +409,28 @@ describe('installSandboxFdAllowRead (macf#200)', () => {
     expect(s.sandbox.filesystem.allowRead).toEqual([SANDBOX_FD_READ_PATTERN]);
   });
 
+  it('migrates legacy /proc/self/fd/** pattern to the current /proc/self/fd (macf#208)', () => {
+    // Workspaces written by CLI pre-#208 have the broken `/proc/self/fd/**`
+    // pattern in allowRead — the sandbox treats `**` as a literal, not a
+    // glob, so the read stays denied. `macf update` / `macf init` should
+    // drop the stale pattern and install the working one.
+    mkdirSync(join(tmpRoot, '.claude'), { recursive: true });
+    writeFileSync(settingsPath, JSON.stringify({
+      sandbox: {
+        filesystem: {
+          allowRead: ['/etc/hosts', '/proc/self/fd/**'],
+        },
+      },
+    }, null, 2));
+
+    installSandboxFdAllowRead(tmpRoot);
+
+    const s = JSON.parse(readFileSync(settingsPath, 'utf-8'));
+    // Legacy pattern dropped, current pattern appended, operator entry preserved.
+    expect(s.sandbox.filesystem.allowRead).toEqual(['/etc/hosts', SANDBOX_FD_READ_PATTERN]);
+    expect(s.sandbox.filesystem.allowRead).not.toContain('/proc/self/fd/**');
+  });
+
   it('preserves other top-level settings.json keys + other sandbox keys', () => {
     mkdirSync(join(tmpRoot, '.claude'), { recursive: true });
     writeFileSync(settingsPath, JSON.stringify({
