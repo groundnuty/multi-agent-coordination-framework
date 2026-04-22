@@ -42,7 +42,7 @@ describe('macf init — version pinning', () => {
     const config = readAgentConfig(dir);
     expect(config).not.toBeNull();
     expect(config!.versions).toEqual({
-      cli: '0.2.0-rc.0',
+      cli: '0.2.0-rc.1',
       plugin: '0.1.0',
       actions: 'v1',
     });
