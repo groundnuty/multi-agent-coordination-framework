@@ -1,3 +1,4 @@
+#!/usr/bin/env node
 // macf#196: OTEL bootstrap is now async + dynamic. We still import
 // the module eagerly (to get the function export), but the actual
 // SDK packages are loaded only when the env is set, inside
