@@ -11,9 +11,10 @@ check: install typecheck lint test
 
 # Type-check only (no emit). Fast; safe for editors and pre-commit
 # hooks. Formerly named `build` — renamed per #127 because it doesn't
-# produce a build artifact.
+# produce a build artifact. Routed through npm workspaces so the
+# tsconfig.json lives next to the package (post #206 monorepo convert).
 typecheck:
-	devbox run -- npx tsc --noEmit
+	devbox run -- npm run typecheck --workspaces --if-present
 
 # Real compile — emits dist/ via tsc config, then stamps
 # dist/.build-info.json via the npm postbuild hook so stale-dist
@@ -24,19 +25,19 @@ typecheck:
 # source changes. See #127 for the hard-to-debug failure mode
 # surfaced during the #125 / #126 EKU rollout step 2.
 build:
-	devbox run -- npm run build
+	devbox run -- npm run build --workspaces --if-present
 
 lint:
-	devbox run -- npx eslint src/
+	devbox run -- npm run lint --workspaces --if-present
 
 test:
-	devbox run -- npx vitest run
+	devbox run -- npm run test --workspaces --if-present
 
 test-e2e:
-	devbox run -- npx vitest run --config vitest.e2e.config.ts
+	devbox run -- npm run test:e2e --workspaces --if-present
 
 clean:
-	rm -rf dist coverage
+	rm -rf packages/*/dist packages/*/coverage coverage
 
 # Wire the repo-local commit-msg hook that runs commitlint against
 # every local commit. One-time per clone; sets `core.hooksPath` to

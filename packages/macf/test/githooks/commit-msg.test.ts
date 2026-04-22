@@ -19,7 +19,9 @@ import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-const repoRoot = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
+// Four levels up: test/githooks/ → test/ → packages/macf/ → packages/ →
+// monorepo root where .githooks/ + commitlint.config.mjs live (post #206).
+const repoRoot = join(dirname(fileURLToPath(import.meta.url)), '..', '..', '..', '..');
 const hookPath = join(repoRoot, '.githooks', 'commit-msg');
 
 function runHook(msg: string): ReturnType<typeof spawnSync> {
