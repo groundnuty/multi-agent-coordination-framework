@@ -19,6 +19,8 @@
  * to /tags so bare-tag versioning (no GitHub Release object) still works.
  */
 
+import { PACKAGE_VERSION } from '../package-version.js';
+
 export interface VersionSet {
   readonly cli: string;
   readonly plugin: string;
@@ -71,7 +73,7 @@ export interface ResolvedVersions {
 }
 
 export const FALLBACK_VERSIONS: VersionSet = {
-  cli: '0.2.0',
+  cli: PACKAGE_VERSION,
   plugin: '0.1.0',
   actions: 'v1',
 };
