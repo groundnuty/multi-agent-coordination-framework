@@ -10,7 +10,7 @@ import {
 import { loadCA } from '../../certs/ca.js';
 import { generateAgentCert } from '../../certs/agent-cert.js';
 import { copyCanonicalRules, copyCanonicalScripts } from '../rules.js';
-import { installGhTokenHook } from '../settings-writer.js';
+import { installGhTokenHook, installPluginSkillPermissions } from '../settings-writer.js';
 import { fetchPluginToWorkspace } from '../plugin-fetcher.js';
 import { writeClaudeSh } from '../claude-sh.js';
 import {
@@ -253,6 +253,16 @@ export async function initAgent(projectDir: string, opts: InitOptions): Promise<
   // behavioral controls recurred the trap 5 times in a single day.
   installGhTokenHook(absDir);
   console.log(`  Hooks: installed gh-token guard in .claude/settings.json`);
+
+  // Pre-approve the 4 macf-agent plugin skills so first-turn
+  // invocations (/macf-status, /macf-issues, etc.) don't block on
+  // interactive approval dialogs — essential for SessionStart
+  // auto-pickup + general agent autonomy. Operator opted into the
+  // plugin deliberately via `macf init`; trusting its own skills is
+  // a safe default. Non-macf permissions.allow entries preserved.
+  // See macf#189 sub-item 2.
+  installPluginSkillPermissions(absDir);
+  console.log(`  Permissions: pre-approved macf-agent plugin skills`);
 
   // Fetch the macf-agent plugin at the pinned version and place it at
   // .macf/plugin/ so claude.sh can use --plugin-dir (per DR-013).

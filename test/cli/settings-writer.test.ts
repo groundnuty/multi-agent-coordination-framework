@@ -8,7 +8,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { installGhTokenHook, MACF_HOOK_COMMAND } from '../../src/cli/settings-writer.js';
+import { installGhTokenHook, MACF_HOOK_COMMAND, installPluginSkillPermissions, PLUGIN_SKILL_PERMISSIONS } from '../../src/cli/settings-writer.js';
 
 describe('installGhTokenHook', () => {
   let tmpRoot: string;
@@ -181,5 +181,103 @@ describe('installGhTokenHook', () => {
     );
     expect(macfEntry).toBeDefined();
     expect(s.hooks.PreToolUse).toHaveLength(2);
+  });
+});
+
+describe('installPluginSkillPermissions (macf#189 sub-item 2)', () => {
+  let tmpRoot: string;
+  let settingsPath: string;
+
+  beforeEach(() => {
+    tmpRoot = mkdtempSync(join(tmpdir(), 'macf-skill-perm-test-'));
+    settingsPath = join(tmpRoot, '.claude', 'settings.json');
+  });
+
+  afterEach(() => {
+    rmSync(tmpRoot, { recursive: true, force: true });
+  });
+
+  it('creates .claude/settings.json with the 4 skill patterns when missing', () => {
+    installPluginSkillPermissions(tmpRoot);
+
+    expect(existsSync(settingsPath)).toBe(true);
+    const s = JSON.parse(readFileSync(settingsPath, 'utf-8'));
+    expect(s.permissions.allow).toEqual(PLUGIN_SKILL_PERMISSIONS);
+    // Spot-check the 4 skills we care about.
+    expect(s.permissions.allow).toContain('Skill(macf-agent:macf-status)');
+    expect(s.permissions.allow).toContain('Skill(macf-agent:macf-issues)');
+    expect(s.permissions.allow).toContain('Skill(macf-agent:macf-peers)');
+    expect(s.permissions.allow).toContain('Skill(macf-agent:macf-ping)');
+  });
+
+  it('preserves non-MACF permissions.allow entries', () => {
+    mkdirSync(join(tmpRoot, '.claude'), { recursive: true });
+    writeFileSync(settingsPath, JSON.stringify({
+      permissions: {
+        allow: ['Bash(ls:*)', 'Skill(other-plugin:some-skill)'],
+      },
+    }, null, 2));
+
+    installPluginSkillPermissions(tmpRoot);
+
+    const s = JSON.parse(readFileSync(settingsPath, 'utf-8'));
+    expect(s.permissions.allow).toContain('Bash(ls:*)');
+    expect(s.permissions.allow).toContain('Skill(other-plugin:some-skill)');
+    // MACF skills land after operator entries.
+    for (const pattern of PLUGIN_SKILL_PERMISSIONS) {
+      expect(s.permissions.allow).toContain(pattern);
+    }
+  });
+
+  it('is idempotent — re-running does not duplicate MACF entries', () => {
+    installPluginSkillPermissions(tmpRoot);
+    installPluginSkillPermissions(tmpRoot);
+    installPluginSkillPermissions(tmpRoot);
+
+    const s = JSON.parse(readFileSync(settingsPath, 'utf-8'));
+    // Count macf-agent: entries — should equal the static list length
+    // exactly, not triple.
+    const macfEntries = (s.permissions.allow as string[]).filter(e => e.startsWith('Skill(macf-agent:'));
+    expect(macfEntries).toHaveLength(PLUGIN_SKILL_PERMISSIONS.length);
+  });
+
+  it('refreshes stale MACF entries on re-run (pretends an old skill was removed)', () => {
+    // Pre-seed with a fake stale entry that isn't in the current
+    // PLUGIN_SKILL_PERMISSIONS list.
+    mkdirSync(join(tmpRoot, '.claude'), { recursive: true });
+    writeFileSync(settingsPath, JSON.stringify({
+      permissions: {
+        allow: ['Skill(macf-agent:legacy-removed-skill)', 'Bash(git:*)'],
+      },
+    }, null, 2));
+
+    installPluginSkillPermissions(tmpRoot);
+
+    const s = JSON.parse(readFileSync(settingsPath, 'utf-8'));
+    // Stale macf-agent entry gone.
+    expect(s.permissions.allow).not.toContain('Skill(macf-agent:legacy-removed-skill)');
+    // Non-MACF entry preserved.
+    expect(s.permissions.allow).toContain('Bash(git:*)');
+    // Current skills all present.
+    for (const pattern of PLUGIN_SKILL_PERMISSIONS) {
+      expect(s.permissions.allow).toContain(pattern);
+    }
+  });
+
+  it('preserves other settings.json keys (e.g. existing hooks block)', () => {
+    mkdirSync(join(tmpRoot, '.claude'), { recursive: true });
+    writeFileSync(settingsPath, JSON.stringify({
+      hooks: { PreToolUse: [{ matcher: 'Bash', hooks: [{ type: 'command', command: './x.sh' }] }] },
+      env: { SOME_OPERATOR_VAR: '1' },
+    }, null, 2));
+
+    installPluginSkillPermissions(tmpRoot);
+
+    const s = JSON.parse(readFileSync(settingsPath, 'utf-8'));
+    // permissions.allow installed.
+    expect(s.permissions.allow).toBeDefined();
+    // Unrelated keys preserved.
+    expect(s.hooks.PreToolUse).toHaveLength(1);
+    expect(s.env.SOME_OPERATOR_VAR).toBe('1');
   });
 });

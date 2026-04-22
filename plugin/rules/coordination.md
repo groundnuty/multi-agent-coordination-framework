@@ -152,6 +152,26 @@ Pass `""` for the session to target the current pane.
 
 The helper is distributed to every agent workspace by `macf init` and refreshed by `macf update` (same mechanism as this rules file). If you're writing a new hook or automation that needs to prompt Claude, use the helper — do not re-implement the pattern.
 
+### Canonical tmux launch pattern
+
+**One session per agent, named `<project>@<agent>`.** For example:
+
+        tmux new-session -d -s "academic-resume@cv-architect" \
+          "cd /path/to/academic-resume && ./claude.sh"
+
+        tmux new-session -d -s "academic-resume@cv-project-archaeologist" \
+          "cd /path/to/academic-resume && ./claude.sh"
+
+**Why this matters:** when the channel server's `tmux-wake` path (macf#185) auto-detects its own tmux target via `$TMUX_PANE` or `tmux display-message`, a **shared session with one window per agent** produces ambiguous resolution — two server processes in different windows of the same session can end up with identical auto-detected targets, and wakes land on the wrong pane. Empirically observed during the 2026-04-21 bilateral e2e smoke (chain broke when archaeologist's wake delivered to cv-architect's pane).
+
+**One session per agent** gives each server process a deterministic `$TMUX_PANE` + one-window-per-session context where `display-message` can't be ambiguous.
+
+**Session-name convention `<project>@<agent>`** is parseable (both human + script-friendly) and collision-free across projects — two `cv-architect` agents on the same VM (one for `academic-resume`, one for `macf-paper`) stay on separate sessions.
+
+**Bonus**: separate sessions mean multiple terminals can attach to different agents independently — `tmux attach -t academic-resume@cv-architect` on one terminal, `...@cv-project-archaeologist` on another, without windows-switching interference.
+
+**Migration** from a single-session multi-window setup: `tmux rename-session -t <old-name> <new-name>` per agent.
+
 ---
 
 ## Token & Git Hygiene
