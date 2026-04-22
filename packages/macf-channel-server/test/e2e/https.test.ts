@@ -310,7 +310,7 @@ describe('createHttpsServer', () => {
   });
 
   it('fails immediately when explicit port is busy', async () => {
-    const { PortUnavailableError } = await import('../../src/errors.js');
+    const { PortUnavailableError } = await import('@groundnuty/macf-core');
 
     // Start first server on explicit port
     const server1 = createHttpsServer({
