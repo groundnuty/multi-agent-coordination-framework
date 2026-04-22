@@ -158,7 +158,17 @@ export function generateClaudeSh(config: MacfAgentConfig): string {
     // `-c` (for permanent agents) reattaches to the prior Claude Code
     // session so context persists across relaunches; worker agents skip
     // it so every invocation is fresh. See macf#178 Gap 5.
-    `exec claude ${[...resumeFlags(config), '--plugin-dir', '"$SCRIPT_DIR/.macf/plugin"'].join(' ')} "$@"`,
+    //
+    // MACF_TEST=1 bypasses the `-c` auto-resume for clean-state smoke
+    // tests — `-c` errors with "No deferred tool marker found" when the
+    // prior session state is missing/partial. Normal production runs
+    // (MACF_TEST unset) get the resume-by-default behavior. See
+    // macf#189 sub-item 4.
+    'if [ -n "${MACF_TEST:-}" ]; then',
+    `  exec claude ${['--plugin-dir', '"$SCRIPT_DIR/.macf/plugin"'].join(' ')} "$@"`,
+    'else',
+    `  exec claude ${[...resumeFlags(config), '--plugin-dir', '"$SCRIPT_DIR/.macf/plugin"'].join(' ')} "$@"`,
+    'fi',
     '',
   ].join('\n');
 }

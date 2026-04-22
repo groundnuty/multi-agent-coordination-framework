@@ -49,10 +49,39 @@ describe('resolveTmuxTarget', () => {
     expect(resolveTmuxTarget({ session: '', env: {} })).toBeNull();
   });
 
-  // Auto-detect paths depend on the real tmux binary being invokable +
-  // a real tmux session existing. Skipped in unit tests — validated
-  // manually during CV rollout. The null-when-$TMUX-unset branch is
-  // sufficient for unit-level regression protection here.
+  describe('$TMUX_PANE priority (macf#189 sub-item 3)', () => {
+    it('returns $TMUX_PANE value when set (no explicit session)', () => {
+      // Pane IDs are tmux-specific — %<digits> format. Valid `-t` target.
+      expect(resolveTmuxTarget({ env: { TMUX: '/tmp/tmux-1000/default,123,0', TMUX_PANE: '%87' } }))
+        .toBe('%87');
+    });
+
+    it('$TMUX_PANE beats display-message fallback', () => {
+      // Both $TMUX and $TMUX_PANE present → use pane directly, skip
+      // display-message entirely. The deterministic-per-pane guarantee
+      // is what made the bilateral e2e demo's ambiguity fix work.
+      const env = { TMUX: '/tmp/tmux-1000/default,123,0', TMUX_PANE: '%99' };
+      expect(resolveTmuxTarget({ env })).toBe('%99');
+    });
+
+    it('explicit session still beats $TMUX_PANE', () => {
+      // Operator-declared config is the highest priority — if they
+      // set an explicit session, use it. Auto-detection is only a
+      // zero-config convenience.
+      const env = { TMUX: '/tmp/tmux-1000/default', TMUX_PANE: '%87' };
+      expect(resolveTmuxTarget({ session: 'operator-pick', env }))
+        .toBe('operator-pick');
+    });
+
+    // Note: the display-message fallback path (TMUX set, TMUX_PANE
+    // unset) isn't unit-testable deterministically — the actual tmux
+    // binary's behavior depends on the test runner's real tmux state
+    // (CI runners have no tmux → always null; local dev inside tmux
+    // → returns the real session:window). The TMUX_PANE priority
+    // tests above + the "no $TMUX" path cover the deterministic
+    // branches; the display-message fallback is exercised
+    // empirically during integration smoke.
+  });
 });
 
 describe('wakeViaTmux', () => {
@@ -85,15 +114,17 @@ describe('wakeViaTmux', () => {
     expect(logger.events[0]?.data['reason']).toBe('helper_missing');
   });
 
-  it('returns false when target cannot be resolved (no session + no $TMUX)', () => {
+  it('returns false when target cannot be resolved (no session + no tmux env)', () => {
     installHelper('#!/bin/sh\nexit 0\n');
     const logger = makeLogger();
     // No session passed; rely on resolveTmuxTarget's auto-detect, which
-    // returns null when $TMUX is unset. We can't mock the env easily
-    // inside wakeViaTmux without rewriting it, but we CAN ensure the
-    // test process has $TMUX unset.
+    // returns null when neither $TMUX_PANE nor $TMUX is set. Backup +
+    // clear both so the test works whether the runner happens to be
+    // inside tmux or not (local dev vs CI).
     const tmuxBackup = process.env['TMUX'];
+    const paneBackup = process.env['TMUX_PANE'];
     delete process.env['TMUX'];
+    delete process.env['TMUX_PANE'];
     try {
       const result = wakeViaTmux('hello', { workspaceDir, logger });
       expect(result).toBe(false);
@@ -102,6 +133,7 @@ describe('wakeViaTmux', () => {
       expect(skipEvent?.data['reason']).toBe('no_target');
     } finally {
       if (tmuxBackup !== undefined) process.env['TMUX'] = tmuxBackup;
+      if (paneBackup !== undefined) process.env['TMUX_PANE'] = paneBackup;
     }
   });
 
