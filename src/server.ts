@@ -1,8 +1,10 @@
-// macf#194: OTEL bootstrap must run BEFORE any module calls
-// `trace.getTracer()` at import-eval time. Side-effect import; no-op
-// when OTEL_EXPORTER_OTLP_ENDPOINT is unset. Keep this the FIRST line
-// of server.ts entrypoint.
-import './otel.js';
+// macf#196: OTEL bootstrap is now async + dynamic. We still import
+// the module eagerly (to get the function export), but the actual
+// SDK packages are loaded only when the env is set, inside
+// `bootstrapOtel()`. Calls to `trace.getTracer()` before the bootstrap
+// runs return the global no-op tracer — harmless, since no spans are
+// created before main() awaits the bootstrap.
+import { bootstrapOtel } from './otel.js';
 
 import { SpanKind, SpanStatusCode } from '@opentelemetry/api';
 import { getTracer, SpanNames } from './tracing.js';
@@ -39,6 +41,12 @@ import type { NotifyPayload, SignRequest } from './types.js';
 import type { AgentInfo } from './registry/types.js';
 
 async function main(): Promise<void> {
+  // Bootstrap OTEL BEFORE anything calls `trace.getTracer()` with
+  // intent to record. Function is no-op when
+  // OTEL_EXPORTER_OTLP_ENDPOINT is unset; when set, dynamic-imports
+  // the SDK packages + registers the global provider. See macf#196.
+  await bootstrapOtel();
+
   const config = loadConfig();
 
   const logger = createLogger({
