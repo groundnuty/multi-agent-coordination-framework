@@ -8,23 +8,23 @@ import { bootstrapOtel } from './otel.js';
 
 import { SpanKind, SpanStatusCode } from '@opentelemetry/api';
 import { getTracer, SpanNames } from './tracing.js';
-import { loadConfig } from 'macf-core';
-import { createLogger } from 'macf-core';
+import { loadConfig } from '@groundnuty/macf-core';
+import { createLogger } from '@groundnuty/macf-core';
 import { createMcpChannel } from './mcp.js';
 import { createHealthState } from './health.js';
 import { createHttpsServer } from './https.js';
-import { createRegistryFromConfig } from 'macf-core';
+import { createRegistryFromConfig } from '@groundnuty/macf-core';
 import { checkCollision, CollisionError } from './collision.js';
 import { registerShutdownHandler } from './shutdown.js';
-import { generateToken } from 'macf-core';
-import { createChallenge, verifyAndConsumeChallenge } from 'macf-core';
-import { createChallengeStore } from 'macf-core';
-import { signCSR } from 'macf-core';
-import { loadCA } from 'macf-core';
-import { HttpError } from 'macf-core';
+import { generateToken } from '@groundnuty/macf-core';
+import { createChallenge, verifyAndConsumeChallenge } from '@groundnuty/macf-core';
+import { createChallengeStore } from '@groundnuty/macf-core';
+import { signCSR } from '@groundnuty/macf-core';
+import { loadCA } from '@groundnuty/macf-core';
+import { HttpError } from '@groundnuty/macf-core';
 import { formatNotifyContent } from './notify-formatter.js';
 import { wakeViaTmux } from './tmux-wake.js';
-import type { NotifyPayload, SignRequest } from 'macf-core';
+import type { NotifyPayload, SignRequest } from '@groundnuty/macf-core';
 
 // NOTE: `checkPendingIssues` from './startup-issues.js' used to be
 // called here at boot — but the call had a hardcoded
@@ -38,7 +38,7 @@ import type { NotifyPayload, SignRequest } from 'macf-core';
 // `/installation/repositories` so multi-repo agents are covered too.
 // The function itself is still exported from src/startup-issues.ts
 // for API back-compat; just not invoked here.
-import type { AgentInfo } from 'macf-core';
+import type { AgentInfo } from '@groundnuty/macf-core';
 
 async function main(): Promise<void> {
   // Bootstrap OTEL BEFORE anything calls `trace.getTracer()` with
@@ -152,7 +152,7 @@ async function main(): Promise<void> {
   // P2: Generate token early — needed for /sign endpoint and registry
   const token = await generateToken();
   const registry = createRegistryFromConfig(config.registry, config.project, token);
-  const { createGitHubClient } = await import('macf-core');
+  const { createGitHubClient } = await import('@groundnuty/macf-core');
 
   // Build the variables client for the /sign challenge flow
   let signPathPrefix: string;

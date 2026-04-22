@@ -1,40 +1,46 @@
 /**
- * Multi-Agent Coordination Framework (MACF)
+ * Multi-Agent Coordination Framework (MACF) CLI.
  *
- * Coordinates multiple Claude Code agents via GitHub,
- * using MCP channels (HTTP/mTLS) for communication.
+ * The primary consumption shape of this package is as a binary (`macf`
+ * and `macf-plugin-cli` — see the `bin` field in package.json). This
+ * barrel exposes a small programmatic surface for tooling that needs
+ * to invoke CLI helpers directly (tests, integration harnesses).
+ *
+ * Shared types + functions (errors, logger, config, registry, certs,
+ * etc.) live in `@groundnuty/macf-core` and should be imported from
+ * there directly, not re-exported here.
  */
 
-export { MacfError, ConfigError, McpChannelError, HttpsServerError, PortUnavailableError, PortExhaustedError, ValidationError } from 'macf-core';
-export { createMcpChannel } from './mcp.js';
-export { createHttpsServer } from './https.js';
-export { createHealthState } from './health.js';
-export { createLogger } from 'macf-core';
-export { loadConfig } from 'macf-core';
+// Settings-writer helpers — used by `macf init` / `macf update` /
+// `macf rules refresh` to seed workspace `.claude/settings.json`.
 export {
-  NotifyPayloadSchema, NotifyTypeSchema, HealthResponseSchema,
-  CiCompletionPayloadSchema, CheckSuiteConclusionSchema,
-} from 'macf-core';
-export type {
-  NotifyPayload, NotifyType, HealthResponse, AgentConfig, Logger,
-  McpChannel, HttpsServer, HealthState,
-  CiCompletionPayload, CheckSuiteConclusion,
-} from 'macf-core';
+  MACF_HOOK_COMMAND,
+  PLUGIN_SKILL_PERMISSIONS,
+  SANDBOX_FD_READ_PATTERN,
+  getSandboxAllowRead,
+  installGhTokenHook,
+  installPluginSkillPermissions,
+  installSandboxFdAllowRead,
+} from './cli/settings-writer.js';
 
-// P2: Registry & Discovery
-export { createRegistryFromConfig, createRegistry, createGitHubClient, GitHubApiError, AgentInfoSchema, RegistryConfigSchema } from 'macf-core';
-export type { AgentInfo, Registry, RegistryConfig, GitHubVariablesClient } from 'macf-core';
-export { checkCollision, CollisionError } from './collision.js';
-export type { CollisionResult } from './collision.js';
-export { registerShutdownHandler } from './shutdown.js';
-export { generateToken } from 'macf-core';
-export { checkPendingIssues } from './startup-issues.js';
+// Config resolution — `macf-agent.json` reader + workspace discovery.
+export {
+  readAgentConfig,
+  loadAllAgents,
+  readAgentsIndex,
+  writeAgentConfig,
+  agentCertPath,
+  agentKeyPath,
+  caDir,
+  caCertPath,
+  caKeyPath,
+  tokenSourceFromConfig,
+} from './cli/config.js';
+export type { MacfAgentConfig, VersionPins } from './cli/config.js';
 
-// P3: Certificate Management
-export { createCA, backupCAKey, recoverCAKey, encryptCAKey, decryptCAKey, loadCA, CaError } from 'macf-core';
-export type { CaKeyPair } from 'macf-core';
-export { generateAgentCert, generateCSR, signCSR, AgentCertError } from 'macf-core';
-export type { AgentCertResult } from 'macf-core';
-export { createChallenge, verifyAndConsumeChallenge, ChallengeError } from 'macf-core';
-export { SignRequestSchema, SignChallengeResponseSchema, SignCertResponseSchema } from 'macf-core';
-export type { SignRequest } from 'macf-core';
+// Canonical rules distribution — `macf rules refresh` entrypoint.
+export { copyCanonicalRules, copyCanonicalScripts, findCliPackageRoot } from './cli/rules.js';
+
+// Doctor check — programmatic access for external verification tools.
+export { MACF_REQUIRED_PERMISSIONS, diffPermissions, checkSandboxFdAllowRead } from './cli/commands/doctor.js';
+export type { RequiredPermission, DoctorFinding, SandboxFdCheck } from './cli/commands/doctor.js';

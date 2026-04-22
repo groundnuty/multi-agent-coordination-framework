@@ -20,7 +20,7 @@
  */
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
-import type { Logger } from 'macf-core';
+import type { Logger } from '@groundnuty/macf-core';
 
 const execFileAsync = promisify(execFile);
 

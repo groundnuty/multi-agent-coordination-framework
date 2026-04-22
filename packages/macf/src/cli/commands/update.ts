@@ -15,7 +15,7 @@ import { detectStaleDist, detectUnknownFreshness } from '../build-info.js';
 import { fetchPluginToWorkspace, workspacePluginDir } from '../plugin-fetcher.js';
 import { writeClaudeSh } from '../claude-sh.js';
 import { createClientFromConfig } from '../registry-helper.js';
-import { generateToken } from 'macf-core';
+import { generateToken } from '@groundnuty/macf-core';
 import { promptPassword, PromptCancelled } from '../prompt.js';
 import { migrateCaKeyToV2, formatMigrationResult } from './migrate-ca-key.js';
 import type { VersionPins } from '../config.js';

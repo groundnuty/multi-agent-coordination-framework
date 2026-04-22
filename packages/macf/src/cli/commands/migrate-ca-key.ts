@@ -16,9 +16,9 @@
  * function, enabling headless tests and future `--passphrase-file`
  * extension (Future Work in DR-011 rev2).
  */
-import { encryptCAKey, decryptCAKey, CaError } from 'macf-core';
-import { toVariableSegment } from 'macf-core';
-import type { GitHubVariablesClient } from 'macf-core';
+import { encryptCAKey, decryptCAKey, CaError } from '@groundnuty/macf-core';
+import { toVariableSegment } from '@groundnuty/macf-core';
+import type { GitHubVariablesClient } from '@groundnuty/macf-core';
 
 export type MigrationResult =
   | { readonly status: 'no_variable' }

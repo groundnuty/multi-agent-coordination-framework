@@ -3,7 +3,7 @@ import { readFileSync } from 'node:fs';
 import { request } from 'node:https';
 import { createServer as createNetServer } from 'node:net';
 import { createHttpsServer } from '../../src/https.js';
-import type { HealthResponse, Logger } from 'macf-core';
+import type { HealthResponse, Logger } from '@groundnuty/macf-core';
 import { generateTestCerts, cleanupTestCerts, type TestCerts } from './fixtures/gen-certs.js';
 import { EXPECTED_VERSION } from '../version-helper.js';
 

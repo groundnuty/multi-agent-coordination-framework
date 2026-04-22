@@ -1,12 +1,13 @@
 {
-  "name": "macf",
+  "name": "@groundnuty/macf",
   "version": "0.1.1",
-  "description": "Multi-Agent Coordination Framework — coordinate Claude Code agents via GitHub and MCP channels",
+  "description": "Multi-Agent Coordination Framework CLI — coordinate Claude Code agents via GitHub. Installs as `macf` binary; use `macf init` to set up an agent workspace, `macf update` to refresh rules + version pins.",
   "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "bin": {
-    "macf": "dist/cli/index.js"
+    "macf": "dist/cli/index.js",
+    "macf-plugin-cli": "dist/plugin/bin/macf-plugin-cli.js"
   },
   "files": [
     "dist/",
@@ -23,20 +24,10 @@
     "check": "tsc -b && eslint src/ && vitest run",
     "lint": "eslint src/",
     "test": "vitest run",
-    "test:watch": "vitest",
-    "test:e2e": "vitest run --config vitest.e2e.config.ts"
+    "test:watch": "vitest"
   },
   "dependencies": {
-    "macf-core": "0.1.1",
-    "@modelcontextprotocol/sdk": "~1.29.0",
-    "@opentelemetry/api": "1.9.1",
-    "@opentelemetry/exporter-trace-otlp-proto": "0.215.0",
-    "@opentelemetry/resources": "2.7.0",
-    "@opentelemetry/sdk-trace-base": "2.7.0",
-    "@opentelemetry/sdk-trace-node": "2.7.0",
-    "@opentelemetry/semantic-conventions": "1.40.0",
-    "@peculiar/webcrypto": "^1.5.0",
-    "@peculiar/x509": "^2.0.0",
+    "@groundnuty/macf-core": "0.1.1",
     "commander": "^14.0.3",
     "reflect-metadata": "^0.2.2",
     "zod": "^4.0.0"

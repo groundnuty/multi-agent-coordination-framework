@@ -1,6 +1,6 @@
 import type { MacfAgentConfig } from './config.js';
-import { createGitHubClient } from 'macf-core';
-import type { GitHubVariablesClient } from 'macf-core';
+import { createGitHubClient } from '@groundnuty/macf-core';
+import type { GitHubVariablesClient } from '@groundnuty/macf-core';
 
 /**
  * Build the GitHub Variables API path prefix from agent config.

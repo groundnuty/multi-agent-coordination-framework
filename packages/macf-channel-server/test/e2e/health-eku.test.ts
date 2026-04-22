@@ -20,7 +20,7 @@ import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { request } from 'node:https';
 import { createHttpsServer } from '../../src/https.js';
-import type { HealthResponse, Logger, SignRequest } from 'macf-core';
+import type { HealthResponse, Logger, SignRequest } from '@groundnuty/macf-core';
 import { generateTestCerts, cleanupTestCerts, type TestCerts } from './fixtures/gen-certs.js';
 import { EXPECTED_VERSION } from '../version-helper.js';
 

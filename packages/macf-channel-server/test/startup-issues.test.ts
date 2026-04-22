@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import type { Logger } from 'macf-core';
+import type { Logger } from '@groundnuty/macf-core';
 
 // Mock node:child_process execFile (we use execFile, not exec — safe from injection)
 vi.mock('node:child_process', () => ({

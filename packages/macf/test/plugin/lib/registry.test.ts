@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from 'vitest';
 import { getOwnRegistration, listPeers } from '../../../src/plugin/lib/registry.js';
-import type { Registry, AgentInfo } from 'macf-core';
+import type { Registry, AgentInfo } from '@groundnuty/macf-core';
 
 const sampleInfo: AgentInfo = {
   host: '100.86.5.117',
