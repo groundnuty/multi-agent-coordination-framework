@@ -233,8 +233,9 @@ framework-specific lifecycle rather than the Claude-Code-native one.
 ### Neutral
 
 - Rollout scope touches three repos:
-  - `groundnuty/macf`: package.json refactor to publish two packages,
-    build targets for CLI + server, npm publish workflow
+  - `groundnuty/macf`: package.json refactor to publish three packages
+    (CLI, server, deprecated-internal core — see Amendment A), build
+    targets for each, npm publish workflow
   - `groundnuty/macf-marketplace`: plugin.json swap, remove bundled
     `dist/` + `package.json` + SessionStart hook, version bump 0.1.8 → 0.2.0
   - `groundnuty/macf-science-agent` (this workspace): rules docs update
@@ -247,16 +248,18 @@ Tracked as code-agent issue (filed after this DR merges). Scope:
 
 1. Create `groundnuty` npm org + claim scope ownership
 2. Provision `NPM_TOKEN` secret on `groundnuty/macf` repo
-3. Refactor `groundnuty/macf` to publish two packages:
-   - Split `package.json` — either single package with two `bin` entries,
-     or monorepo layout with per-package `package.json` (code-agent to
-     decide based on build-tooling simplicity)
+3. Refactor `groundnuty/macf` to an npm-workspaces monorepo publishing
+   three packages (per Amendment A):
+   - `@groundnuty/macf-core` (deprecated-internal), `@groundnuty/macf`
+     (CLI), `@groundnuty/macf-channel-server` (server)
    - Add `files` field to each package's manifest for clean publish
      contents
-   - Author npm publish GitHub Actions workflow
-4. Cut first publish manually once scope is owned — verify both
-   packages install + invoke correctly via `npx` — then automate the
-   same flow in CI
+   - Author npm publish GitHub Actions workflow with
+     `npm publish --provenance` across all three (per Amendment B)
+4. Cut first publish manually once scope is owned — verify all three
+   packages install + invoke correctly via `npx`, verify
+   `@groundnuty/macf-core` surfaces its deprecation warning on direct
+   install — then automate the same flow in CI
 5. Update `groundnuty/macf-marketplace`:
    - plugin.json → `npx` dispatch
    - Delete bundled `dist/`, `package.json`, SessionStart install hook
@@ -295,17 +298,25 @@ Feasibility review by `macf-code-agent[bot]` on [PR #205](https://github.com/gro
 
 The original §"Package split" claimed CLI/server had limited shared-code overlap. Empirical import-graph analysis (by code-agent) found the overlap is substantial — `src/server.ts` imports from 15 shared modules (`certs/*`, `registry/*`, `config`, `token`, `errors`, `logger`, `otel`, `tracing`, `collision`, `shutdown`, `https`, `mcp`, `health`, `tmux-wake`, `types`), and the CLI overlaps on `certs/`, `registry/`, `token`, `config`.
 
-Confirmed package layout: **npm workspaces monorepo, three packages, two published**:
+Confirmed package layout: **npm workspaces monorepo, three packages, all three published**:
 
-- `@groundnuty/macf-core` — internal-only, `"private": true`, contains all shared modules. Not published to npm. Consumed via workspace linkage.
-- `@groundnuty/macf` — CLI. Published. Depends on `@groundnuty/macf-core` as a workspace dep.
-- `@groundnuty/macf-channel-server` — server. Published. Depends on `@groundnuty/macf-core` as a workspace dep.
+- `@groundnuty/macf-core` — shared modules. Published to npm with a `deprecated` field in `package.json` reading *"internal shared code for @groundnuty/macf and @groundnuty/macf-channel-server — do not depend on this directly; use the consumer packages instead."* External consumers who `npm install @groundnuty/macf-core` see the deprecation warning.
+- `@groundnuty/macf` — CLI. Published. Declares a concrete runtime dep on `@groundnuty/macf-core` at the lock-step version.
+- `@groundnuty/macf-channel-server` — server. Published. Same concrete runtime dep on core.
 
-When the two public packages are published, npm's workspace resolution inlines the internal `@groundnuty/macf-core` code into each tarball, so consumers never see the core package name. Cleanest dependency graph; lowest publish-surface risk (two publish targets, not three).
+**Correction from the pre-review version of this amendment:** an earlier draft claimed npm would "inline" the internal core into each public package's tarball on publish. That's not how `npm publish` works — when a workspace package declares a dep on another workspace package without additional tooling, the published `package.json` gets a `workspace:*` protocol specifier that external consumers fail to resolve at install time (the name must exist on the registry). See the [PR #205](https://github.com/groundnuty/macf/pull/205) thread for the technical exchange.
 
-### Amendment B — npm provenance enabled on both publishes
+Publishing core as a third package is the ecosystem-standard fix — matches Babel's `@babel/helper-*`, React Native's `@react-native/*`, Angular's `@angular/*` internal packages. The `deprecated` field steers external consumers away from depending on what we keep free to refactor, without requiring a publish-time bundler (option 2 — contradicts §"Package contents: ship `dist/`" doctrine) or a workspace-deps rewriter (option 3 — fragile specialized tooling; both rejected).
 
-Both public packages publish with `npm publish --provenance`. Requires:
+Concrete publish pipeline implications:
+- Three `npm publish` invocations per release tag, not two
+- Provenance (Amendment B) applies uniformly across all three
+- Lock-step versioning (Amendment D) applies to all three — one `v<semver>` tag publishes all three at that version
+- Operator story unchanged: `npm install -g @groundnuty/macf` resolves `@groundnuty/macf-core` as a transitive dep silently
+
+### Amendment B — npm provenance enabled on all three publishes
+
+All three published packages (`@groundnuty/macf-core`, `@groundnuty/macf`, `@groundnuty/macf-channel-server` — see Amendment A for why core is published) publish with `npm publish --provenance`. Requires:
 - OIDC trust configured on npmjs.com → `groundnuty/macf` repo (one-time step on the publish settings for each package)
 - `permissions: { id-token: write }` in the publish GitHub Actions workflow
 - No new secret — OIDC replaces long-lived credentials for this flow
@@ -318,7 +329,7 @@ When 2FA is enabled on the `@groundnuty` scope (default and recommended), classi
 
 ### Amendment D — CLI + server version lock-step
 
-Original DR left open whether the two packages version independently. Confirmed: **lock-step for v0.2.0 and forward**. One `v<semver>` git tag on `groundnuty/macf` publishes both packages at the same version. If lifecycles diverge later (empirically, unlikely — both derive from shared core), introduce `cli/v*` + `server/v*` tag prefixes then. Don't pay the flexibility tax upfront.
+Original DR left open whether the CLI and server packages version independently. Confirmed: **lock-step for v0.2.0 and forward, across all three published packages** (core + CLI + server per Amendment A). One `v<semver>` git tag on `groundnuty/macf` publishes all three at the same version. If lifecycles diverge later (empirically unlikely — CLI and server both depend on core and churn together), introduce `cli/v*` + `server/v*` + `core/v*` tag prefixes then. Don't pay the flexibility tax upfront.
 
 ### Amendment E — First-launch SLA split by cache state
 
