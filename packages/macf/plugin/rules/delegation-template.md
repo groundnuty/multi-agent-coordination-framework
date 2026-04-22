@@ -13,6 +13,57 @@ splitting off scope. Works whether the peer is another bot or a human.
 
 ---
 
+## When to delegate vs do the work yourself
+
+Delegation is for **asymmetric capability**, not ceremonial hand-off. Before
+filing a delegation issue, ask: is the peer agent actually better positioned
+to do this work than I am?
+
+**Delegate when:**
+
+- The peer has domain expertise the reporter lacks (framework TypeScript
+  internals → code-agent; LaTeX CV typesetting → cv-architect; historical
+  project research → cv-project-archaeologist)
+- The peer owns the repo / the canonical source (framework changes →
+  code-agent who owns `groundnuty/macf`)
+- The peer has persistent context the reporter doesn't (long-running
+  investigation, repository-specific conventions, team-facing
+  relationships)
+- The work would meaningfully benefit from review + merge discipline by a
+  non-author (even if the reporter could technically do the work, the
+  peer's second pair of eyes catches issues the author won't)
+
+**Do the work yourself (skip delegation) when:**
+
+- You have asymmetric context the peer would need to learn — delegation
+  becomes "please copy my notes into a file" rather than real work
+- You are the domain expert (rules about your own collaboration patterns,
+  a postmortem of an incident you lived, a DR for a design you drove)
+- The task is ceremonial packaging of material the reporter authored
+  anyway (the peer adds no value beyond typing)
+- The work is time-sensitive and the delegation round-trip would exceed
+  the fix window
+
+The test: if the peer's first action would be "ask the reporter for more
+context / source material", you're delegating ceremony, not real work —
+do it yourself. If the peer would immediately have everything they need
+to start, delegate.
+
+When you do the work yourself despite it being "in the peer's domain",
+note it explicitly — either in the PR body or a handoff comment:
+
+> "Authoring this directly rather than delegating to `<peer>` because the
+> content is distilled from my own collaboration-pattern observations —
+> `<peer>` would need me to write the text anyway. See
+> delegation-template.md 'When to delegate' for the principle."
+
+Transparency preserves the peer relationship: the peer sees the reasoning
+instead of feeling bypassed, and the coordinator can push back if they
+disagree with the self-authored call. Default to delegating when in
+doubt — the PR review step gives the peer their voice regardless.
+
+---
+
 ## The 6-section issue template
 
 When you file a delegation issue for another agent, structure the body so the
