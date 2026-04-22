@@ -71,7 +71,7 @@ export interface ResolvedVersions {
 }
 
 export const FALLBACK_VERSIONS: VersionSet = {
-  cli: '0.1.1',
+  cli: '0.2.0-rc.0',
   plugin: '0.1.0',
   actions: 'v1',
 };
