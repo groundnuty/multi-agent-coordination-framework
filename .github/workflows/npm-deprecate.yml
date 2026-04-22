@@ -1,0 +1,59 @@
+# One-off workflow for npm `deprecate` metadata writes on published
+# packages. Use for housekeeping like "this version has a known bug,
+# please use a later one" without unpublishing (which has a 72h
+# window + is destructive).
+#
+# Triggered manually via `gh workflow run npm-deprecate.yml ...` or
+# the Actions UI. Inputs are version + message; the three packages
+# are fixed (the only thing we publish).
+#
+# Uses the same NPM_TOKEN secret as the publish workflow. Inputs are
+# passed through env: to avoid command-injection risk — never inlined
+# into run: commands.
+
+name: npm deprecate
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version to deprecate (e.g. 0.2.0-rc.0). Same version applies to all three packages; lock-step assumed.'
+        required: true
+        type: string
+      message:
+        description: 'Deprecation message shown to installers.'
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  deprecate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          registry-url: 'https://registry.npmjs.org'
+
+      - name: Deprecate @groundnuty/macf-core
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          VERSION: ${{ github.event.inputs.version }}
+          MESSAGE: ${{ github.event.inputs.message }}
+        run: npm deprecate "@groundnuty/macf-core@$VERSION" "$MESSAGE"
+
+      - name: Deprecate @groundnuty/macf
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          VERSION: ${{ github.event.inputs.version }}
+          MESSAGE: ${{ github.event.inputs.message }}
+        run: npm deprecate "@groundnuty/macf@$VERSION" "$MESSAGE"
+
+      - name: Deprecate @groundnuty/macf-channel-server
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          VERSION: ${{ github.event.inputs.version }}
+          MESSAGE: ${{ github.event.inputs.message }}
+        run: npm deprecate "@groundnuty/macf-channel-server@$VERSION" "$MESSAGE"
