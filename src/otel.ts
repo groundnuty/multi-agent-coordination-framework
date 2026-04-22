@@ -1,65 +1,110 @@
 /**
- * OpenTelemetry bootstrap — side-effecting import-first module.
+ * OpenTelemetry bootstrap — dynamic-import gated by env.
  *
- * Import this as the FIRST statement in `src/server.ts` (before any
- * other module that might call `trace.getTracer()` at eval time).
- * Violations fail silently: `trace.getTracer()` returns the global
- * no-op tracer and every subsequent span is dropped.
+ * Zero-cost default (macf#196, revisiting macf#194):
  *
- * Zero-cost default (macf#194):
- *   - If `OTEL_EXPORTER_OTLP_ENDPOINT` is unset, we skip provider
- *     registration entirely. `trace.getTracer()` returns the no-op
- *     implementation + `startActiveSpan` allocates only the closure.
- *     No background work, no exporter queue, no memory pressure.
- *   - Operators opt in by setting the env var (typically in claude.sh
- *     when the observability stack is running). Science-agent's
- *     `ops/observability/` compose brings up Langfuse + OTEL collector
- *     on localhost:4318; operator sets
- *     `OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4318` + restarts
- *     agents.
+ *   The original v0.1.7 shipped this module with TOP-LEVEL static
+ *   imports of the 5 SDK packages. That violated the zero-cost
+ *   doctrine structurally: Node resolved + loaded all of them at
+ *   startup regardless of whether `OTEL_EXPORTER_OTLP_ENDPOINT`
+ *   was set. Worse, when a consumer workspace didn't have the
+ *   packages in its `node_modules/` (which was the default — they
+ *   weren't declared in `plugin/package.json`), the server crashed
+ *   with `ERR_MODULE_NOT_FOUND` before the env-guard ever ran.
+ *
+ *   v0.1.8 fix: `bootstrapOtel()` is async; inside, we `await import()`
+ *   the SDK packages only when the endpoint is set. Node only
+ *   resolves the packages when the operator opts in. If they're
+ *   missing at that point (operator set the env but forgot `npm
+ *   install`), we fail LOUD with an actionable message — silent
+ *   no-op would hide the opt-in attempt.
+ *
+ *   `@opentelemetry/api` stays statically imported because other
+ *   modules (`src/tracing.ts`, `src/https.ts`) import it at eval
+ *   time for the no-op tracer path. The `api` package has zero
+ *   deps and is already a transitive dep, so it's safe to require.
  *
  * Why manual-only (no `auto-instrumentations-node`):
  *   Auto-instrumentations monkey-patch core Node modules including
- *   HTTPS — and we rely on exact mTLS client-cert validation semantics
- *   in `src/https.ts`. Any patching layer between us and Node's TLS
- *   code is a correctness risk we don't need. Manual spans in the
- *   handlers that matter (/notify, /sign, startup, tmux-wake, mcp
- *   push) give us the trace hierarchy + attribute set science-agent
- *   wants for Langfuse, without the patched-HTTPS exposure.
+ *   HTTPS — and we rely on exact mTLS client-cert validation
+ *   semantics in `src/https.ts`. Any patching layer between us and
+ *   Node's TLS code is a correctness risk we don't need.
  *
  * Version pinning:
- *   SDK-node packages (`@opentelemetry/sdk-trace-node` etc.) are still
- *   pre-1.0 (0.x). Breaking changes land in minor releases. Pin exact
- *   versions via package.json — do NOT use caret ranges.
+ *   SDK-node packages (`@opentelemetry/sdk-trace-node` etc.) are
+ *   still pre-1.0 (0.x). Breaking changes land in minor releases.
+ *   Pin exact versions via package.json — do NOT use caret ranges.
  *
- * See DR-021 for the full rationale.
+ * See DR-021 for the full rationale + option analysis.
  */
-import { NodeTracerProvider } from '@opentelemetry/sdk-trace-node';
-import { BatchSpanProcessor } from '@opentelemetry/sdk-trace-base';
-import { OTLPTraceExporter } from '@opentelemetry/exporter-trace-otlp-proto';
-import { resourceFromAttributes, defaultResource } from '@opentelemetry/resources';
-import {
-  ATTR_SERVICE_NAME,
-  ATTR_SERVICE_VERSION,
-} from '@opentelemetry/semantic-conventions';
 
-const endpoint = process.env['OTEL_EXPORTER_OTLP_ENDPOINT'];
-const serviceVersion = process.env['MACF_VERSION'] ?? '0.0.0';
+/**
+ * Opt-in OTEL bootstrap. No-op (and zero module-resolution cost) when
+ * `OTEL_EXPORTER_OTLP_ENDPOINT` is unset. When set, dynamic-imports
+ * the SDK packages, configures an OTLP-proto exporter, registers the
+ * provider globally, and wires SIGTERM/SIGINT span-flush.
+ *
+ * **Must be awaited before any span-emitting module's handler runs.**
+ * In `src/server.ts`, `await bootstrapOtel()` sits at the top of
+ * `main()` so the global tracer provider is live before /notify,
+ * /sign, etc. start accepting requests.
+ *
+ * Fail-loud policy:
+ *   - `OTEL_EXPORTER_OTLP_ENDPOINT` unset → silent return (zero-cost default).
+ *   - Env set + import fails → process.exit(1) with actionable
+ *     stderr. Operator explicitly opted into observability; silent
+ *     no-op would hide the config mistake.
+ *   - Env set + import ok + provider setup fails → same exit(1).
+ */
+export async function bootstrapOtel(): Promise<void> {
+  const endpoint = process.env['OTEL_EXPORTER_OTLP_ENDPOINT'];
+  if (endpoint === undefined || endpoint === '') return;
 
-if (endpoint !== undefined && endpoint !== '') {
+  const serviceVersion = process.env['MACF_VERSION'] ?? '0.0.0';
+  const serviceName = process.env['OTEL_SERVICE_NAME'] ?? 'macf';
+
+  // Dynamic imports — only resolved when opted in. Lets a workspace
+  // WITHOUT `@opentelemetry/sdk-*` in node_modules start cleanly
+  // (as long as it doesn't opt in). See macf#196 for the bug this
+  // closes; consumer plugin workspaces have only a subset of deps
+  // available via `npm install` unless opted into observability.
+  let sdkNode: typeof import('@opentelemetry/sdk-trace-node');
+  let sdkBase: typeof import('@opentelemetry/sdk-trace-base');
+  let exporter: typeof import('@opentelemetry/exporter-trace-otlp-proto');
+  let resources: typeof import('@opentelemetry/resources');
+  let semconv: typeof import('@opentelemetry/semantic-conventions');
+  try {
+    [sdkNode, sdkBase, exporter, resources, semconv] = await Promise.all([
+      import('@opentelemetry/sdk-trace-node'),
+      import('@opentelemetry/sdk-trace-base'),
+      import('@opentelemetry/exporter-trace-otlp-proto'),
+      import('@opentelemetry/resources'),
+      import('@opentelemetry/semantic-conventions'),
+    ]);
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    process.stderr.write(
+      `FATAL: OTEL_EXPORTER_OTLP_ENDPOINT is set ("${endpoint}") but required @opentelemetry/* packages are missing.\n` +
+        `  Underlying error: ${msg}\n` +
+        `  Fix: install them in the plugin dir (e.g. run macf-agent's SessionStart npm-install hook), ` +
+        `or unset OTEL_EXPORTER_OTLP_ENDPOINT to disable telemetry.\n`,
+    );
+    process.exit(1);
+  }
+
   // Resource attributes inherit from the SDK's default detectors
   // (process.*, host.*, telemetry.sdk.*) via `defaultResource()`,
   // merged with our explicit service.* attributes on top.
-  const resource = defaultResource().merge(
-    resourceFromAttributes({
-      [ATTR_SERVICE_NAME]: process.env['OTEL_SERVICE_NAME'] ?? 'macf',
-      [ATTR_SERVICE_VERSION]: serviceVersion,
+  const resource = resources.defaultResource().merge(
+    resources.resourceFromAttributes({
+      [semconv.ATTR_SERVICE_NAME]: serviceName,
+      [semconv.ATTR_SERVICE_VERSION]: serviceVersion,
     }),
   );
 
-  const provider = new NodeTracerProvider({
+  const provider = new sdkNode.NodeTracerProvider({
     resource,
-    spanProcessors: [new BatchSpanProcessor(new OTLPTraceExporter())],
+    spanProcessors: [new sdkBase.BatchSpanProcessor(new exporter.OTLPTraceExporter())],
   });
 
   // register() installs the provider as global + sets W3C trace-
@@ -70,7 +115,8 @@ if (endpoint !== undefined && endpoint !== '') {
 
   // Clean shutdown: flush queued spans before process exits. Without
   // these handlers, in-flight batches are dropped on SIGTERM/SIGINT —
-  // the last few seconds of coordination events never reach Langfuse.
+  // the last few seconds of coordination events never reach the
+  // collector.
   const shutdown = async (): Promise<void> => {
     try {
       await provider.shutdown();
