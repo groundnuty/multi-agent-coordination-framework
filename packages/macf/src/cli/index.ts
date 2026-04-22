@@ -16,6 +16,7 @@ import { runDoctor } from './commands/doctor.js';
 import { selfUpdate } from './commands/self-update.js';
 import { findProjectRoot } from './config.js';
 import { findCliPackageRoot } from './rules.js';
+import { PACKAGE_VERSION } from '../package-version.js';
 
 /**
  * Resolve the project directory for project-scoped commands.
@@ -61,7 +62,7 @@ const program = new Command();
 program
   .name('macf')
   .description('Multi-Agent Coordination Framework CLI')
-  .version('0.2.0')
+  .version(PACKAGE_VERSION)
   .action(() => {
     listAgents();
   });

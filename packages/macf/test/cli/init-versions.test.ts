@@ -9,6 +9,7 @@ import { mkdirSync, rmSync, readFileSync, writeFileSync, existsSync } from 'node
 import { tmpdir } from 'node:os';
 import { initAgent } from '../../src/cli/commands/init.js';
 import { readAgentConfig, agentConfigPath } from '../../src/cli/config.js';
+import { PACKAGE_VERSION } from '../../src/package-version.js';
 
 function tempDir(): string {
   const dir = join(tmpdir(), `macf-init-versions-test-${Date.now()}-${Math.random().toString(36).slice(2)}`);
@@ -41,8 +42,12 @@ describe('macf init — version pinning', () => {
 
     const config = readAgentConfig(dir);
     expect(config).not.toBeNull();
+    // Assert against PACKAGE_VERSION (derived from package.json at
+    // module load) rather than a string literal — keeps the test in
+    // lockstep with `FALLBACK_VERSIONS.cli` automatically on every
+    // release bump, per macf#216.
     expect(config!.versions).toEqual({
-      cli: '0.2.0',
+      cli: PACKAGE_VERSION,
       plugin: '0.1.0',
       actions: 'v1',
     });

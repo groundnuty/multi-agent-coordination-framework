@@ -2,6 +2,7 @@ import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { McpChannelError } from '@groundnuty/macf-core';
 import type { McpChannel } from '@groundnuty/macf-core';
+import { PACKAGE_VERSION } from './package-version.js';
 
 const CHANNEL_INSTRUCTIONS = `Events arrive as <channel source="macf-agent" type="..." ...>.
 
@@ -21,7 +22,7 @@ export function createMcpChannel(config: {
   const instructions = config.instructions ?? CHANNEL_INSTRUCTIONS;
 
   const server = new Server(
-    { name: `macf-${config.agentName}`, version: '0.2.0' },
+    { name: `macf-${config.agentName}`, version: PACKAGE_VERSION },
     {
       capabilities: {
         experimental: { 'claude/channel': {} },
