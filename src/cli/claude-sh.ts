@@ -45,6 +45,76 @@ function registryEnvLines(cfg: MacfAgentConfig): string[] {
 }
 
 /**
+ * Emit the Claude Code native OTEL telemetry env block into the
+ * generated `claude.sh`. Three mandatory gates per Claude Code docs
+ * — missing any one of them → zero traces emit:
+ *
+ *   CLAUDE_CODE_ENABLE_TELEMETRY=1       master gate
+ *   CLAUDE_CODE_ENHANCED_TELEMETRY_BETA=1  additional gate (traces are beta)
+ *   OTEL_TRACES_EXPORTER=otlp            choose exporter (default is none)
+ *
+ * See code.claude.com/docs/en/monitoring-usage § Traces (beta).
+ *
+ * Knobs at `macf init` / `macf update` time (read from calling shell
+ * env, NOT persisted to macf-agent.json — observability is a
+ * deployment-topology concern, not a per-agent-identity setting):
+ *
+ *   MACF_OTEL_DISABLED=1       → omit the block entirely. For
+ *                                deployments without an observability
+ *                                stack; avoids retry-spam to a
+ *                                non-existent collector. See macf#197.
+ *   MACF_OTEL_ENDPOINT=<url>   → override the default
+ *                                `http://localhost:4318`. For central
+ *                                obs hosts reachable over Tailscale /
+ *                                other network paths.
+ *
+ * Exported for unit tests.
+ *
+ * @param env — defaults to `process.env`; tests inject a fake.
+ */
+export function otelTelemetryLines(
+  config: MacfAgentConfig,
+  env: NodeJS.ProcessEnv = process.env,
+): string[] {
+  if (env['MACF_OTEL_DISABLED'] === '1' || env['MACF_OTEL_DISABLED'] === 'true') {
+    return [];
+  }
+
+  const endpoint = env['MACF_OTEL_ENDPOINT'] ?? 'http://localhost:4318';
+
+  // The endpoint value gets embedded verbatim in a shell double-
+  // quoted export. Reject chars that would break quoting or trigger
+  // substitution: `"`, `$`, backtick, backslash, newline. Same
+  // allowlist pattern as validateInitOpts on keyPath.
+  if (/["$`\\\n\r]/.test(endpoint)) {
+    throw new Error(
+      `MACF_OTEL_ENDPOINT contains a shell-unsafe character. ` +
+        `Got: ${JSON.stringify(endpoint)}. ` +
+        `Expected a plain URL like http://host:port.`,
+    );
+  }
+
+  return [
+    '',
+    '# macf#197: Claude Code native OTEL telemetry → observability stack.',
+    '# Three gates (all required, per code.claude.com/docs/en/monitoring-usage § Traces beta):',
+    '#   CLAUDE_CODE_ENABLE_TELEMETRY        — master telemetry gate',
+    '#   CLAUDE_CODE_ENHANCED_TELEMETRY_BETA — additional gate for traces (still beta)',
+    '#   OTEL_TRACES_EXPORTER=otlp           — pick an exporter (default: none)',
+    '# Omit the whole block by setting MACF_OTEL_DISABLED=1 at `macf update`',
+    '# time — e.g. deployments without the obs stack running locally.',
+    '# Override endpoint via MACF_OTEL_ENDPOINT for central-collector setups.',
+    'export CLAUDE_CODE_ENABLE_TELEMETRY=1',
+    'export CLAUDE_CODE_ENHANCED_TELEMETRY_BETA=1',
+    'export OTEL_TRACES_EXPORTER=otlp',
+    `export OTEL_EXPORTER_OTLP_ENDPOINT="${endpoint}"`,
+    'export OTEL_EXPORTER_OTLP_PROTOCOL=http/protobuf',
+    `export OTEL_SERVICE_NAME="macf-agent-${config.agent_name}"`,
+    `export OTEL_RESOURCE_ATTRIBUTES="gen_ai.agent.name=${config.agent_name},gen_ai.agent.role=${config.agent_role},service.namespace=macf"`,
+  ];
+}
+
+/**
  * Claude Code session-resume flags for the final `exec claude ...`.
  * Permanent agents reattach to the prior session so context persists
  * across relaunches (same ergonomics as macf-science-agent /
@@ -135,6 +205,7 @@ export function generateClaudeSh(config: MacfAgentConfig): string {
       ? [`export MACF_TMUX_WINDOW="${config.tmux_window}"`]
       : []),
     ...registryEnvLines(config),
+    ...otelTelemetryLines(config),
     '',
     '# Bot token generation — fail loud. The helper validates the ghs_ prefix',
     '# and surfaces diagnostics (clock drift, bad key, wrong App/install ID).',
