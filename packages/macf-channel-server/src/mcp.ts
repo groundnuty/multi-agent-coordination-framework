@@ -21,7 +21,7 @@ export function createMcpChannel(config: {
   const instructions = config.instructions ?? CHANNEL_INSTRUCTIONS;
 
   const server = new Server(
-    { name: `macf-${config.agentName}`, version: '0.1.1' },
+    { name: `macf-${config.agentName}`, version: '0.2.0-rc.0' },
     {
       capabilities: {
         experimental: { 'claude/channel': {} },
