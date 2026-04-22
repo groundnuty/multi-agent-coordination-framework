@@ -5,10 +5,10 @@
  * settings (per #140).
  */
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, rmSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, rmSync, statSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { installGhTokenHook, MACF_HOOK_COMMAND, installPluginSkillPermissions, PLUGIN_SKILL_PERMISSIONS } from '../../src/cli/settings-writer.js';
+import { installGhTokenHook, MACF_HOOK_COMMAND, installPluginSkillPermissions, PLUGIN_SKILL_PERMISSIONS, installSandboxFdAllowRead, SANDBOX_FD_READ_PATTERN } from '../../src/cli/settings-writer.js';
 
 describe('installGhTokenHook', () => {
   let tmpRoot: string;
@@ -279,5 +279,152 @@ describe('installPluginSkillPermissions (macf#189 sub-item 2)', () => {
     // Unrelated keys preserved.
     expect(s.hooks.PreToolUse).toHaveLength(1);
     expect(s.env.SOME_OPERATOR_VAR).toBe('1');
+  });
+});
+
+describe('installSandboxFdAllowRead (macf#200)', () => {
+  let tmpRoot: string;
+  let settingsPath: string;
+
+  beforeEach(() => {
+    tmpRoot = mkdtempSync(join(tmpdir(), 'macf-sandbox-fd-test-'));
+    settingsPath = join(tmpRoot, '.claude', 'settings.json');
+    delete process.env['MACF_SANDBOX_FD_FIX_SKIP'];
+  });
+
+  afterEach(() => {
+    rmSync(tmpRoot, { recursive: true, force: true });
+    delete process.env['MACF_SANDBOX_FD_FIX_SKIP'];
+  });
+
+  it('a) creates settings.json + sandbox.filesystem.allowRead when missing', () => {
+    installSandboxFdAllowRead(tmpRoot);
+
+    expect(existsSync(settingsPath)).toBe(true);
+    const s = JSON.parse(readFileSync(settingsPath, 'utf-8'));
+    expect(s.sandbox.filesystem.allowRead).toEqual([SANDBOX_FD_READ_PATTERN]);
+  });
+
+  it('b) creates filesystem subblock when sandbox exists but filesystem does not', () => {
+    mkdirSync(join(tmpRoot, '.claude'), { recursive: true });
+    writeFileSync(settingsPath, JSON.stringify({
+      sandbox: { enabled: true },
+    }, null, 2));
+
+    installSandboxFdAllowRead(tmpRoot);
+
+    const s = JSON.parse(readFileSync(settingsPath, 'utf-8'));
+    expect(s.sandbox.enabled).toBe(true); // preserved
+    expect(s.sandbox.filesystem.allowRead).toEqual([SANDBOX_FD_READ_PATTERN]);
+  });
+
+  it('c) creates allowRead when filesystem exists but allowRead does not', () => {
+    mkdirSync(join(tmpRoot, '.claude'), { recursive: true });
+    writeFileSync(settingsPath, JSON.stringify({
+      sandbox: {
+        filesystem: {
+          allowWrite: ['/tmp/**'],
+          denyRead: ['/etc/shadow'],
+        },
+      },
+    }, null, 2));
+
+    installSandboxFdAllowRead(tmpRoot);
+
+    const s = JSON.parse(readFileSync(settingsPath, 'utf-8'));
+    expect(s.sandbox.filesystem.allowRead).toEqual([SANDBOX_FD_READ_PATTERN]);
+    // Other filesystem sub-keys preserved.
+    expect(s.sandbox.filesystem.allowWrite).toEqual(['/tmp/**']);
+    expect(s.sandbox.filesystem.denyRead).toEqual(['/etc/shadow']);
+  });
+
+  it('d) appends to existing allowRead, preserving operator entries', () => {
+    mkdirSync(join(tmpRoot, '.claude'), { recursive: true });
+    writeFileSync(settingsPath, JSON.stringify({
+      sandbox: {
+        filesystem: {
+          allowRead: ['/etc/hosts', '/etc/resolv.conf'],
+        },
+      },
+    }, null, 2));
+
+    installSandboxFdAllowRead(tmpRoot);
+
+    const s = JSON.parse(readFileSync(settingsPath, 'utf-8'));
+    expect(s.sandbox.filesystem.allowRead).toContain('/etc/hosts');
+    expect(s.sandbox.filesystem.allowRead).toContain('/etc/resolv.conf');
+    expect(s.sandbox.filesystem.allowRead).toContain(SANDBOX_FD_READ_PATTERN);
+    expect(s.sandbox.filesystem.allowRead).toHaveLength(3);
+  });
+
+  it('e) no-op when the fd pattern is already present', () => {
+    mkdirSync(join(tmpRoot, '.claude'), { recursive: true });
+    const before = {
+      sandbox: {
+        filesystem: {
+          allowRead: ['/etc/hosts', SANDBOX_FD_READ_PATTERN],
+        },
+      },
+    };
+    writeFileSync(settingsPath, JSON.stringify(before, null, 2));
+    const mtimeBefore = statSync(settingsPath).mtimeMs;
+
+    installSandboxFdAllowRead(tmpRoot);
+
+    const after = JSON.parse(readFileSync(settingsPath, 'utf-8'));
+    expect(after.sandbox.filesystem.allowRead).toEqual(['/etc/hosts', SANDBOX_FD_READ_PATTERN]);
+    // File not rewritten on no-op.
+    expect(statSync(settingsPath).mtimeMs).toBe(mtimeBefore);
+  });
+
+  it('f) respects MACF_SANDBOX_FD_FIX_SKIP=1 opt-out', () => {
+    process.env['MACF_SANDBOX_FD_FIX_SKIP'] = '1';
+    installSandboxFdAllowRead(tmpRoot);
+
+    // Nothing written — settings.json shouldn't exist.
+    expect(existsSync(settingsPath)).toBe(false);
+  });
+
+  it('g) throws on malformed settings.json (consistent with installGhTokenHook)', () => {
+    mkdirSync(join(tmpRoot, '.claude'), { recursive: true });
+    writeFileSync(settingsPath, '{ not valid json');
+
+    expect(() => installSandboxFdAllowRead(tmpRoot))
+      .toThrow(/Refusing to overwrite malformed/);
+  });
+
+  it('is idempotent — N calls produce same output as 1 call', () => {
+    installSandboxFdAllowRead(tmpRoot);
+    installSandboxFdAllowRead(tmpRoot);
+    installSandboxFdAllowRead(tmpRoot);
+
+    const s = JSON.parse(readFileSync(settingsPath, 'utf-8'));
+    expect(s.sandbox.filesystem.allowRead).toEqual([SANDBOX_FD_READ_PATTERN]);
+  });
+
+  it('preserves other top-level settings.json keys + other sandbox keys', () => {
+    mkdirSync(join(tmpRoot, '.claude'), { recursive: true });
+    writeFileSync(settingsPath, JSON.stringify({
+      hooks: { PreToolUse: [{ matcher: 'Bash', hooks: [{ type: 'command', command: './x.sh' }] }] },
+      env: { SOME_OPERATOR_VAR: '1' },
+      sandbox: {
+        enabled: true,
+        excludedCommands: ['gh:*'],
+        filesystem: {
+          allowRead: ['/etc/hosts'],
+          denyWrite: ['/etc/**'],
+        },
+      },
+    }, null, 2));
+
+    installSandboxFdAllowRead(tmpRoot);
+
+    const s = JSON.parse(readFileSync(settingsPath, 'utf-8'));
+    expect(s.hooks.PreToolUse).toHaveLength(1);
+    expect(s.env.SOME_OPERATOR_VAR).toBe('1');
+    expect(s.sandbox.enabled).toBe(true);
+    expect(s.sandbox.excludedCommands).toEqual(['gh:*']);
+    expect(s.sandbox.filesystem.allowRead).toEqual(['/etc/hosts', SANDBOX_FD_READ_PATTERN]);
+    expect(s.sandbox.filesystem.denyWrite).toEqual(['/etc/**']);
   });
 });

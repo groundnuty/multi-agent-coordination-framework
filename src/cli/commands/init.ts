@@ -10,7 +10,7 @@ import {
 import { loadCA } from '../../certs/ca.js';
 import { generateAgentCert } from '../../certs/agent-cert.js';
 import { copyCanonicalRules, copyCanonicalScripts } from '../rules.js';
-import { installGhTokenHook, installPluginSkillPermissions } from '../settings-writer.js';
+import { installGhTokenHook, installPluginSkillPermissions, installSandboxFdAllowRead } from '../settings-writer.js';
 import { fetchPluginToWorkspace } from '../plugin-fetcher.js';
 import { writeClaudeSh } from '../claude-sh.js';
 import {
@@ -263,6 +263,13 @@ export async function initAgent(projectDir: string, opts: InitOptions): Promise<
   // See macf#189 sub-item 2.
   installPluginSkillPermissions(absDir);
   console.log(`  Permissions: pre-approved macf-agent plugin skills`);
+
+  // Add `/proc/self/fd/**` to sandbox.filesystem.allowRead so Claude
+  // Code's Bash-tool harness can pass command-input fds to spawned
+  // shells without hitting zsh permission-denied. Every MACF agent
+  // pre-#200 silently failed every Bash call; this fixes on init.
+  installSandboxFdAllowRead(absDir);
+  console.log(`  Sandbox: allowRead for /proc/self/fd/** installed`);
 
   // Fetch the macf-agent plugin at the pinned version and place it at
   // .macf/plugin/ so claude.sh can use --plugin-dir (per DR-013).
