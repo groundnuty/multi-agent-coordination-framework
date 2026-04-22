@@ -6,7 +6,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { existsSync, mkdtempSync, readFileSync, rmSync, statSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { generateClaudeSh, writeClaudeSh } from '../../src/cli/claude-sh.js';
+import { generateClaudeSh, writeClaudeSh, otelTelemetryLines } from '../../src/cli/claude-sh.js';
 import type { MacfAgentConfig } from '../../src/cli/config.js';
 
 const sampleConfig: MacfAgentConfig = {
@@ -263,5 +263,97 @@ describe('writeClaudeSh', () => {
     const path = writeClaudeSh(tmpRoot, sampleConfig);
     expect(path.startsWith('/')).toBe(true);
     expect(path.endsWith('/claude.sh')).toBe(true);
+  });
+});
+
+describe('otelTelemetryLines (macf#197)', () => {
+  it('emits all 3 Claude Code telemetry gates + the OTLP endpoint env by default', () => {
+    const lines = otelTelemetryLines(sampleConfig, {});
+    const joined = lines.join('\n');
+    // Three gates — any missing → zero traces emit per Claude Code docs.
+    expect(joined).toContain('export CLAUDE_CODE_ENABLE_TELEMETRY=1');
+    expect(joined).toContain('export CLAUDE_CODE_ENHANCED_TELEMETRY_BETA=1');
+    expect(joined).toContain('export OTEL_TRACES_EXPORTER=otlp');
+    // Default endpoint.
+    expect(joined).toContain('export OTEL_EXPORTER_OTLP_ENDPOINT="http://localhost:4318"');
+    // Protocol.
+    expect(joined).toContain('export OTEL_EXPORTER_OTLP_PROTOCOL=http/protobuf');
+    // Per-agent service name + resource attrs.
+    expect(joined).toContain('export OTEL_SERVICE_NAME="macf-agent-code-agent"');
+    expect(joined).toContain(
+      'export OTEL_RESOURCE_ATTRIBUTES="gen_ai.agent.name=code-agent,gen_ai.agent.role=code-agent,service.namespace=macf"',
+    );
+  });
+
+  it('honors MACF_OTEL_ENDPOINT override', () => {
+    const lines = otelTelemetryLines(sampleConfig, {
+      MACF_OTEL_ENDPOINT: 'http://obs.tailnet.ts.net:4318',
+    });
+    const joined = lines.join('\n');
+    expect(joined).toContain('export OTEL_EXPORTER_OTLP_ENDPOINT="http://obs.tailnet.ts.net:4318"');
+    expect(joined).not.toContain('localhost:4318');
+  });
+
+  it('omits the block entirely when MACF_OTEL_DISABLED=1', () => {
+    const lines = otelTelemetryLines(sampleConfig, { MACF_OTEL_DISABLED: '1' });
+    expect(lines).toEqual([]);
+  });
+
+  it('omits the block when MACF_OTEL_DISABLED=true', () => {
+    const lines = otelTelemetryLines(sampleConfig, { MACF_OTEL_DISABLED: 'true' });
+    expect(lines).toEqual([]);
+  });
+
+  it('rejects shell-unsafe characters in MACF_OTEL_ENDPOINT', () => {
+    // Double-quoted shell context. A literal `"`, `$`, backtick,
+    // backslash, or newline in the URL would break the export line
+    // or trigger substitution. Same allowlist as validateInitOpts
+    // on keyPath.
+    const unsafe = [
+      'http://host"; rm -rf /;"',
+      'http://host:$(whoami)',
+      'http://host:`whoami`',
+      'http://host:\\n',
+      'http://host\nexport MALICIOUS=1',
+    ];
+    for (const val of unsafe) {
+      expect(() => otelTelemetryLines(sampleConfig, { MACF_OTEL_ENDPOINT: val }))
+        .toThrow(/shell-unsafe/);
+    }
+  });
+});
+
+describe('generateClaudeSh integration with OTEL block (macf#197)', () => {
+  it('embeds the OTEL block in the full launcher output by default', () => {
+    // generateClaudeSh reads from process.env, not an injected env.
+    // Save + clear MACF_OTEL_* so the default-path test is
+    // deterministic on runners that happened to set them.
+    const backupDisabled = process.env['MACF_OTEL_DISABLED'];
+    const backupEndpoint = process.env['MACF_OTEL_ENDPOINT'];
+    delete process.env['MACF_OTEL_DISABLED'];
+    delete process.env['MACF_OTEL_ENDPOINT'];
+    try {
+      const output = generateClaudeSh(sampleConfig);
+      expect(output).toContain('export CLAUDE_CODE_ENABLE_TELEMETRY=1');
+      expect(output).toContain('export CLAUDE_CODE_ENHANCED_TELEMETRY_BETA=1');
+      expect(output).toContain('export OTEL_TRACES_EXPORTER=otlp');
+      expect(output).toContain('export OTEL_EXPORTER_OTLP_ENDPOINT="http://localhost:4318"');
+    } finally {
+      if (backupDisabled !== undefined) process.env['MACF_OTEL_DISABLED'] = backupDisabled;
+      if (backupEndpoint !== undefined) process.env['MACF_OTEL_ENDPOINT'] = backupEndpoint;
+    }
+  });
+
+  it('omits the OTEL block when MACF_OTEL_DISABLED=1 at generate time', () => {
+    const backupDisabled = process.env['MACF_OTEL_DISABLED'];
+    process.env['MACF_OTEL_DISABLED'] = '1';
+    try {
+      const output = generateClaudeSh(sampleConfig);
+      expect(output).not.toContain('CLAUDE_CODE_ENABLE_TELEMETRY');
+      expect(output).not.toContain('OTEL_EXPORTER_OTLP_ENDPOINT');
+    } finally {
+      if (backupDisabled === undefined) delete process.env['MACF_OTEL_DISABLED'];
+      else process.env['MACF_OTEL_DISABLED'] = backupDisabled;
+    }
   });
 });
