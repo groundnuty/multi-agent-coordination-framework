@@ -1,0 +1,29 @@
+{
+  "name": "macf-core",
+  "version": "0.1.1",
+  "description": "Shared internals consumed by the MACF CLI and channel-server packages. Not intended for direct external use — will be marked deprecated-internal on first npm publish per DR-022 Amendment A.",
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "files": [
+    "dist/"
+  ],
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "build": "tsc",
+    "typecheck": "tsc --noEmit",
+    "check": "tsc --noEmit && eslint src/ && vitest run",
+    "lint": "eslint src/",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "dependencies": {
+    "@opentelemetry/api": "1.9.1",
+    "@peculiar/webcrypto": "^1.5.0",
+    "@peculiar/x509": "^2.0.0",
+    "reflect-metadata": "^0.2.2",
+    "zod": "^4.0.0"
+  }
+}
