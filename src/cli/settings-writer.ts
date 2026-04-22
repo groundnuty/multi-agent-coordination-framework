@@ -113,6 +113,69 @@ export const PLUGIN_SKILL_PERMISSIONS: readonly string[] = [
 ];
 
 /**
+ * Sandbox filesystem read-allow pattern for Claude Code's Bash-tool
+ * harness. Every Bash invocation's spawned zsh reads `/proc/self/fd/3`
+ * (or higher fds in future builds) for stdin / command-input passed
+ * by the harness. Without this pattern in the sandbox allowlist, the
+ * read is denied → `zsh:4: permission denied: /proc/self/fd/3` →
+ * every Bash tool call fails (or falls back to
+ * `dangerouslyDisableSandbox`, defeating isolation). Hit every MACF
+ * agent before macf#200.
+ *
+ * The `**` glob is future-proof — current builds use fd 3; future
+ * builds may use 4, 5, etc. Still scoped to the calling process's
+ * own descriptors, not a broader `/proc/*` allowance.
+ */
+export const SANDBOX_FD_READ_PATTERN = '/proc/self/fd/**';
+
+/**
+ * Install (or refresh) the `/proc/self/fd/**` entry in
+ * `.claude/settings.json`'s `sandbox.filesystem.allowRead` array.
+ * Creates each nested key if absent. Idempotent — repeated calls
+ * don't duplicate. Operator-authored `allowRead` entries are
+ * preserved.
+ *
+ * Opt-out: if `MACF_SANDBOX_FD_FIX_SKIP=1` is set at call time
+ * (during `macf init` / `macf update`), no change is made. Lets
+ * operators manage their own sandbox block entirely.
+ *
+ * See macf#200.
+ */
+export function installSandboxFdAllowRead(workspaceDir: string): void {
+  if (process.env['MACF_SANDBOX_FD_FIX_SKIP'] === '1') return;
+
+  const absDir = resolve(workspaceDir);
+  const claudeDir = join(absDir, '.claude');
+  const path = join(claudeDir, 'settings.json');
+
+  mkdirSync(claudeDir, { recursive: true });
+
+  const settings = readSettings(path);
+  // Narrow the deep-nested read; operator-authored alien shapes at
+  // any level default to a fresh empty branch rather than throwing.
+  const sandboxRaw = (settings['sandbox'] as Record<string, unknown> | undefined) ?? {};
+  const filesystemRaw = (sandboxRaw['filesystem'] as Record<string, unknown> | undefined) ?? {};
+  const existingAllow = Array.isArray(filesystemRaw['allowRead'])
+    ? (filesystemRaw['allowRead'] as readonly unknown[]).filter((v): v is string => typeof v === 'string')
+    : [];
+
+  if (existingAllow.includes(SANDBOX_FD_READ_PATTERN)) return;
+
+  const updated: Settings = {
+    ...settings,
+    sandbox: {
+      ...sandboxRaw,
+      filesystem: {
+        ...filesystemRaw,
+        allowRead: [...existingAllow, SANDBOX_FD_READ_PATTERN],
+      },
+    },
+  };
+
+  writeFileSync(path, JSON.stringify(updated, null, 2) + '\n');
+}
+
+/**
  * Pattern that identifies MACF-managed skill-permission entries on
  * refresh. Any pattern starting with `Skill(macf-agent:` is
  * considered ours; mismatches are preserved verbatim.

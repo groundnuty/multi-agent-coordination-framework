@@ -19,7 +19,7 @@
  */
 import { existsSync, statSync } from 'node:fs';
 import { copyCanonicalRules, copyCanonicalScripts } from '../rules.js';
-import { installGhTokenHook, installPluginSkillPermissions } from '../settings-writer.js';
+import { installGhTokenHook, installPluginSkillPermissions, installSandboxFdAllowRead } from '../settings-writer.js';
 
 export interface RulesRefreshResult {
   readonly rules: readonly string[];
@@ -54,6 +54,11 @@ export function rulesRefresh(targetDir: string): RulesRefreshResult {
   // + /macf-status / /macf-issues don't hit interactive approval
   // dialogs. See macf#189 sub-item 2.
   installPluginSkillPermissions(targetDir);
+
+  // Install /proc/self/fd/** in sandbox.filesystem.allowRead so
+  // every Bash tool call stops failing with permission-denied on
+  // the harness fd. macf#200.
+  installSandboxFdAllowRead(targetDir);
 
   if (rules.length > 0) {
     console.log(`Refreshed ${rules.length} canonical rule file(s) in .claude/rules/:`);

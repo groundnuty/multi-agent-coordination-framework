@@ -10,7 +10,7 @@ import { existsSync, readdirSync } from 'node:fs';
 import { readAgentConfig, writeAgentConfig, tokenSourceFromConfig } from '../config.js';
 import { resolveLatestVersions } from '../version-resolver.js';
 import { copyCanonicalRules, copyCanonicalScripts, findCliPackageRoot } from '../rules.js';
-import { installGhTokenHook, installPluginSkillPermissions } from '../settings-writer.js';
+import { installGhTokenHook, installPluginSkillPermissions, installSandboxFdAllowRead } from '../settings-writer.js';
 import { detectStaleDist, detectUnknownFreshness } from '../build-info.js';
 import { fetchPluginToWorkspace, workspacePluginDir } from '../plugin-fetcher.js';
 import { writeClaudeSh } from '../claude-sh.js';
@@ -196,6 +196,13 @@ export async function update(
   // at since-removed skills. See macf#189 sub-item 2.
   installPluginSkillPermissions(projectDir);
   console.log(`Refreshed plugin-skill permissions in .claude/settings.json`);
+
+  // Refresh sandbox.filesystem.allowRead /proc/self/fd/** entry
+  // (merge-preserving). Fixes every Bash tool call breaking with
+  // "permission denied: /proc/self/fd/3" on workspaces created
+  // before macf#200.
+  installSandboxFdAllowRead(projectDir);
+  console.log(`Refreshed sandbox allowRead in .claude/settings.json`);
 
   // Regenerate claude.sh unconditionally — the launcher template changes
   // over time (e.g., #60 added --plugin-dir) and workspaces need those
