@@ -3,7 +3,7 @@ name: CI
 on:
   push:
     branches: [main]
-    paths: ['src/**', 'test/**', 'package.json', 'package-lock.json', 'tsconfig.json', 'dev.mk', 'devbox.json']
+    paths: ['packages/**', 'package.json', 'package-lock.json', 'dev.mk', 'devbox.json']
   pull_request:
     branches: [main]
 

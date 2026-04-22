@@ -26,11 +26,9 @@ on:
   push:
     branches: [main]
     paths:
-      - 'src/**'
-      - 'test/**'
+      - 'packages/**'
       - 'package.json'
       - 'package-lock.json'
-      - 'tsconfig.json'
       - 'dev.mk'
       - 'devbox.json'
   schedule:

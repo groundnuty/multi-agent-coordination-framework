@@ -10,7 +10,9 @@
 import { describe, it, expect } from 'vitest';
 // eslint-disable-next-line @typescript-eslint/ban-ts-comment
 // @ts-ignore — config file has no type definitions
-import config from '../commitlint.config.mjs';
+// Three levels up: test/ → packages/macf/ → packages/ → monorepo root
+// where commitlint.config.mjs lives (repo-level config, post #206).
+import config from '../../../commitlint.config.mjs';
 
 describe('commitlint type-enum', () => {
   // Shape check — rules.type-enum is [level, applicability, enumList]
