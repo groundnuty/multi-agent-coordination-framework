@@ -1,0 +1,203 @@
+# Publish workflow for the three MACF npm packages.
+#
+# Operator prerequisites (required before the first `v*` tag push; set
+# up once, then forgotten). See DR-022 for background:
+#
+#   1. `groundnuty` user or org exists on npmjs.com owning the
+#      `@groundnuty/*` scope. (In practice: the existing `groundnuty`
+#      user account's personal scope — no org created, per science-
+#      agent's 2026-04-22 operator-prereq note on #206.)
+#
+#   2. One of two authentication paths configured:
+#      a) OIDC trusted publisher on EACH of the three packages'
+#         npmjs.com settings pages pointing at this repo + this
+#         workflow file. Preferred; gives provenance attestations.
+#         Only available AFTER each package exists on npm (chicken-
+#         and-egg), so the bootstrap publish uses path (b).
+#      b) `NPM_TOKEN` granular access token scoped to `@groundnuty/*`
+#         with publish permission, provisioned as a repo secret.
+#         Works for the bootstrap publish + as a fallback if OIDC
+#         breaks.
+#
+#   3. TODO(operator): enable 2FA on the groundnuty npm account once
+#      initial publishes settle (currently deferred per #206 operator
+#      note). Add the `publish` 2FA level at the account level and
+#      `auth-and-writes` for granular tokens. Doesn't require a
+#      workflow change — but the existing `NPM_TOKEN` will need
+#      regenerating as an `auth-and-writes` token when flipped.
+#
+# Publish ordering:
+#
+#   core first, then consumers (CLI + channel-server). Consumer
+#   tarballs reference `@groundnuty/macf-core@<version>` as a
+#   concrete dep, so core MUST be live on npm before a consumer can
+#   install cleanly. Sequential steps gate this — a failed core step
+#   prevents consumer publishes, avoiding half-published releases.
+#
+# Rollback:
+#
+#   Within 72h of publish: `npm unpublish @groundnuty/macf-*@<version>`
+#   is allowed. Past 72h: only deprecate + patch. Verification on all
+#   three agent workspaces should complete within the 72h window per
+#   DR-022 Amendment H.
+
+name: Publish
+
+on:
+  push:
+    tags: ['v*']
+  # Manual dispatch for one-off re-runs (e.g. rotation tests, rc
+  # verification). Doesn't create a tag — operator runs against the
+  # current checkout. Default to dry-run for safety.
+  workflow_dispatch:
+    inputs:
+      dry-run:
+        description: 'Run npm publish --dry-run only (no actual publish)'
+        required: false
+        type: boolean
+        default: true
+
+# `id-token: write` is required for OIDC provenance. `contents: read`
+# for the checkout. Scoped to the minimum; nothing else on the
+# repo's default GITHUB_TOKEN needs write access for this workflow.
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    # Run from a tag ref only — never a branch push — as a defensive
+    # layer. The on.push.tags trigger already restricts this, but
+    # refs/heads/* sneaking through (e.g. via workflow_dispatch on a
+    # branch) would publish from unreviewed code. Explicit guard.
+    if: ${{ github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/v') }}
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: jetify-com/devbox-install-action@v0.15.0
+
+      - name: Derive version from tag or package.json
+        id: version
+        env:
+          GITHUB_REF: ${{ github.ref }}
+        run: |
+          # Tag form: refs/tags/v0.2.0 → version 0.2.0
+          # For workflow_dispatch on a branch, use package.json.
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+            TAG_VERSION="${GITHUB_REF#refs/tags/v}"
+            echo "version=$TAG_VERSION" >> "$GITHUB_OUTPUT"
+            echo "tag_driven=true" >> "$GITHUB_OUTPUT"
+          else
+            PKG_VERSION=$(node -p "require('./packages/macf-core/package.json').version")
+            echo "version=$PKG_VERSION" >> "$GITHUB_OUTPUT"
+            echo "tag_driven=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Check package.json versions match the tag
+        if: steps.version.outputs.tag_driven == 'true'
+        env:
+          EXPECTED: ${{ steps.version.outputs.version }}
+        run: |
+          # Lock-step per DR-022 Amendment D — all three packages
+          # publish at the same version. Fail loud if any package.json
+          # drifts from the tag version before a single publish runs.
+          set -e
+          for pkg in macf-core macf macf-channel-server; do
+            ACTUAL=$(node -p "require('./packages/${pkg}/package.json').version")
+            if [[ "$ACTUAL" != "$EXPECTED" ]]; then
+              echo "::error::packages/${pkg}/package.json version=${ACTUAL} doesn't match tag v${EXPECTED}"
+              exit 1
+            fi
+          done
+          echo "All three packages at v${EXPECTED}, matches tag."
+
+      - name: Install + check + build
+        run: |
+          devbox run -- npm ci
+          devbox run -- make -f dev.mk check
+          devbox run -- make -f dev.mk build
+
+      - name: Detect auth path
+        id: auth
+        env:
+          HAS_NPM_TOKEN: ${{ secrets.NPM_TOKEN != '' }}
+        run: |
+          # Prefer OIDC when id-token:write grants succeed (provenance
+          # attestations generated by npm publish --provenance). Fall
+          # back to NPM_TOKEN for the bootstrap publish (when the
+          # package doesn't yet exist on npm and OIDC trust can't be
+          # configured on it).
+          if [[ "$HAS_NPM_TOKEN" == "true" ]]; then
+            echo "npm_token_available=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "npm_token_available=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Configure npm auth (NPM_TOKEN path)
+        if: steps.auth.outputs.npm_token_available == 'true'
+        env:
+          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          # Write the token to ~/.npmrc for the duration of the job.
+          # GitHub Actions runners are ephemeral; no cleanup needed.
+          echo "//registry.npmjs.org/:_authToken=${NPM_TOKEN}" >> "$HOME/.npmrc"
+          echo "registry=https://registry.npmjs.org/" >> "$HOME/.npmrc"
+
+      - name: Publish @groundnuty/macf-core (first, consumers depend on it)
+        env:
+          DRY_RUN: ${{ github.event.inputs.dry-run }}
+        run: |
+          cd packages/macf-core
+          if [[ "$DRY_RUN" == "true" ]]; then
+            devbox run -- npm publish --provenance --access public --dry-run
+          else
+            devbox run -- npm publish --provenance --access public
+          fi
+
+      - name: Publish @groundnuty/macf (CLI)
+        env:
+          DRY_RUN: ${{ github.event.inputs.dry-run }}
+        run: |
+          cd packages/macf
+          if [[ "$DRY_RUN" == "true" ]]; then
+            devbox run -- npm publish --provenance --access public --dry-run
+          else
+            devbox run -- npm publish --provenance --access public
+          fi
+
+      - name: Publish @groundnuty/macf-channel-server
+        env:
+          DRY_RUN: ${{ github.event.inputs.dry-run }}
+        run: |
+          cd packages/macf-channel-server
+          if [[ "$DRY_RUN" == "true" ]]; then
+            devbox run -- npm publish --provenance --access public --dry-run
+          else
+            devbox run -- npm publish --provenance --access public
+          fi
+
+      - name: Summary
+        if: always()
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+          DRY_RUN: ${{ github.event.inputs.dry-run }}
+          NPM_TOKEN_AVAILABLE: ${{ steps.auth.outputs.npm_token_available }}
+        run: |
+          AUTH_PATH="OIDC-only"
+          if [[ "$NPM_TOKEN_AVAILABLE" == "true" ]]; then
+            AUTH_PATH="NPM_TOKEN + OIDC provenance"
+          fi
+          {
+            echo "## Publish run summary"
+            echo ""
+            echo "- Version: \`v$VERSION\`"
+            echo "- Dry run: \`$DRY_RUN\`"
+            echo "- Auth path: $AUTH_PATH"
+            echo ""
+            echo "### Published packages (if not dry-run)"
+            echo "- [@groundnuty/macf-core@$VERSION](https://www.npmjs.com/package/@groundnuty/macf-core/v/$VERSION)"
+            echo "- [@groundnuty/macf@$VERSION](https://www.npmjs.com/package/@groundnuty/macf/v/$VERSION)"
+            echo "- [@groundnuty/macf-channel-server@$VERSION](https://www.npmjs.com/package/@groundnuty/macf-channel-server/v/$VERSION)"
+          } >> "$GITHUB_STEP_SUMMARY"
