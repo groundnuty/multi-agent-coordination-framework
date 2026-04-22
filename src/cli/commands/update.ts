@@ -10,7 +10,7 @@ import { existsSync, readdirSync } from 'node:fs';
 import { readAgentConfig, writeAgentConfig, tokenSourceFromConfig } from '../config.js';
 import { resolveLatestVersions } from '../version-resolver.js';
 import { copyCanonicalRules, copyCanonicalScripts, findCliPackageRoot } from '../rules.js';
-import { installGhTokenHook } from '../settings-writer.js';
+import { installGhTokenHook, installPluginSkillPermissions } from '../settings-writer.js';
 import { detectStaleDist, detectUnknownFreshness } from '../build-info.js';
 import { fetchPluginToWorkspace, workspacePluginDir } from '../plugin-fetcher.js';
 import { writeClaudeSh } from '../claude-sh.js';
@@ -190,6 +190,12 @@ export async function update(
   // if the CLI changes its form across releases.
   installGhTokenHook(projectDir);
   console.log(`Refreshed gh-token guard hook in .claude/settings.json`);
+
+  // Refresh macf-agent plugin-skill pre-approvals. Picks up new skills
+  // added by newer CLI versions + drops any stale patterns pointing
+  // at since-removed skills. See macf#189 sub-item 2.
+  installPluginSkillPermissions(projectDir);
+  console.log(`Refreshed plugin-skill permissions in .claude/settings.json`);
 
   // Regenerate claude.sh unconditionally — the launcher template changes
   // over time (e.g., #60 added --plugin-dir) and workspaces need those

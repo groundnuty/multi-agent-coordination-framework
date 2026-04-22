@@ -85,6 +85,83 @@ function readSettings(path: string): Settings {
 }
 
 /**
+ * Permission patterns pre-approving the 4 `macf-agent` plugin skills.
+ * Without these, every first invocation of a skill (e.g. `/macf-status`
+ * during the SessionStart auto-pickup hook) fires an interactive
+ * approval dialog — blocking autonomy for the time operator takes to
+ * click through. See macf#189 sub-item 2 (bilateral e2e demo friction
+ * point: operator had to approve 4-5 dialogs per fresh workspace).
+ *
+ * Concrete patterns (not a wildcard `Skill(macf-agent:*)`): operator
+ * deliberately installed the plugin at v0.1.N, so pre-trusting THE
+ * SKILLS CURRENTLY KNOWN TO EXIST at this CLI version is safe. A
+ * future plugin version adding new skills would need a `macf update`
+ * run — which refreshes these patterns from the updated constant —
+ * before the new skills auto-approve. Wildcard would auto-approve
+ * anything shipped under the plugin namespace including future
+ * unreviewed additions; we opt out of that security posture.
+ *
+ * Keep in lockstep with the 4 skills shipped by
+ * `groundnuty/macf-marketplace/macf-agent/skills/`. When plugin adds
+ * a skill, add its pattern here + bump CLI version.
+ */
+export const PLUGIN_SKILL_PERMISSIONS: readonly string[] = [
+  'Skill(macf-agent:macf-status)',
+  'Skill(macf-agent:macf-issues)',
+  'Skill(macf-agent:macf-peers)',
+  'Skill(macf-agent:macf-ping)',
+];
+
+/**
+ * Pattern that identifies MACF-managed skill-permission entries on
+ * refresh. Any pattern starting with `Skill(macf-agent:` is
+ * considered ours; mismatches are preserved verbatim.
+ */
+const MACF_SKILL_PATTERN_PREFIX = 'Skill(macf-agent:';
+
+/**
+ * Install (or refresh) the MACF plugin-skill pre-approval entries in
+ * `.claude/settings.json`'s `permissions.allow` array. Idempotent:
+ * stale entries (e.g. from a prior CLI version that listed a since-
+ * removed skill) are dropped + replaced with the current set.
+ * Non-MACF entries in `permissions.allow` are preserved.
+ *
+ * Creates the `.claude/` directory + settings.json if missing.
+ */
+export function installPluginSkillPermissions(workspaceDir: string): void {
+  const absDir = resolve(workspaceDir);
+  const claudeDir = join(absDir, '.claude');
+  const path = join(claudeDir, 'settings.json');
+
+  mkdirSync(claudeDir, { recursive: true });
+
+  const settings = readSettings(path);
+  const existingAllow = Array.isArray(settings['permissions'] && (settings['permissions'] as { allow?: unknown })['allow'])
+    ? ((settings['permissions'] as { allow: readonly string[] }).allow)
+    : [];
+
+  // Drop any prior Skill(macf-agent:*) entries so we install the
+  // current list fresh (handles "skill was removed in plugin v0.1.N"
+  // case — otherwise the stale pre-approval lingers forever).
+  const preserved = existingAllow.filter(
+    (entry) => typeof entry !== 'string' || !entry.startsWith(MACF_SKILL_PATTERN_PREFIX),
+  );
+
+  const allow: string[] = [...preserved, ...PLUGIN_SKILL_PERMISSIONS];
+
+  const existingPermissions = (settings['permissions'] as Record<string, unknown> | undefined) ?? {};
+  const updated: Settings = {
+    ...settings,
+    permissions: {
+      ...existingPermissions,
+      allow,
+    },
+  };
+
+  writeFileSync(path, JSON.stringify(updated, null, 2) + '\n');
+}
+
+/**
  * Install (or refresh) the MACF PreToolUse hook entry for
  * `check-gh-token.sh` in `<workspaceDir>/.claude/settings.json`.
  * Creates the `.claude/` directory and the file if either is missing.
