@@ -1,4 +1,4 @@
-import type { NotifyPayload } from './types.js';
+import type { NotifyPayload } from 'macf-core';
 
 /**
  * Render a NotifyPayload to the operator-facing content string that

@@ -1,8 +1,8 @@
 import { describe, it, expect } from 'vitest';
 import { formatDashboard, formatPeerTable, formatHealthDetail, formatIssues } from '../../../src/plugin/lib/format.js';
-import type { HealthResponse } from '../../../src/types.js';
+import type { HealthResponse } from 'macf-core';
 import type { OwnRegistration } from '../../../src/plugin/lib/registry.js';
-import type { AgentInfo } from '../../../src/registry/types.js';
+import type { AgentInfo } from 'macf-core';
 
 const sampleHealth: HealthResponse = {
   agent: 'code-agent',

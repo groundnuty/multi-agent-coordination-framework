@@ -1,6 +1,6 @@
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
-import type { HealthResponse, HealthState } from './types.js';
+import type { HealthResponse, HealthState } from 'macf-core';
 
 function readVersion(): string {
   const pkgPath = resolve(import.meta.dirname, '..', 'package.json');

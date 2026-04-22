@@ -5,6 +5,7 @@
     "moduleResolution": "NodeNext",
     "lib": ["ES2022"],
     "outDir": "dist",
+    "rootDir": "src",
     "strict": true,
     "esModuleInterop": true,
     "skipLibCheck": true,
@@ -18,11 +19,9 @@
     "noUnusedParameters": true,
     "noImplicitOverride": true,
     "verbatimModuleSyntax": true,
-    "exactOptionalPropertyTypes": false
+    "exactOptionalPropertyTypes": false,
+    "composite": true
   },
-  "references": [
-    { "path": "../macf-core" }
-  ],
   "include": ["src/**/*.ts"],
   "exclude": ["node_modules", "dist", "test"]
 }

@@ -33,8 +33,8 @@ import { execFileSync, spawnSync } from 'node:child_process';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { createCA } from '../../src/certs/ca.js';
-import { generateAgentCert, generateClientCert } from '../../src/certs/agent-cert.js';
+import { createCA } from 'macf-core';
+import { generateAgentCert, generateClientCert } from 'macf-core';
 
 function toolAvailable(name: string): boolean {
   const r = spawnSync(name, ['--version'], { stdio: 'ignore' });

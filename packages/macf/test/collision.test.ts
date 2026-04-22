@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import type { Registry, AgentInfo } from '../src/registry/types.js';
-import type { Logger } from '../src/types.js';
+import type { Registry, AgentInfo } from 'macf-core';
+import type { Logger } from 'macf-core';
 
 // Mock node:https request to avoid real network calls
 vi.mock('node:https', () => ({

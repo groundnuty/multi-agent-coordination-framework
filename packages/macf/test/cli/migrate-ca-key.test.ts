@@ -16,8 +16,8 @@ import {
 } from '../../src/cli/commands/migrate-ca-key.js';
 import {
   encryptCAKey, encryptCAKeyV1Legacy, decryptCAKey,
-} from '../../src/certs/ca.js';
-import type { GitHubVariablesClient } from '../../src/registry/types.js';
+} from 'macf-core';
+import type { GitHubVariablesClient } from 'macf-core';
 
 const SAMPLE_PEM =
   '-----BEGIN PRIVATE KEY-----\n' +

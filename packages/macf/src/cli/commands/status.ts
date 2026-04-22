@@ -1,10 +1,10 @@
 import { loadAllAgents, readAgentConfig, agentCertPath, agentKeyPath, tokenSourceFromConfig } from '../config.js';
-import { toVariableSegment } from '../../registry/variable-name.js';
+import { toVariableSegment } from 'macf-core';
 import { createClientFromConfig } from '../registry-helper.js';
-import { createRegistryFromConfig } from '../../registry/factory.js';
-import { generateToken } from '../../token.js';
+import { createRegistryFromConfig } from 'macf-core';
+import { generateToken } from 'macf-core';
 // Shared with `src/plugin/lib/health.ts` — see ultrareview finding A3.
-import { pingAgentHealth } from '../../mtls-health-ping.js';
+import { pingAgentHealth } from 'macf-core';
 
 function formatUptime(seconds: number): string {
   if (seconds < 60) return `${seconds}s`;

@@ -1,4 +1,4 @@
-import type { AgentInfo, Registry } from '../../registry/types.js';
+import type { AgentInfo, Registry } from 'macf-core';
 
 export interface OwnRegistration {
   readonly name: string;

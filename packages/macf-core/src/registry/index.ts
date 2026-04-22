@@ -3,3 +3,4 @@ export type { AgentInfo, Registry, RegistryConfig, GitHubVariablesClient } from 
 export { createGitHubClient, GitHubApiError } from './github-client.js';
 export { createRegistry } from './registry.js';
 export { createRegistryFromConfig } from './factory.js';
+export { toVariableSegment } from './variable-name.js';

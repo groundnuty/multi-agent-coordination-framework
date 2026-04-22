@@ -1,8 +1,8 @@
 import { request } from 'node:https';
 import { readFileSync } from 'node:fs';
-import type { AgentInfo, Registry } from './registry/types.js';
-import type { Logger } from './types.js';
-import { MacfError } from './errors.js';
+import type { AgentInfo, Registry } from 'macf-core';
+import type { Logger } from 'macf-core';
+import { MacfError } from 'macf-core';
 
 export class CollisionError extends MacfError {
   constructor(name: string, host: string, port: number) {
