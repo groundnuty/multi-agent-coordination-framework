@@ -135,14 +135,17 @@ export const SANDBOX_FD_READ_PATTERN = '/proc/self/fd/**';
  * don't duplicate. Operator-authored `allowRead` entries are
  * preserved.
  *
- * Opt-out: if `MACF_SANDBOX_FD_FIX_SKIP=1` is set at call time
- * (during `macf init` / `macf update`), no change is made. Lets
- * operators manage their own sandbox block entirely.
+ * Opt-out: if `MACF_SANDBOX_FD_FIX_SKIP` is `1` or `true` at call
+ * time (during `macf init` / `macf update`), no change is made. Lets
+ * operators manage their own sandbox block entirely. Accepts both
+ * shapes to stay aligned with `MACF_OTEL_DISABLED` (see
+ * `claude-sh.ts` — same family of opt-out env knobs).
  *
  * See macf#200.
  */
 export function installSandboxFdAllowRead(workspaceDir: string): void {
-  if (process.env['MACF_SANDBOX_FD_FIX_SKIP'] === '1') return;
+  const skip = process.env['MACF_SANDBOX_FD_FIX_SKIP'];
+  if (skip === '1' || skip === 'true') return;
 
   const absDir = resolve(workspaceDir);
   const claudeDir = join(absDir, '.claude');
