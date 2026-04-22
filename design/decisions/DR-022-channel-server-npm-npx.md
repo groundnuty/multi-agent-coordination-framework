@@ -286,3 +286,68 @@ rollout.
 - Current-pattern reference: DR-013 (plugin-dir adoption), DR-021 (OTEL
   instrumentation — introduced the dep-heavy server that exposed the
   race)
+
+## Amendments post-review (2026-04-22)
+
+Feasibility review by `macf-code-agent[bot]` on [PR #205](https://github.com/groundnuty/macf/pull/205) surfaced several items that tighten the decisions above. Captured here so the DR document alone (not the PR thread) conveys the as-merged shape.
+
+### Amendment A — Package split revised to B3 (npm workspaces + internal core)
+
+The original §"Package split" claimed CLI/server had limited shared-code overlap. Empirical import-graph analysis (by code-agent) found the overlap is substantial — `src/server.ts` imports from 15 shared modules (`certs/*`, `registry/*`, `config`, `token`, `errors`, `logger`, `otel`, `tracing`, `collision`, `shutdown`, `https`, `mcp`, `health`, `tmux-wake`, `types`), and the CLI overlaps on `certs/`, `registry/`, `token`, `config`.
+
+Confirmed package layout: **npm workspaces monorepo, three packages, two published**:
+
+- `@groundnuty/macf-core` — internal-only, `"private": true`, contains all shared modules. Not published to npm. Consumed via workspace linkage.
+- `@groundnuty/macf` — CLI. Published. Depends on `@groundnuty/macf-core` as a workspace dep.
+- `@groundnuty/macf-channel-server` — server. Published. Depends on `@groundnuty/macf-core` as a workspace dep.
+
+When the two public packages are published, npm's workspace resolution inlines the internal `@groundnuty/macf-core` code into each tarball, so consumers never see the core package name. Cleanest dependency graph; lowest publish-surface risk (two publish targets, not three).
+
+### Amendment B — npm provenance enabled on both publishes
+
+Both public packages publish with `npm publish --provenance`. Requires:
+- OIDC trust configured on npmjs.com → `groundnuty/macf` repo (one-time step on the publish settings for each package)
+- `permissions: { id-token: write }` in the publish GitHub Actions workflow
+- No new secret — OIDC replaces long-lived credentials for this flow
+
+Provenance attestations appear on each package's npmjs.com page, tying the version to the specific CI run + commit SHA that built it. Supply-chain trust win appropriate for a framework that manages App tokens and PreToolUse hooks.
+
+### Amendment C — `NPM_TOKEN` must be a scope-level granular access token (not classic)
+
+When 2FA is enabled on the `@groundnuty` scope (default and recommended), classic automation tokens can't publish. The `NPM_TOKEN` secret provisioned in amendment 2 of the original DR must be a **granular access token** scoped to `@groundnuty/*` with **Publish** permission. Creating it: npmjs.com → Account → Access Tokens → Generate New Token → Granular Access Token form, not the "classic" tab.
+
+### Amendment D — CLI + server version lock-step
+
+Original DR left open whether the two packages version independently. Confirmed: **lock-step for v0.2.0 and forward**. One `v<semver>` git tag on `groundnuty/macf` publishes both packages at the same version. If lifecycles diverge later (empirically, unlikely — both derive from shared core), introduce `cli/v*` + `server/v*` tag prefixes then. Don't pay the flexibility tax upfront.
+
+### Amendment E — First-launch SLA split by cache state
+
+Original DR implied a "30 s Jaeger service appearance" AC for verification. Cold-cache npm fetch on flaky or low-bandwidth networks can exceed this. Split:
+
+| Launch state | MCP boot | Jaeger service appearance |
+|---|---|---|
+| First launch ever (cold npm cache) | ≤ 60 s | ≤ 90 s |
+| Subsequent launches (warm cache) | ≤ 10 s | ≤ 30 s |
+
+Cold-fetch cost is paid exactly once per workspace. Worth documenting in operator rollout notes for v0.2.0.
+
+### Amendment F — `macf self-update` branches on install path
+
+Operator install path post-cutover: `npm install -g @groundnuty/macf`. Contributor dev install path: `git clone` + `npm run build` + `npm link`. `macf self-update` detects which and branches:
+
+- npm-global install → `npm install -g @groundnuty/macf@latest`
+- npm-link dev install → `git pull origin main && npm run build` (existing behavior)
+
+README "Installing macf" section is restructured: npm-global becomes the primary install path; the current `npm link` flow moves to a "Contributing" subsection. The #144 stale-dist warning (build-info check on `macf update`) becomes a dev-install-only signal.
+
+### Amendment G — Tarball before/after listing required in the follow-up AC
+
+Concrete `tar tvzf` of marketplace plugin v0.1.8 vs v0.2.0 side-by-side is a required artifact on the follow-up implementation issue. Defensive against accidental deletion of agent templates, skills, hooks (non-install), or rules during the bundled-dist removal.
+
+### Amendment H — Rollback constraint: verification must complete within 72 h unpublish window
+
+npm allows unpublish for 72 h after publish; after that, remediation is publish a patch (v0.2.1), not rollback. Operator-facing implication: end-to-end verification on all three agent workspaces (academic-resume, cv-project-archaeologist, macf) must complete within the window. Explicit timeline AC in the follow-up issue.
+
+### Amendment I — Marketplace plugin repo location unchanged
+
+Post-cutover the marketplace plugin is config-only (agents, skills, hooks, rules, `plugin.json`) and small. No restructuring needed — `groundnuty/macf-marketplace/macf-agent/` stays as-is. The marketplace repo remains the canonical discovery path for Claude Code plugin installs.
