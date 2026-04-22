@@ -7,7 +7,6 @@ import { createRegistryFromConfig } from './registry/factory.js';
 import { checkCollision, CollisionError } from './collision.js';
 import { registerShutdownHandler } from './shutdown.js';
 import { generateToken } from './token.js';
-import { checkPendingIssues } from './startup-issues.js';
 import { createChallenge, verifyAndConsumeChallenge } from './certs/challenge.js';
 import { createChallengeStore } from './certs/challenge-store.js';
 import { signCSR } from './certs/agent-cert.js';
@@ -16,6 +15,19 @@ import { HttpError } from './errors.js';
 import { formatNotifyContent } from './notify-formatter.js';
 import { wakeViaTmux } from './tmux-wake.js';
 import type { NotifyPayload, SignRequest } from './types.js';
+
+// NOTE: `checkPendingIssues` from './startup-issues.js' used to be
+// called here at boot — but the call had a hardcoded
+// `repo: 'groundnuty/macf', agentLabel: 'code-agent'`, so every
+// agent (regardless of identity/workspace) queried macf's code-agent
+// issues at startup + emitted a startup_check notification per hit.
+// Created cross-agent noise on every fresh launch (macf#192).
+// Removed in macf#192 because the marketplace v0.1.7
+// `session-start-pickup.sh` SessionStart hook now handles this
+// correctly — per-agent label from $MACF_AGENT_NAME + enumerates
+// `/installation/repositories` so multi-repo agents are covered too.
+// The function itself is still exported from src/startup-issues.ts
+// for API back-compat; just not invoked here.
 import type { AgentInfo } from './registry/types.js';
 
 async function main(): Promise<void> {
@@ -235,15 +247,6 @@ async function main(): Promise<void> {
     agentName: config.agentName,
     registry,
     httpsServer,
-    logger,
-  });
-
-  // P2: Check for pending issues and push startup_check notification
-  await checkPendingIssues({
-    repo: 'groundnuty/macf',
-    agentLabel: 'code-agent',
-    token,
-    onNotify,
     logger,
   });
 
