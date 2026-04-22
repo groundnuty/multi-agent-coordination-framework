@@ -5,14 +5,19 @@
  * module semantics — we cover the business logic (diff + format)
  * directly and trust the wrapper.
  */
-import { describe, it, expect } from 'vitest';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { afterEach, beforeEach, describe, it, expect } from 'vitest';
 import {
   MACF_REQUIRED_PERMISSIONS,
+  checkSandboxFdAllowRead,
   diffPermissions,
   formatPermissionRow,
   describeNonJwtOutput,
   type RequiredPermission,
 } from '../../src/cli/commands/doctor.js';
+import { SANDBOX_FD_READ_PATTERN } from '../../src/cli/settings-writer.js';
 
 describe('MACF_REQUIRED_PERMISSIONS', () => {
   it('has exactly the seven DR-019 permissions (canonical API names)', () => {
@@ -187,5 +192,76 @@ describe('describeNonJwtOutput (#86 — no JWT leak)', () => {
     // 7 consecutive 'a's would mean we leaked >6 chars
     expect(msg).not.toContain('aaaaaaa');
     expect(msg).toContain('length=400');
+  });
+});
+
+describe('checkSandboxFdAllowRead (macf#202)', () => {
+  let tmpRoot: string;
+  let settingsPath: string;
+
+  beforeEach(() => {
+    tmpRoot = mkdtempSync(join(tmpdir(), 'doctor-sandbox-'));
+    settingsPath = join(tmpRoot, '.claude', 'settings.json');
+  });
+
+  afterEach(() => {
+    rmSync(tmpRoot, { recursive: true, force: true });
+  });
+
+  function writeSettings(obj: unknown): void {
+    mkdirSync(join(tmpRoot, '.claude'), { recursive: true });
+    writeFileSync(settingsPath, JSON.stringify(obj, null, 2));
+  }
+
+  it('PASS when allowRead contains the fd pattern', () => {
+    writeSettings({
+      sandbox: { filesystem: { allowRead: ['/etc/hosts', SANDBOX_FD_READ_PATTERN] } },
+    });
+    const result = checkSandboxFdAllowRead(tmpRoot);
+    expect(result.status).toBe('PASS');
+    expect(result.detail).toBe('');
+  });
+
+  it('FAIL when settings.json is absent (workspace never init\'d or refreshed)', () => {
+    const result = checkSandboxFdAllowRead(tmpRoot);
+    expect(result.status).toBe('FAIL');
+    expect(result.detail).toContain(SANDBOX_FD_READ_PATTERN);
+    expect(result.detail).toContain('macf update');
+  });
+
+  it('FAIL when sandbox key missing entirely', () => {
+    writeSettings({ hooks: {} });
+    const result = checkSandboxFdAllowRead(tmpRoot);
+    expect(result.status).toBe('FAIL');
+  });
+
+  it('FAIL when allowRead exists but does not contain the fd pattern', () => {
+    writeSettings({
+      sandbox: { filesystem: { allowRead: ['/etc/hosts', '/var/lib/**'] } },
+    });
+    const result = checkSandboxFdAllowRead(tmpRoot);
+    expect(result.status).toBe('FAIL');
+    expect(result.detail).toContain(SANDBOX_FD_READ_PATTERN);
+  });
+
+  it('FAIL (surfacing parse error) when settings.json is malformed', () => {
+    mkdirSync(join(tmpRoot, '.claude'), { recursive: true });
+    writeFileSync(settingsPath, '{ not valid json');
+    const result = checkSandboxFdAllowRead(tmpRoot);
+    expect(result.status).toBe('FAIL');
+    expect(result.detail).toMatch(/Refusing to overwrite malformed/);
+  });
+
+  it('PASS when operator has the pattern alongside other entries (operator-authored preserved)', () => {
+    writeSettings({
+      hooks: { PreToolUse: [] },
+      sandbox: {
+        filesystem: {
+          allowRead: ['/etc/hosts', SANDBOX_FD_READ_PATTERN, '/custom/path/**'],
+        },
+      },
+    });
+    const result = checkSandboxFdAllowRead(tmpRoot);
+    expect(result.status).toBe('PASS');
   });
 });

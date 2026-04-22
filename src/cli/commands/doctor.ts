@@ -16,6 +16,7 @@
  */
 import { execFileSync } from 'node:child_process';
 import { readAgentConfig, tokenSourceFromConfig } from '../config.js';
+import { getSandboxAllowRead, SANDBOX_FD_READ_PATTERN } from '../settings-writer.js';
 
 /**
  * One required permission entry from DR-019.
@@ -97,6 +98,44 @@ export function formatPermissionRow(
     return `⚠ ${name} required=${required} actual=${actualStr} — need write, have read`;
   }
   return `✓ ${name} required=${required} actual=${actualStr}`;
+}
+
+/**
+ * Result of the sandbox-filesystem check (macf#202). PASS iff the
+ * workspace's `.claude/settings.json` has `/proc/self/fd/**` in
+ * `sandbox.filesystem.allowRead`. FAIL if absent, or if reading the
+ * file threw (malformed JSON → we don't silently report PASS).
+ */
+export interface SandboxFdCheck {
+  readonly status: 'PASS' | 'FAIL';
+  /** Human-readable diagnostic — e.g. JSON parse error message. Empty on PASS. */
+  readonly detail: string;
+}
+
+/**
+ * Pure check: does this workspace's `.claude/settings.json` contain
+ * the `/proc/self/fd/**` sandbox pattern? See macf#200 for why this
+ * matters (without it every Bash tool call fails on the harness fd).
+ *
+ * Uses `getSandboxAllowRead` from `settings-writer.ts` so the JSON-
+ * read + deep-narrow logic lives in one place. Malformed JSON
+ * surfaces as a FAIL with the parse error in `detail` — operator
+ * still needs to see what broke.
+ */
+export function checkSandboxFdAllowRead(workspaceDir: string): SandboxFdCheck {
+  let allowRead: readonly string[];
+  try {
+    allowRead = getSandboxAllowRead(workspaceDir);
+  } catch (err) {
+    return { status: 'FAIL', detail: err instanceof Error ? err.message : String(err) };
+  }
+  if (allowRead.includes(SANDBOX_FD_READ_PATTERN)) {
+    return { status: 'PASS', detail: '' };
+  }
+  return {
+    status: 'FAIL',
+    detail: `allowRead does not contain ${SANDBOX_FD_READ_PATTERN} — run \`macf update\` to refresh`,
+  };
 }
 
 /**
@@ -233,8 +272,20 @@ export async function runDoctor(projectDir: string): Promise<number> {
     console.log('See design/decisions/DR-019-app-permissions.md for the full doctrine,');
     console.log('and GitHub → Settings → Developer settings → GitHub Apps → <your App> → Permissions');
     console.log('to update the App. Users with the App installed must accept the new permissions.');
-    return 1;
   }
 
-  return 0;
+  console.log('');
+  console.log('Sandbox filesystem (macf#200)');
+  console.log('──────────────────────────────────────────────────────────────');
+  const sandboxCheck = checkSandboxFdAllowRead(projectDir);
+  if (sandboxCheck.status === 'PASS') {
+    console.log(`  ✓ sandbox.filesystem.allowRead contains ${SANDBOX_FD_READ_PATTERN}  [PASS]`);
+  } else {
+    console.log(`  ✗ sandbox.filesystem.allowRead missing ${SANDBOX_FD_READ_PATTERN}   [FAIL — run \`macf update\` to fix]`);
+    if (sandboxCheck.detail) console.log(`    ${sandboxCheck.detail}`);
+  }
+
+  const permissionsFailed = finding.missing.length > 0 || finding.insufficient.length > 0;
+  const sandboxFailed = sandboxCheck.status === 'FAIL';
+  return permissionsFailed || sandboxFailed ? 1 : 0;
 }

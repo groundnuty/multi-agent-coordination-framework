@@ -129,6 +129,29 @@ export const PLUGIN_SKILL_PERMISSIONS: readonly string[] = [
 export const SANDBOX_FD_READ_PATTERN = '/proc/self/fd/**';
 
 /**
+ * Read `.claude/settings.json`'s `sandbox.filesystem.allowRead` array
+ * as a list of strings. Returns an empty array if the file doesn't
+ * exist or the nested shape is absent/alien. Throws on malformed
+ * JSON — consistent with `installSandboxFdAllowRead`'s posture (we
+ * don't silently treat a broken file as "no entries"; that would
+ * mask operator-authored state).
+ *
+ * Used by `macf doctor` (macf#202) to report whether the workspace
+ * has the `/proc/self/fd/**` pattern without duplicating the
+ * JSON-read + deep-narrow logic in two places.
+ */
+export function getSandboxAllowRead(workspaceDir: string): readonly string[] {
+  const absDir = resolve(workspaceDir);
+  const path = join(absDir, '.claude', 'settings.json');
+  const settings = readSettings(path);
+  const sandboxRaw = (settings['sandbox'] as Record<string, unknown> | undefined) ?? {};
+  const filesystemRaw = (sandboxRaw['filesystem'] as Record<string, unknown> | undefined) ?? {};
+  const list = filesystemRaw['allowRead'];
+  if (!Array.isArray(list)) return [];
+  return list.filter((v): v is string => typeof v === 'string');
+}
+
+/**
  * Install (or refresh) the `/proc/self/fd/**` entry in
  * `.claude/settings.json`'s `sandbox.filesystem.allowRead` array.
  * Creates each nested key if absent. Idempotent — repeated calls
