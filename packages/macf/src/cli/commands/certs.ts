@@ -5,13 +5,13 @@ import {
   caCertPath as caCertPathFor, caKeyPath as caKeyPathFor, caDir,
   tokenSourceFromConfig,
 } from '../config.js';
-import { createCA, backupCAKey, recoverCAKey, loadCA } from '../../certs/ca.js';
-import { generateAgentCert, generateClientCert } from '../../certs/agent-cert.js';
+import { createCA, backupCAKey, recoverCAKey, loadCA } from 'macf-core';
+import { generateAgentCert, generateClientCert } from 'macf-core';
 import { createClientFromConfig } from '../registry-helper.js';
-import { createRegistryFromConfig } from '../../registry/factory.js';
-import { generateToken } from '../../token.js';
+import { createRegistryFromConfig } from 'macf-core';
+import { generateToken } from 'macf-core';
 import { promptPassword, PromptCancelled } from '../prompt.js';
-import { toVariableSegment } from '../../registry/variable-name.js';
+import { toVariableSegment } from 'macf-core';
 
 const ROUTING_CLIENT_CN = 'routing-action';
 const DEFAULT_VALIDITY_DAYS = 365;

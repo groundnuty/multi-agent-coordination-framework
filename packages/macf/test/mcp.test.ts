@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { McpChannelError } from '../src/errors.js';
+import { McpChannelError } from 'macf-core';
 import { EXPECTED_VERSION } from './version-helper.js';
 
 // Mock the MCP SDK before importing the module under test

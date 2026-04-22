@@ -1,5 +1,5 @@
-import type { Registry } from './registry/types.js';
-import type { HttpsServer, Logger } from './types.js';
+import type { Registry } from 'macf-core';
+import type { HttpsServer, Logger } from 'macf-core';
 
 /**
  * Registers SIGTERM and SIGINT handlers that clean up the agent's

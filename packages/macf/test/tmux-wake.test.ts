@@ -19,7 +19,7 @@ import { mkdtempSync, rmSync, writeFileSync, chmodSync, existsSync } from 'node:
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { resolveTmuxTarget, wakeViaTmux } from '../src/tmux-wake.js';
-import type { Logger } from '../src/types.js';
+import type { Logger } from 'macf-core';
 
 function makeLogger(): Logger & { readonly events: Array<{ event: string; data: Record<string, unknown> }> } {
   const events: Array<{ event: string; data: Record<string, unknown> }> = [];

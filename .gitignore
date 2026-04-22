@@ -8,6 +8,7 @@
 .claude/rules/
 node_modules/
 dist/
+*.tsbuildinfo
 *.log
 .env
 .env.local

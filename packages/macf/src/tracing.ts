@@ -19,7 +19,7 @@
  */
 import { trace } from '@opentelemetry/api';
 import type { Tracer } from '@opentelemetry/api';
-import type { NotifyPayload } from './types.js';
+import type { NotifyPayload } from 'macf-core';
 
 /** The single tracer instance used across the MACF codebase. */
 export function getTracer(): Tracer {

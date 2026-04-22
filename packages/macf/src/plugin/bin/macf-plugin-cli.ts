@@ -15,10 +15,10 @@ import { formatDashboard, formatPeerTable, formatHealthDetail, formatIssues } fr
 import { getOwnRegistration, listPeers } from '../lib/registry.js';
 import { pingAgent } from '../lib/health.js';
 import { checkIssues } from '../lib/work.js';
-import { createRegistryFromConfig } from '../../registry/factory.js';
-import { generateToken } from '../../token.js';
-import { toVariableSegment } from '../../registry/variable-name.js';
-import type { RegistryConfig } from '../../registry/types.js';
+import { createRegistryFromConfig } from 'macf-core';
+import { generateToken } from 'macf-core';
+import { toVariableSegment } from 'macf-core';
+import type { RegistryConfig } from 'macf-core';
 
 const command = process.argv[2];
 

@@ -54,7 +54,7 @@ import { execFileSync, spawnSync } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { SpanKind, SpanStatusCode } from '@opentelemetry/api';
-import type { Logger } from './types.js';
+import type { Logger } from 'macf-core';
 import { getTracer, SpanNames, Attr } from './tracing.js';
 
 export interface WakeOptions {

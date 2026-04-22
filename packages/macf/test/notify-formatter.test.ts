@@ -9,7 +9,7 @@
  */
 import { describe, it, expect } from 'vitest';
 import { formatNotifyContent } from '../src/notify-formatter.js';
-import type { NotifyPayload } from '../src/types.js';
+import type { NotifyPayload } from 'macf-core';
 
 describe('formatNotifyContent', () => {
   describe('issue_routed', () => {

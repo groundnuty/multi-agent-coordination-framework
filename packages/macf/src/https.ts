@@ -3,9 +3,9 @@ import type { TLSSocket } from 'node:tls';
 import { readFileSync } from 'node:fs';
 import { randomInt } from 'node:crypto';
 import { context, propagation, SpanKind, SpanStatusCode } from '@opentelemetry/api';
-import { NotifyPayloadSchema, SignRequestSchema } from './types.js';
-import type { NotifyPayload, SignRequest, HealthResponse, HttpsServer, Logger } from './types.js';
-import { PortExhaustedError, PortUnavailableError, HttpsServerError, HttpError } from './errors.js';
+import { NotifyPayloadSchema, SignRequestSchema } from 'macf-core';
+import type { NotifyPayload, SignRequest, HealthResponse, HttpsServer, Logger } from 'macf-core';
+import { PortExhaustedError, PortUnavailableError, HttpsServerError, HttpError } from 'macf-core';
 import { getTracer, SpanNames, Attr, GenAiAttr, operationNameForNotifyType } from './tracing.js';
 
 const MAX_BODY_BYTES = 64 * 1024; // 64KB

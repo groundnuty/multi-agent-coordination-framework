@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { registerShutdownHandler } from '../src/shutdown.js';
-import type { Registry } from '../src/registry/types.js';
-import type { HttpsServer, Logger } from '../src/types.js';
+import type { Registry } from 'macf-core';
+import type { HttpsServer, Logger } from 'macf-core';
 
 function mockLogger(): Logger {
   return { info: vi.fn(), warn: vi.fn(), error: vi.fn() };

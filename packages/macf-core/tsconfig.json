@@ -19,7 +19,8 @@
     "noUnusedParameters": true,
     "noImplicitOverride": true,
     "verbatimModuleSyntax": true,
-    "exactOptionalPropertyTypes": false
+    "exactOptionalPropertyTypes": false,
+    "composite": true
   },
   "include": ["src/**/*.ts"],
   "exclude": ["node_modules", "dist", "test"]
