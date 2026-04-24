@@ -37,6 +37,8 @@ These are the common places the describing form applies. Not exhaustive; the pri
 
 In each of these, raw `@handle` will fire routing. Backtick-wrap.
 
+Handles inside fenced code blocks (triple-backtick) or 4-space-indented blocks are already safe — GitHub's mention parser skips code contexts. Backtick-wrapping is for inline prose where a bare `@handle` would otherwise be parsed as a routing target.
+
 ---
 
 ## 3. Contexts where addressing happens
