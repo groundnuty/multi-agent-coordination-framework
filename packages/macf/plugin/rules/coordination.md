@@ -217,6 +217,23 @@ The helper is distributed to every agent workspace by `macf init` and refreshed 
 
 ---
 
+## Sandbox Configuration (Bash dev-loop unblocking)
+
+Claude Code 2.1.92+ has a seccomp regression on Linux ([anthropic/claude-code#43454](https://github.com/anthropics/claude-code/issues/43454)) that breaks Bash tool calls inside the sandbox during the spawned shell's own startup — zsh tries to read `/proc/self/fd/3` before any user-code runs and the regression denies that read. Even with `sandbox.filesystem.allowRead: ["/proc/self/fd"]` in place (per macf#208), the regression still bites because it hits before the allow-rule applies.
+
+**Workaround**: add common dev-loop commands to `sandbox.excludedCommands` so they run unsandboxed. The sandbox still gates anything not on the list; only the listed prefixes opt out. `macf init` / `macf update` / `macf rules refresh` install a canonical set per macf#211 — operator-authored entries are preserved on refresh.
+
+**Canonical set** (kept in lockstep with `SANDBOX_EXCLUDED_COMMANDS` in `packages/macf/src/cli/settings-writer.ts`):
+
+- **Build-loop / deployment**: `ssh:*`, `scp:*`, `rsync:*`, `devbox:*`, `nix:*`, `git:*`, `gpg:*`, `gpg-agent:*`, `gh:*`, `npx:*`, `npm:*`, `node:*`, `make:*`, `tmux:*`, `jq:*`, `openssl:*`
+- **Search/read**: `grep:*`, `rg:*`, `find:*`, `head:*`, `tail:*`, `cat:*`, `ls:*`, `wc:*`, `sort:*`, `awk:*`, `sed:*`, `diff:*`, `which:*`
+- **Shell wrappers**: `bash:*`, `sh:*`, `xargs:*` (subprocess shells fail at zsh-init under the regression even when the inner command is a no-op)
+- **Low-blast-radius fs mutations**: `mkdir:*`, `cp:*`, `touch:*`. **Destructive ops (`rm:*`, `mv:*`) are intentionally NOT in the list** — keeping them sandboxed limits accidental damage paths even though the sandbox is defense-in-depth here.
+
+**Opt-out**: `MACF_SANDBOX_EXCLUDED_COMMANDS_SKIP=1` skips the canonical install. Aligned with `MACF_SANDBOX_FD_FIX_SKIP` / `MACF_OTEL_DISABLED` opt-out family. If you want a tighter list (e.g., drop the fs-mutation entries), set the skip flag and curate manually — refresh won't re-add canonical entries you removed.
+
+---
+
 ## When to Read vs. Modify These Rules
 
 - **Read:** Every session start. These rules define how you coordinate.

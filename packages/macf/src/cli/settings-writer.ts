@@ -249,6 +249,178 @@ export function installSandboxFdAllowRead(workspaceDir: string): void {
 }
 
 /**
+ * Canonical MACF-managed `sandbox.excludedCommands` entries.
+ *
+ * Per macf#211 + claude-code#43454: Claude Code 2.1.92+ has a seccomp
+ * regression on Linux that breaks Bash inside the sandbox during the
+ * shell's own startup (it reads from `/proc/self/fd/3` even before
+ * user-code runs). Adding common dev-loop commands to
+ * `excludedCommands` runs them unsandboxed, sidestepping the
+ * regression while keeping sandbox protection for everything else.
+ *
+ * Three command classes:
+ *
+ *  - **Search/read** (`grep`, `rg`, `find`, `head`, `tail`, `cat`,
+ *    `ls`, `wc`, `sort`, `awk`, `sed`, `diff`, `which`) — Bash tool's
+ *    primary dev-loop commands; no side effects beyond the file view
+ *    Claude already has via the `Read` tool.
+ *  - **Shell wrappers** (`bash:*`, `sh:*`, `xargs:*`) — agent-
+ *    composed shell pipelines; sandboxed versions fail at zsh-init
+ *    even when the inner command is a no-op.
+ *  - **Low-blast-radius filesystem mutations** (`mkdir:*`, `cp:*`,
+ *    `touch:*`) — non-destructive create/copy. Higher-blast-radius
+ *    mutations (`rm:*`, `mv:*`) are intentionally NOT in the list:
+ *    keeping them sandboxed limits accidental damage paths.
+ *
+ * Plus the build-loop subset that was already canonical pre-#211:
+ * `ssh:*`, `scp:*`, `rsync:*`, `devbox:*`, `nix:*`, `git:*`,
+ * `gpg:*`, `gpg-agent:*`, `gh:*`, `npx:*`, `npm:*`, `node:*`,
+ * `make:*`, `tmux:*`, `jq:*`, `openssl:*`. These were applied by
+ * hand in operator workspaces; #211 bundles them into the canonical
+ * set so `macf init` / `macf update` install them consistently.
+ *
+ * Keep this list in lockstep with `plugin/rules/coordination.md`'s
+ * sandbox section (the operator-facing doc) — both are sources of
+ * truth and any drift confuses operators reading either.
+ */
+export const SANDBOX_EXCLUDED_COMMANDS: readonly string[] = [
+  // Build-loop / deployment
+  'ssh:*',
+  'scp:*',
+  'rsync:*',
+  'devbox:*',
+  'nix:*',
+  'git:*',
+  'gpg:*',
+  'gpg-agent:*',
+  'gh:*',
+  'npx:*',
+  'npm:*',
+  'node:*',
+  'make:*',
+  'tmux:*',
+  'jq:*',
+  'openssl:*',
+  // Search/read dev-loop
+  'grep:*',
+  'rg:*',
+  'find:*',
+  'head:*',
+  'tail:*',
+  'cat:*',
+  'ls:*',
+  'wc:*',
+  'sort:*',
+  'awk:*',
+  'sed:*',
+  'diff:*',
+  'which:*',
+  // Shell wrappers (subprocesses fail at zsh-init under the
+  // regression even when the inner command is a no-op)
+  'bash:*',
+  'sh:*',
+  'xargs:*',
+  // Low-blast-radius filesystem mutations. `rm:*` + `mv:*`
+  // intentionally excluded — keep destructive ops sandboxed.
+  'mkdir:*',
+  'cp:*',
+  'touch:*',
+];
+
+/**
+ * Legacy MACF-managed `sandbox.excludedCommands` entries. Currently
+ * empty — #211 is the first managed cycle. Future CLI versions can
+ * append here when the canonical set drops a previously-managed
+ * command, so `installSandboxExcludedCommands` removes those entries
+ * from operator workspaces on next refresh.
+ */
+const MACF_LEGACY_EXCLUDED_COMMANDS: readonly string[] = [];
+
+/**
+ * Install (or refresh) the canonical MACF entries in
+ * `.claude/settings.json`'s `sandbox.excludedCommands` array.
+ * Idempotent: repeated calls don't duplicate.
+ *
+ * Operator-authored entries are preserved verbatim. Stale MACF-
+ * managed entries (anything in MACF_LEGACY_EXCLUDED_COMMANDS) are
+ * dropped before the current set is installed; current MACF entries
+ * already present in the operator's list are left in their original
+ * position rather than re-appended.
+ *
+ * Opt-out: `MACF_SANDBOX_EXCLUDED_COMMANDS_SKIP=1|true` skips the
+ * install entirely. Aligned with the
+ * `MACF_SANDBOX_FD_FIX_SKIP` / `MACF_OTEL_DISABLED` family of opt-out
+ * env knobs.
+ *
+ * See macf#211 (this issue), claude-code#43454 (upstream
+ * regression), macf#200 / #208 (precedent fd allowRead pattern).
+ */
+export function installSandboxExcludedCommands(workspaceDir: string): void {
+  const skip = process.env['MACF_SANDBOX_EXCLUDED_COMMANDS_SKIP'];
+  if (skip === '1' || skip === 'true') return;
+
+  const absDir = resolve(workspaceDir);
+  const claudeDir = join(absDir, '.claude');
+  const path = join(claudeDir, 'settings.json');
+
+  mkdirSync(claudeDir, { recursive: true });
+
+  const settings = readSettings(path);
+  // Mirror installSandboxFdAllowRead's deep-narrow shape — operator-
+  // authored alien shapes default to fresh empty branches.
+  const sandboxRaw = (settings['sandbox'] as Record<string, unknown> | undefined) ?? {};
+  const existing = Array.isArray(sandboxRaw['excludedCommands'])
+    ? (sandboxRaw['excludedCommands'] as readonly unknown[]).filter((v): v is string => typeof v === 'string')
+    : [];
+
+  // Drop legacy MACF-managed entries, preserve everything else
+  // (operator-authored AND current-MACF entries already present).
+  const preserved = existing.filter(
+    (entry) => !MACF_LEGACY_EXCLUDED_COMMANDS.includes(entry),
+  );
+
+  // Merge in the current canonical set. Skip duplicates so an
+  // entry the operator already has stays in its original position
+  // rather than being re-appended at the end.
+  const merged = [...preserved];
+  for (const entry of SANDBOX_EXCLUDED_COMMANDS) {
+    if (!merged.includes(entry)) merged.push(entry);
+  }
+
+  // Idempotent short-circuit: nothing changed → skip the write.
+  const sameLength = merged.length === existing.length;
+  const sameContent = sameLength && merged.every((v, i) => v === existing[i]);
+  if (sameContent) return;
+
+  const updated: Settings = {
+    ...settings,
+    sandbox: {
+      ...sandboxRaw,
+      excludedCommands: merged,
+    },
+  };
+
+  writeFileSync(path, JSON.stringify(updated, null, 2) + '\n');
+}
+
+/**
+ * Read `.claude/settings.json`'s `sandbox.excludedCommands` array as
+ * a list of strings. Returns an empty array if the file doesn't
+ * exist or the nested shape is absent/alien. Mirrors
+ * `getSandboxAllowRead` — used by `macf doctor` (follow-up under
+ * #211 step 2) once it wires the parity check in.
+ */
+export function getSandboxExcludedCommands(workspaceDir: string): readonly string[] {
+  const absDir = resolve(workspaceDir);
+  const path = join(absDir, '.claude', 'settings.json');
+  const settings = readSettings(path);
+  const sandboxRaw = (settings['sandbox'] as Record<string, unknown> | undefined) ?? {};
+  const list = sandboxRaw['excludedCommands'];
+  if (!Array.isArray(list)) return [];
+  return list.filter((v): v is string => typeof v === 'string');
+}
+
+/**
  * Pattern that identifies MACF-managed skill-permission entries on
  * refresh. Any pattern starting with `Skill(macf-agent:` is
  * considered ours; mismatches are preserved verbatim.
