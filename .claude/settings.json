@@ -58,6 +58,10 @@
       ]
     }
   },
+  "statusLine": {
+    "type": "command",
+    "command": ".claude/scripts/macf-statusline.sh"
+  },
   "enabledPlugins": {
     "superpowers@claude-plugins-official": true,
     "commit-commands@claude-plugins-official": true,
