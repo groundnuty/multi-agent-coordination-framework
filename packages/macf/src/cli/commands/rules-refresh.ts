@@ -19,7 +19,7 @@
  */
 import { existsSync, statSync } from 'node:fs';
 import { copyCanonicalRules, copyCanonicalScripts } from '../rules.js';
-import { installGhTokenHook, installPluginSkillPermissions, installSandboxFdAllowRead } from '../settings-writer.js';
+import { installGhTokenHook, installPluginSkillPermissions, installSandboxFdAllowRead, installSandboxExcludedCommands } from '../settings-writer.js';
 
 export interface RulesRefreshResult {
   readonly rules: readonly string[];
@@ -59,6 +59,11 @@ export function rulesRefresh(targetDir: string): RulesRefreshResult {
   // every Bash tool call stops failing with permission-denied on
   // the harness fd. macf#200.
   installSandboxFdAllowRead(targetDir);
+
+  // Install canonical sandbox.excludedCommands set (grep, find,
+  // bash, etc. unsandboxed) — sidesteps claude-code#43454 seccomp
+  // regression. macf#211.
+  installSandboxExcludedCommands(targetDir);
 
   if (rules.length > 0) {
     console.log(`Refreshed ${rules.length} canonical rule file(s) in .claude/rules/:`);

@@ -8,7 +8,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, rmSync, statSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { installGhTokenHook, MACF_HOOK_COMMAND, installPluginSkillPermissions, PLUGIN_SKILL_PERMISSIONS, installSandboxFdAllowRead, SANDBOX_FD_READ_PATTERN } from '../../src/cli/settings-writer.js';
+import { installGhTokenHook, MACF_HOOK_COMMAND, installPluginSkillPermissions, PLUGIN_SKILL_PERMISSIONS, installSandboxFdAllowRead, SANDBOX_FD_READ_PATTERN, installSandboxExcludedCommands, SANDBOX_EXCLUDED_COMMANDS, getSandboxExcludedCommands } from '../../src/cli/settings-writer.js';
 
 describe('installGhTokenHook', () => {
   let tmpRoot: string;
@@ -455,5 +455,156 @@ describe('installSandboxFdAllowRead (macf#200)', () => {
     expect(s.sandbox.excludedCommands).toEqual(['gh:*']);
     expect(s.sandbox.filesystem.allowRead).toEqual(['/etc/hosts', SANDBOX_FD_READ_PATTERN]);
     expect(s.sandbox.filesystem.denyWrite).toEqual(['/etc/**']);
+  });
+});
+
+describe('installSandboxExcludedCommands (macf#211)', () => {
+  let tmpRoot: string;
+  let settingsPath: string;
+
+  beforeEach(() => {
+    tmpRoot = mkdtempSync(join(tmpdir(), 'macf-excl-cmd-test-'));
+    settingsPath = join(tmpRoot, '.claude', 'settings.json');
+    delete process.env['MACF_SANDBOX_EXCLUDED_COMMANDS_SKIP'];
+  });
+
+  afterEach(() => {
+    rmSync(tmpRoot, { recursive: true, force: true });
+    delete process.env['MACF_SANDBOX_EXCLUDED_COMMANDS_SKIP'];
+  });
+
+  it('canonical set spans all 4 documented classes (build-loop / search / shell / fs-mutate)', () => {
+    // Regression guard: each command class must contribute at least
+    // one entry. If a future refactor accidentally removes a whole
+    // class, this test catches it before consumers do.
+    expect(SANDBOX_EXCLUDED_COMMANDS).toContain('git:*');     // build-loop
+    expect(SANDBOX_EXCLUDED_COMMANDS).toContain('grep:*');    // search/read
+    expect(SANDBOX_EXCLUDED_COMMANDS).toContain('bash:*');    // shell wrapper
+    expect(SANDBOX_EXCLUDED_COMMANDS).toContain('mkdir:*');   // low-blast fs
+  });
+
+  it('explicitly omits destructive fs commands (rm, mv) — kept sandboxed', () => {
+    // Per the issue's design discussion: high-blast-radius fs
+    // mutations stay sandboxed so the sandbox preserves a damage-
+    // control gate even though it's defense-in-depth here.
+    expect(SANDBOX_EXCLUDED_COMMANDS).not.toContain('rm:*');
+    expect(SANDBOX_EXCLUDED_COMMANDS).not.toContain('mv:*');
+  });
+
+  it('creates settings.json + sandbox.excludedCommands when missing', () => {
+    installSandboxExcludedCommands(tmpRoot);
+
+    expect(existsSync(settingsPath)).toBe(true);
+    const s = JSON.parse(readFileSync(settingsPath, 'utf-8'));
+    expect(s.sandbox.excludedCommands).toEqual([...SANDBOX_EXCLUDED_COMMANDS]);
+  });
+
+  it('creates excludedCommands when sandbox exists but excludedCommands does not', () => {
+    mkdirSync(join(tmpRoot, '.claude'), { recursive: true });
+    writeFileSync(settingsPath, JSON.stringify({
+      sandbox: { enabled: true },
+    }, null, 2));
+
+    installSandboxExcludedCommands(tmpRoot);
+
+    const s = JSON.parse(readFileSync(settingsPath, 'utf-8'));
+    expect(s.sandbox.enabled).toBe(true); // preserved
+    expect(s.sandbox.excludedCommands).toEqual([...SANDBOX_EXCLUDED_COMMANDS]);
+  });
+
+  it('appends to existing excludedCommands, preserving operator entries', () => {
+    mkdirSync(join(tmpRoot, '.claude'), { recursive: true });
+    writeFileSync(settingsPath, JSON.stringify({
+      sandbox: {
+        excludedCommands: ['kubectl:*', 'helm:*'],
+      },
+    }, null, 2));
+
+    installSandboxExcludedCommands(tmpRoot);
+
+    const s = JSON.parse(readFileSync(settingsPath, 'utf-8'));
+    // Operator-authored entries kept in their original positions
+    // (front of array); canonical MACF entries appended at the end.
+    expect(s.sandbox.excludedCommands.slice(0, 2)).toEqual(['kubectl:*', 'helm:*']);
+    expect(s.sandbox.excludedCommands.slice(2)).toEqual([...SANDBOX_EXCLUDED_COMMANDS]);
+  });
+
+  it('does not duplicate entries operator already added (idempotent merge)', () => {
+    mkdirSync(join(tmpRoot, '.claude'), { recursive: true });
+    // Operator already has some MACF entries (e.g., they hand-applied
+    // the workaround pre-#211 landing).
+    writeFileSync(settingsPath, JSON.stringify({
+      sandbox: {
+        excludedCommands: ['gh:*', 'grep:*', 'kubectl:*'],
+      },
+    }, null, 2));
+
+    installSandboxExcludedCommands(tmpRoot);
+
+    const s = JSON.parse(readFileSync(settingsPath, 'utf-8'));
+    // gh:* and grep:* should appear exactly once (their original
+    // positions preserved); kubectl:* (operator-only) preserved;
+    // remaining canonical entries appended.
+    expect(s.sandbox.excludedCommands.filter((e: string) => e === 'gh:*')).toHaveLength(1);
+    expect(s.sandbox.excludedCommands.filter((e: string) => e === 'grep:*')).toHaveLength(1);
+    expect(s.sandbox.excludedCommands).toContain('kubectl:*');
+    expect(s.sandbox.excludedCommands.slice(0, 3)).toEqual(['gh:*', 'grep:*', 'kubectl:*']);
+  });
+
+  it('is idempotent — second call writes nothing new', () => {
+    installSandboxExcludedCommands(tmpRoot);
+    const firstWrite = readFileSync(settingsPath, 'utf-8');
+    installSandboxExcludedCommands(tmpRoot);
+    const secondWrite = readFileSync(settingsPath, 'utf-8');
+    expect(secondWrite).toBe(firstWrite);
+  });
+
+  it('respects MACF_SANDBOX_EXCLUDED_COMMANDS_SKIP=1 (no file written)', () => {
+    process.env['MACF_SANDBOX_EXCLUDED_COMMANDS_SKIP'] = '1';
+    installSandboxExcludedCommands(tmpRoot);
+    expect(existsSync(settingsPath)).toBe(false);
+  });
+
+  it('respects MACF_SANDBOX_EXCLUDED_COMMANDS_SKIP=true (no file written)', () => {
+    process.env['MACF_SANDBOX_EXCLUDED_COMMANDS_SKIP'] = 'true';
+    installSandboxExcludedCommands(tmpRoot);
+    expect(existsSync(settingsPath)).toBe(false);
+  });
+
+  it('preserves unrelated top-level + sandbox keys', () => {
+    mkdirSync(join(tmpRoot, '.claude'), { recursive: true });
+    writeFileSync(settingsPath, JSON.stringify({
+      model: 'opus',
+      env: { DEBUG: '1' },
+      sandbox: {
+        enabled: true,
+        filesystem: { allowRead: ['/proc/self/fd'] },
+      },
+    }, null, 2));
+
+    installSandboxExcludedCommands(tmpRoot);
+
+    const s = JSON.parse(readFileSync(settingsPath, 'utf-8'));
+    expect(s.model).toBe('opus');
+    expect(s.env).toEqual({ DEBUG: '1' });
+    expect(s.sandbox.enabled).toBe(true);
+    expect(s.sandbox.filesystem.allowRead).toEqual(['/proc/self/fd']);
+    expect(s.sandbox.excludedCommands).toEqual([...SANDBOX_EXCLUDED_COMMANDS]);
+  });
+
+  it('handles malformed settings.json by failing loud', () => {
+    mkdirSync(join(tmpRoot, '.claude'), { recursive: true });
+    writeFileSync(settingsPath, '{ broken json');
+
+    expect(() => installSandboxExcludedCommands(tmpRoot)).toThrow(/settings\.json/i);
+    expect(readFileSync(settingsPath, 'utf-8')).toBe('{ broken json');
+  });
+
+  it('getSandboxExcludedCommands returns array (or empty when missing/alien shape)', () => {
+    expect(getSandboxExcludedCommands(tmpRoot)).toEqual([]);
+
+    installSandboxExcludedCommands(tmpRoot);
+    const got = getSandboxExcludedCommands(tmpRoot);
+    expect(got).toEqual([...SANDBOX_EXCLUDED_COMMANDS]);
   });
 });

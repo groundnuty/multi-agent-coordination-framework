@@ -10,7 +10,7 @@ import {
 import { loadCA } from '@groundnuty/macf-core';
 import { generateAgentCert } from '@groundnuty/macf-core';
 import { copyCanonicalRules, copyCanonicalScripts } from '../rules.js';
-import { installGhTokenHook, installPluginSkillPermissions, installSandboxFdAllowRead } from '../settings-writer.js';
+import { installGhTokenHook, installPluginSkillPermissions, installSandboxFdAllowRead, installSandboxExcludedCommands } from '../settings-writer.js';
 import { fetchPluginToWorkspace } from '../plugin-fetcher.js';
 import { writeClaudeSh } from '../claude-sh.js';
 import {
@@ -270,6 +270,14 @@ export async function initAgent(projectDir: string, opts: InitOptions): Promise<
   // pre-#200 silently failed every Bash call; this fixes on init.
   installSandboxFdAllowRead(absDir);
   console.log(`  Sandbox: allowRead for /proc/self/fd/** installed`);
+
+  // Install the canonical `sandbox.excludedCommands` set so dev-loop
+  // commands (grep, find, bash, etc.) run unsandboxed and don't hit
+  // the claude-code#43454 seccomp regression at zsh-init. Operator-
+  // authored entries are preserved; opt-out via
+  // MACF_SANDBOX_EXCLUDED_COMMANDS_SKIP=1. See macf#211.
+  installSandboxExcludedCommands(absDir);
+  console.log(`  Sandbox: excludedCommands canonical set installed`);
 
   // Fetch the macf-agent plugin at the pinned version and place it at
   // .macf/plugin/ so claude.sh can use --plugin-dir (per DR-013).

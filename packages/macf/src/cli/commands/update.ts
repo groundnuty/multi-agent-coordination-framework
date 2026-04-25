@@ -10,7 +10,7 @@ import { existsSync, readdirSync } from 'node:fs';
 import { readAgentConfig, writeAgentConfig, tokenSourceFromConfig } from '../config.js';
 import { resolveLatestVersions } from '../version-resolver.js';
 import { copyCanonicalRules, copyCanonicalScripts, findCliPackageRoot } from '../rules.js';
-import { installGhTokenHook, installPluginSkillPermissions, installSandboxFdAllowRead } from '../settings-writer.js';
+import { installGhTokenHook, installPluginSkillPermissions, installSandboxFdAllowRead, installSandboxExcludedCommands } from '../settings-writer.js';
 import { detectStaleDist, detectUnknownFreshness } from '../build-info.js';
 import { fetchPluginToWorkspace, workspacePluginDir } from '../plugin-fetcher.js';
 import { writeClaudeSh } from '../claude-sh.js';
@@ -203,6 +203,14 @@ export async function update(
   // before macf#200.
   installSandboxFdAllowRead(projectDir);
   console.log(`Refreshed sandbox allowRead in .claude/settings.json`);
+
+  // Refresh sandbox.excludedCommands canonical set so dev-loop tools
+  // (grep, find, bash, etc.) run unsandboxed and dodge the claude-
+  // code#43454 seccomp regression. Operator-authored entries
+  // preserved. Opt-out via MACF_SANDBOX_EXCLUDED_COMMANDS_SKIP. See
+  // macf#211.
+  installSandboxExcludedCommands(projectDir);
+  console.log(`Refreshed sandbox excludedCommands in .claude/settings.json`);
 
   // Regenerate claude.sh unconditionally — the launcher template changes
   // over time (e.g., #60 added --plugin-dir) and workspaces need those
