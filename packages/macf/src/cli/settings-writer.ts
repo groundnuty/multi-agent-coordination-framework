@@ -22,11 +22,27 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 
 /**
- * The command path written into settings.json. Workspace-relative so
- * it matches what `copyCanonicalScripts` places at
- * `<workspace>/.claude/scripts/check-gh-token.sh`.
+ * The command path written into settings.json. Uses
+ * `$CLAUDE_PROJECT_DIR` (substituted by Claude Code at hook-dispatch
+ * time to the workspace root) rather than a workspace-relative path
+ * because Claude Code invokes hooks with cwd = the tool's spawn dir.
+ * If the agent has `cd`'d into a subdir before a Bash call, a
+ * relative path resolves against the subdir and the script is "not
+ * found" — generating noise and (worse) silently skipping the
+ * attribution-trap check (#140). See macf#232 for the bug report and
+ * macf-devops-toolkit `74c0af2` / macf-science-agent `cf7cbcf` /
+ * macf-testbed `1e3ee8e` for the precedent fix landings on workspace
+ * templates the day this was filed.
+ *
+ * Migration: `installGhTokenHook` re-writes the entry on every call,
+ * matching prior MACF entries by `check-gh-token.sh` basename
+ * (`isMacfManagedCommand`) — so the legacy relative-path form is
+ * dropped + replaced with the absolute form on the next `macf init` /
+ * `macf update` / `macf rules refresh` cycle. No legacy-pattern list
+ * is needed (unlike `MACF_LEGACY_FD_PATTERNS` which compares strings
+ * literally) because the basename matcher is path-agnostic.
  */
-export const MACF_HOOK_COMMAND = '.claude/scripts/check-gh-token.sh';
+export const MACF_HOOK_COMMAND = '$CLAUDE_PROJECT_DIR/.claude/scripts/check-gh-token.sh';
 
 /**
  * The hook filename used to identify MACF-managed entries on refresh.
