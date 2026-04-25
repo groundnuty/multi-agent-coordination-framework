@@ -15,6 +15,14 @@
       "tmux_bin": "tmux",
       "ssh_user": "ubuntu",
       "ssh_key_secret": "AGENT_SSH_KEY"
+    },
+    "devops-agent": {
+      "app_name": "macf-devops-agent",
+      "host": "100.124.163.105",
+      "tmux_session": "devops-agent",
+      "tmux_bin": "tmux",
+      "ssh_user": "ubuntu",
+      "ssh_key_secret": "AGENT_SSH_KEY"
     }
   },
   "label_to_status": {
