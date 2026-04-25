@@ -23,6 +23,18 @@ describe('installGhTokenHook', () => {
     rmSync(tmpRoot, { recursive: true, force: true });
   });
 
+  // Regression guard: per macf#232, a workspace-relative
+  // `.claude/scripts/check-gh-token.sh` resolves against the cwd of
+  // the spawned tool, which fails when the agent has cd'd into a
+  // subdir before a Bash call. The constant must use
+  // `$CLAUDE_PROJECT_DIR/...` (Claude Code substitutes that to the
+  // workspace root at hook-dispatch time) so the path is correct
+  // regardless of where Bash was invoked from.
+  it('MACF_HOOK_COMMAND uses $CLAUDE_PROJECT_DIR (cwd-independent absolute path)', () => {
+    expect(MACF_HOOK_COMMAND).toMatch(/^\$CLAUDE_PROJECT_DIR\//);
+    expect(MACF_HOOK_COMMAND).toContain('check-gh-token.sh');
+  });
+
   it('creates .claude/settings.json when missing, with the hook entry', () => {
     installGhTokenHook(tmpRoot);
 
@@ -122,6 +134,50 @@ describe('installGhTokenHook', () => {
     expect(macfEntries[0].hooks[0].command).toBe(MACF_HOOK_COMMAND);
     // --old-flag should be gone.
     expect(macfEntries[0].hooks[0].command).not.toContain('--old-flag');
+  });
+
+  // Per macf#232: workspaces created before the cwd-independent path
+  // change have a relative-path entry (`.claude/scripts/...`). On the
+  // next `macf update` the basename matcher (`isMacfManagedCommand`)
+  // recognizes the legacy entry as MACF-managed and replaces it with
+  // the current `$CLAUDE_PROJECT_DIR/...` form. No legacy-pattern
+  // list is needed (basename match is path-agnostic). Operator hooks
+  // unrelated to MACF stay untouched.
+  it('migrates legacy relative-path entry to $CLAUDE_PROJECT_DIR form (macf#232)', () => {
+    mkdirSync(join(tmpRoot, '.claude'), { recursive: true });
+    writeFileSync(settingsPath, JSON.stringify({
+      hooks: {
+        PreToolUse: [
+          {
+            matcher: 'Bash',
+            hooks: [{ type: 'command', command: '.claude/scripts/check-gh-token.sh' }],
+          },
+          // Operator-authored unrelated hook that must survive.
+          {
+            matcher: 'Edit',
+            hooks: [{ type: 'command', command: 'echo edited' }],
+          },
+        ],
+      },
+    }, null, 2));
+
+    installGhTokenHook(tmpRoot);
+
+    const s = JSON.parse(readFileSync(settingsPath, 'utf-8'));
+    // Exactly one MACF entry, on the current absolute form.
+    const macfEntries = s.hooks.PreToolUse.filter((e: { hooks: { command: string }[] }) =>
+      e.hooks.some((h) => h.command.includes('check-gh-token.sh')),
+    );
+    expect(macfEntries).toHaveLength(1);
+    expect(macfEntries[0].hooks[0].command).toBe(MACF_HOOK_COMMAND);
+    expect(macfEntries[0].hooks[0].command).toMatch(/^\$CLAUDE_PROJECT_DIR\//);
+
+    // Operator-authored hook preserved verbatim.
+    const operatorEntries = s.hooks.PreToolUse.filter((e: { matcher?: string }) =>
+      e.matcher === 'Edit',
+    );
+    expect(operatorEntries).toHaveLength(1);
+    expect(operatorEntries[0].hooks[0].command).toBe('echo edited');
   });
 
   it('handles malformed settings.json by failing loud (does not silently clobber)', () => {
