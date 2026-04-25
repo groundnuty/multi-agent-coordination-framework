@@ -266,19 +266,26 @@ describe('writeClaudeSh', () => {
   });
 });
 
-describe('otelTelemetryLines (macf#197)', () => {
-  it('emits all 3 Claude Code telemetry gates + the OTLP endpoint env by default', () => {
+describe('otelTelemetryLines (macf#197 + macf#245)', () => {
+  it('emits all telemetry gates + per-signal exporters + OTLP endpoint env by default', () => {
     const lines = otelTelemetryLines(sampleConfig, {});
     const joined = lines.join('\n');
-    // Three gates — any missing → zero traces emit per Claude Code docs.
+    // Master gate + traces-beta gate.
     expect(joined).toContain('export CLAUDE_CODE_ENABLE_TELEMETRY=1');
     expect(joined).toContain('export CLAUDE_CODE_ENHANCED_TELEMETRY_BETA=1');
+    // Per-signal exporters — each missing → that signal silently emits
+    // nothing per Claude Code docs. macf#245 surfaced the metrics+logs
+    // gap (only traces was wired pre-#245, so devops's stack saw zero
+    // metrics + logs from any agent despite the master gate being on).
     expect(joined).toContain('export OTEL_TRACES_EXPORTER=otlp');
+    expect(joined).toContain('export OTEL_METRICS_EXPORTER=otlp');
+    expect(joined).toContain('export OTEL_LOGS_EXPORTER=otlp');
     // Default endpoint.
     expect(joined).toContain('export OTEL_EXPORTER_OTLP_ENDPOINT="http://localhost:4318"');
     // Protocol.
     expect(joined).toContain('export OTEL_EXPORTER_OTLP_PROTOCOL=http/protobuf');
-    // Per-agent service name + resource attrs.
+    // Per-agent service name + resource attrs (semconv-compliant
+    // gen_ai.agent.* namespace per macf#245 alignment with devops).
     expect(joined).toContain('export OTEL_SERVICE_NAME="macf-agent-code-agent"');
     expect(joined).toContain(
       'export OTEL_RESOURCE_ATTRIBUTES="gen_ai.agent.name=code-agent,gen_ai.agent.role=code-agent,service.namespace=macf"',
