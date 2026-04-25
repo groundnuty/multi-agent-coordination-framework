@@ -21,8 +21,18 @@ export function formatNotifyContent(payload: NotifyPayload): FormattedNotify {
   if (payload.type === 'issue_routed') {
     if (payload.issue_number !== undefined) {
       const suffix = payload.title ? `: ${payload.title}` : '';
+      // Include `--repo <repo>` instruction when the producer
+      // supplied origin-repo (macf-actions v3.2.0+, #30). Multi-homed
+      // receivers otherwise fall back to cwd-repo on bare `gh issue
+      // view N`, which is rarely the routing source. The hint mirrors
+      // the route-by-mention path's MESSAGE template. When repo is
+      // absent (older producer), the trailing-period + Run-hint are
+      // omitted to keep the legacy single-sentence shape unchanged.
+      const repoSuffix = payload.repo
+        ? `. Run: gh issue view ${payload.issue_number} --repo ${payload.repo} --json title,body,labels,comments`
+        : '';
       return {
-        content: `Issue #${payload.issue_number} was routed to you${suffix}`,
+        content: `Issue #${payload.issue_number} was routed to you${suffix}${repoSuffix}`,
         issueNumber: payload.issue_number,
       };
     }

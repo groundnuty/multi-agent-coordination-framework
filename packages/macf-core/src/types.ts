@@ -31,6 +31,14 @@ export const NotifyPayloadSchema = z.object({
   title: z.string().optional(),
   source: z.string().optional(),
   message: z.string().optional(),
+  // Origin repo of the routing event in `<owner>/<name>` form.
+  // Added with macf-actions v3.2.0 (#30) so multi-homed receivers can
+  // emit `--repo <repo>` instructions in the surfaced notification —
+  // bare `gh issue view N` defaults to the agent's cwd-repo, which is
+  // rarely the routing-source repo when an agent serves multiple
+  // repos. Optional at the schema level for backward compat with
+  // producers on macf-actions <v3.2.0.
+  repo: z.string().optional(),
   // CI-completion variant fields (#122). All optional at the top
   // level to preserve backward compat with producers that only send
   // the base shape. Producers that want a type-narrowed shape for

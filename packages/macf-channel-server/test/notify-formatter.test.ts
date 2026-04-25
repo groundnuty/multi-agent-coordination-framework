@@ -46,6 +46,35 @@ describe('formatNotifyContent', () => {
       expect(result.content).toBe('An issue was routed to you');
       expect(result.issueNumber).toBeUndefined();
     });
+
+    // macf-actions#30: route-by-label payload now carries `repo`.
+    // Receivers render `--repo <repo>` into the surfaced message so
+    // multi-homed agents don't need to guess the origin repo.
+    it('appends gh issue view --repo hint when repo is present', () => {
+      const result = formatNotifyContent({
+        type: 'issue_routed',
+        issue_number: 7,
+        title: 'Demo title',
+        repo: 'groundnuty/macf-testbed',
+      });
+      expect(result.content).toBe(
+        'Issue #7 was routed to you: Demo title. ' +
+          'Run: gh issue view 7 --repo groundnuty/macf-testbed --json title,body,labels,comments',
+      );
+      expect(result.issueNumber).toBe(7);
+    });
+
+    it('appends repo hint even when title is absent', () => {
+      const result = formatNotifyContent({
+        type: 'issue_routed',
+        issue_number: 12,
+        repo: 'groundnuty/macf',
+      });
+      expect(result.content).toBe(
+        'Issue #12 was routed to you. ' +
+          'Run: gh issue view 12 --repo groundnuty/macf --json title,body,labels,comments',
+      );
+    });
   });
 
   describe('mention', () => {
