@@ -9,6 +9,31 @@ Plugin + routing-workflow changes ship from separate repos
 [`groundnuty/macf-actions`](https://github.com/groundnuty/macf-actions))
 and are not included here — pin them explicitly in each workspace.
 
+## [0.2.1] — 2026-04-26
+
+### Reliability
+- **Fallback-version regression for plugin manifest ([#260], fixes [#259])** —
+  `FALLBACK_VERSIONS.plugin = '0.1.0'` was sticking consumers on the
+  pre-DR-022 plugin manifest (`mcpServers.macf-agent.command: "node"`
+  against `${CLAUDE_PLUGIN_ROOT}/dist/server.js`) when the version-
+  resolver's network fetch fell through (anon GitHub API rate limit
+  during bootstrap). The v0.1.0 manifest fails on Claude Code spawn
+  with `Cannot find package '@modelcontextprotocol/sdk'` (deps land in
+  `CLAUDE_PLUGIN_DATA`, node looks from `PLUGIN_ROOT`). v0.2.0
+  marketplace plugin cut over to `npx -y @groundnuty/macf-channel-server`
+  (DR-022 npm-dispatch), but the fallback never moved with it.
+  Bumped to `'0.2.0'`. Empirical impact: testbed (`groundnuty/macf-testbed#229`)
+  blocked at Phase C; substrate workspaces (macf#257 Sub 3) unable to
+  bootstrap channel servers via `macf init`. Fix verified — tester-1
+  channel server spawned (port 9777, instance `2a7f82`) + registry
+  variable populated at `MACF_TESTBED_AGENT_MACF_TESTER_1_AGENT`
+  timestamp `2026-04-26T22:25:11Z`. Test (`init-versions.test.ts:49`)
+  updated to reference `FALLBACK_VERSIONS.plugin` constant instead of
+  hardcoding (lockstep pattern per macf#216).
+
+[#259]: https://github.com/groundnuty/macf/issues/259
+[#260]: https://github.com/groundnuty/macf/pull/260
+
 ## [Unreleased]
 
 Merged after the `v0.1.1` tag on 2026-04-20/21. Will be included in the
