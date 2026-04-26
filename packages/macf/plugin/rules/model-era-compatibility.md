@@ -63,7 +63,10 @@ This is a Claude Code-level behavior change, not a template-level rule change �
 When a new Claude version lands:
 
 1. **Audit the high-impact behavioral surfaces** above (instruction generalization, subagent dispatch, tool propensity, response length, safeguards) against the new version's defaults.
-2. **Capture observed differences** in this file as a new section dated `## Notes for <Model> <Version>+`.
+2. **Capture observed differences:**
+   - **If the new version's defaults match the existing latest section** (no behavioral shift on the catalogued surfaces), extend the existing section header to cover the new version (e.g., `## Notes for Opus 4.7+, 5.0+`). Document any newly-discovered surfaces inline.
+   - **If the new version's defaults differ** on any catalogued surface, add a NEW section dated `## Notes for <Model> <Version>+` AND mark the previous section with an end-of-applicability range (e.g., `## Notes for Opus 4.7+ (4.7 only — superseded by 5.0)`).
+   - This convention preserves the version-stack history without ambiguity about which sections apply to which model versions.
 3. **Update rule sets that depended on the old defaults.** Common targets:
    - Rules assuming "the model will figure out the broader scope" → make scope explicit
    - Rules depending on automatic subagent dispatch → name the subagent
