@@ -174,6 +174,25 @@ retry on flaky CI, etc.) and executes.
 If the PR author is blocked (e.g., offline), the reviewer may merge after
 an explicit hand-off comment — but that's exception, not default.
 
+### When the reviewer is absent or unreachable
+
+**Without an explicit LGTM from the reviewer, the implementer does NOT merge — even if waiting indefinitely.**
+
+When a PR has been open for an extended period without reviewer signal:
+
+1. **@mention the reviewer again** on the originating issue — they may have missed routing (silent-fallback hazards class; see `silent-fallback-hazards.md` Instance 3 for a concrete failure mode where routing succeeds at the API layer but the recipient never sees the prompt)
+2. **If still no response after a reasonable interval** (judgment call based on session pacing — minutes for fast-cycle work, an hour or more for deeper review): **escalate to the issue reporter** with `@<reporter>`
+3. **The reporter decides**:
+   - Re-route the review to a different reviewer
+   - Accept self-merge as exception (with explicit comment on the PR documenting why the LGTM gate was bypassed)
+   - Close the PR if the work is no longer needed
+
+**Self-merging without LGTM is a protocol violation**, except via the explicit reporter-sanctioned exception above. The only other sanctioned merge-without-explicit-LGTM path is the "PR author offline → reviewer merges with hand-off comment" exception described in the previous paragraph.
+
+**Why this rule exists.** The LGTM gate is structural — it ensures that someone other than the implementer has read the diff in context. Self-merge without LGTM bypasses that quality gate even if the work is correct. The escalation path preserves the gate's intent (someone else makes the merge decision) while providing a clear path forward when the registered reviewer is unreachable.
+
+This rule was surfaced 2026-04-26 during the macf-testbed#229 Phase C iter 4 sweep — a tester self-merged when its harness driver (acting as the de-facto reviewer) was killed mid-poll. The work was correct and the scenario AC was met, but the LGTM precondition wasn't. Codified here so the protocol covers reviewer-absence symmetrically with the existing implementer-absence case.
+
 ### Before merging
 
 Check `mergeStateStatus` via `gh pr view <N> --json mergeStateStatus`:
