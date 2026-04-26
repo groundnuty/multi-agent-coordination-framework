@@ -74,7 +74,19 @@ export interface ResolvedVersions {
 
 export const FALLBACK_VERSIONS: VersionSet = {
   cli: PACKAGE_VERSION,
-  plugin: '0.1.0',
+  // Bumped 2026-04-26 (testbed#229 + macf#259): v0.1.0 plugin manifest
+  // shipped `mcpServers.macf-agent.command: "node"` against
+  // `${CLAUDE_PLUGIN_ROOT}/dist/server.js`, which fails with
+  // `Cannot find package '@modelcontextprotocol/sdk'` when Claude Code's
+  // plugin loader spawns it (deps land in CLAUDE_PLUGIN_DATA, not
+  // PLUGIN_ROOT). v0.2.0 cut over to `npx -y @groundnuty/macf-channel-server`
+  // (DR-022 npm-dispatch), which sidesteps dep-resolution entirely.
+  // When the version-resolver's network fetch fails (anon GitHub API
+  // rate limit, 60 req/h — bites bootstrap scripts that don't preset
+  // GH_TOKEN before `macf init`), this fallback was sticking consumers
+  // on the broken v0.1.0. Bumped to '0.2.0' so the failure mode lands
+  // on a working plugin.
+  plugin: '0.2.0',
   actions: 'v1',
 };
 

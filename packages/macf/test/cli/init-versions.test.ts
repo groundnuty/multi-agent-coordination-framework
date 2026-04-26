@@ -10,6 +10,7 @@ import { tmpdir } from 'node:os';
 import { initAgent } from '../../src/cli/commands/init.js';
 import { readAgentConfig, agentConfigPath } from '../../src/cli/config.js';
 import { PACKAGE_VERSION } from '../../src/package-version.js';
+import { FALLBACK_VERSIONS } from '../../src/cli/version-resolver.js';
 
 function tempDir(): string {
   const dir = join(tmpdir(), `macf-init-versions-test-${Date.now()}-${Math.random().toString(36).slice(2)}`);
@@ -45,11 +46,14 @@ describe('macf init — version pinning', () => {
     // Assert against PACKAGE_VERSION (derived from package.json at
     // module load) rather than a string literal — keeps the test in
     // lockstep with `FALLBACK_VERSIONS.cli` automatically on every
-    // release bump, per macf#216.
+    // release bump, per macf#216. Same reasoning extended to plugin
+    // (macf#259 — fallback bumped 0.1.0 → 0.2.0 to land on a working
+    // npm-dispatch plugin manifest, not the broken `node` dispatch in
+    // v0.1.0).
     expect(config!.versions).toEqual({
       cli: PACKAGE_VERSION,
-      plugin: '0.1.0',
-      actions: 'v1',
+      plugin: FALLBACK_VERSIONS.plugin,
+      actions: FALLBACK_VERSIONS.actions,
     });
   });
 
