@@ -42,7 +42,7 @@ When `GH_TOKEN` is empty or invalid, `gh` falls through to `~/.config/gh/hosts.y
 **Fix:** fail loud. Never use `export GH_TOKEN=$(gh token generate ... | jq)` as a one-liner; it swallows errors. Pattern:
 ```bash
 # Assert token was generated AND has the bot prefix
-TOKEN=$(.claude/scripts/macf-gh-token.sh "$APP_ID" "$INSTALL_ID" "$KEY_PATH") || {
+TOKEN=$(.claude/scripts/macf-gh-token.sh --app-id "$APP_ID" --install-id "$INSTALL_ID" --key "$KEY_PATH") || {
   echo "FATAL: token-gen failed" >&2; exit 1
 }
 [ -n "$TOKEN" ] || { echo "FATAL: empty token" >&2; exit 1; }
@@ -118,7 +118,7 @@ The `macf-whoami.sh` helper canonicalizes this check:
 
 ```bash
 # Token acquisition — fails loud, token-prefix validated
-TOKEN=$(.claude/scripts/macf-gh-token.sh "$APP_ID" "$INSTALL_ID" "$KEY_PATH") \
+TOKEN=$(.claude/scripts/macf-gh-token.sh --app-id "$APP_ID" --install-id "$INSTALL_ID" --key "$KEY_PATH") \
   || { echo "FATAL: token gen failed" >&2; exit 1; }
 
 # Chain the op immediately so token doesn't linger in env
