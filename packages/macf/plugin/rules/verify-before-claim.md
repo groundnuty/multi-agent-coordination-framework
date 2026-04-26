@@ -80,7 +80,39 @@ Cluster to which this belongs: always prefer concrete artifact (diff, config, to
 
 ---
 
-## 5. When mis-attribution is discovered mid-thread
+## 5. Verify-at-every-hop — both sides apply
+
+When evidence flows through multiple agents (peer-A observes → peer-B cites → peer-C tracks), the verify-before-claim discipline applies **at each hop**, not just at the original observation. Two complementary species:
+
+### Emitter side — label hypotheses as hypothetical
+
+When proposing a mechanism, root-cause framing, or other interpretive claim into the substrate-record (issue thread, comment, memory, paper-trail entry), explicitly label hypotheses as hypothetical. Don't claim mechanism-as-fact when it's mechanism-as-hypothesis.
+
+The surface observation may be valid even when the named mechanism isn't; preserve the observation while making the proposal-status explicit:
+
+- **Hypothesis-as-hypothesis (good):** *"the mechanism appears to be X — anyone want to verify?"*
+- **Fact (only when verified):** *"the mechanism is X (verified via `gh api ... --jq ...` returning Y)"*
+- **Hypothesis-as-fact (avoid):** *"the mechanism is X."* — forces downstream peers to either re-derive from the source or propagate an unverified claim
+
+### Receiver side — re-verify before promoting
+
+When citing another agent's API-evidence claim into a higher-visibility tracking surface (tracking issue, synthesis comment, workbench rule, paper-trail entry), re-verify the literal data with a fresh tool call. Don't propagate citations.
+
+The data-quality buck stops at whoever promotes the claim into the higher-visibility surface, regardless of who originally observed it. Tracking-surface citations carry the misread forward indefinitely once promoted.
+
+### Worked examples
+
+**Receiver-side, observed 2026-04-25:** Peer-A reports *"PR#57 was created at 18:23:31Z, 5s before FAIL."* Peer-B writes a tracking issue update citing that timestamp without re-running `gh api .../pulls/57 --jq '.created_at'`. Peer-C re-verifies and finds the actual API returns `18:24:36Z` — 61s AFTER FAIL. The receiver-side discipline at peer-B's citation hop would have caught this.
+
+**Emitter-side, observed 2026-04-26:** Peer-A reports *"the window appears to count from `issue.createdAt`."* Peer-B reads the helper code and finds the deadline is calculated from `SECONDS + timeout` at helper-call time (post-merge). The mechanism was already merge-anchored; the symptom (FAIL fires too quickly) was real but the proposed mechanism was wrong. The emitter-side discipline would have framed peer-A's observation as *"appears to count from `createdAt` — anyone want to verify?"* rather than as asserted-fact.
+
+### Relationship to §1 (literal output)
+
+§1 covers single-hop verification (paste literal output from your own tool calls). §5 extends this to multi-hop propagation: each hop in a citation chain gets its own §1-style discipline. A citation without re-verification is the multi-hop equivalent of paraphrased close-comment output — same epistemic shape, larger blast radius.
+
+---
+
+## 6. When mis-attribution is discovered mid-thread
 
 If you post a comment and later realize it was attributed to the wrong identity (typically: chat-fallback to user because GH_TOKEN was the string "null"), **do not delete-and-repost**. Downstream references — @mentions to you, PR thread anchors, peer agents quoting the comment — break when the original is deleted.
 
