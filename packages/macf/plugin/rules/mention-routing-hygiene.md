@@ -103,3 +103,26 @@ Without the backtick convention, every describing use of a handle produces a fal
 The failure-mode was observed on `macf-testbed#9` and `#18` (2026-04-24): a single rules-loaded tester received three ambient routing pings across two scenario PRs, correctly disciplined each response with scope-preserving rationale, and escalated the third firing into a cross-session-commitment-tracking critique of the author. That sequence of responses was appropriate — but it was also three response turns that could have been prevented by one keystroke of backticks per handle reference in the PR bodies.
 
 The rule is cheap to apply, symmetric across the fleet, and eliminates a class of false-positive routing that otherwise compounds with every describing use of an agent handle.
+
+---
+
+## 7. Structural enforcement — `check-mention-routing.sh` PreToolUse hook
+
+Per `groundnuty/macf#244` + `#272` (closed via shared PR), this rule is also enforced by a Claude Code PreToolUse hook on `Bash` tool calls. The hook intercepts `gh issue comment` / `gh pr comment` / `gh issue close --comment` / `gh pr close --comment` invocations, parses the `--body` content, and blocks (`exit 2` with a stderr explanation) when raw `@<bot>[bot]` patterns appear in describing-context positions (mid-line, not backticked, not at line-start).
+
+The hook is the same shape as `check-gh-token.sh` (#140 attribution-trap defense) — bash command-type hook distributed via `macf init` / `macf update` / `macf rules refresh` to every workspace's `.claude/scripts/check-mention-routing.sh` with the entry registered in `.claude/settings.json` `hooks.PreToolUse`. Substrate workspaces, tester agents, CV consumers, and future MACF-consumer projects all get the protection uniformly.
+
+**Heuristic** (subject to refinement; documented for transparency):
+
+- Already wrapped in backticks (`` `@<bot>[bot]` ``) → allowed (canonical describing form §5)
+- At line-start (after optional whitespace, blockquote `>`, or list-item markers `* ` / `- ` / `1. `) → allowed (canonical addressing form §3)
+- Otherwise → BLOCK with stderr citing this rule + the offending line + the `MACF_SKIP_MENTION_CHECK=1` operator override
+
+**False-positive trade-off:** The heuristic leans toward false-positive over false-negative. Edge cases the heuristic flags:
+
+- Single-line bodies with addressing form right after `--body "` (no preceding newline) — operator should typically put addressing on its own line in multi-line bodies
+- Line-start mentions that are actually describing-with-bot-as-subject ("`@bot`'s response was clean") — these are uncommon; canonical idiom puts describing references inside prose
+
+The override (`MACF_SKIP_MENTION_CHECK=1`) handles legitimate cases. Per the `check-gh-token.sh` precedent, structural enforcement plus an escape hatch outperforms behavioral discipline alone.
+
+**Empirical motivation:** `groundnuty/macf-science-agent:research/2026-04-27-self-observed-canonical-rule-breach-pattern-analysis.md` recorded 6 self-observed routing-hygiene class breaches in 1.5 days. Codification of this rule (§1-6 above) caught ~80%; the structural hook closes the remaining 20%.
