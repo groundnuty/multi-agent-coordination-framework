@@ -9,6 +9,45 @@ Plugin + routing-workflow changes ship from separate repos
 [`groundnuty/macf-actions`](https://github.com/groundnuty/macf-actions))
 and are not included here — pin them explicitly in each workspace.
 
+## [0.2.5] — 2026-04-27
+
+### Added
+- **OTel metric instrumentation in channel-server ([#280], closes [#278]; T6 closure on [testbed#242])** —
+  `macf.notify_received_total{type, agent}` and `macf.notify_peer_total{event, delivered, agent}`
+  counters via a new `MeterProvider` bootstrap alongside the existing `TracerProvider` in `otel.ts`.
+  Same dynamic-import + `OTEL_EXPORTER_OTLP_ENDPOINT` env-gating + zero-cost-default doctrine (DR-021).
+  Increments fire on validated `/notify` requests (server side) and per attempted peer in `notify_peer`
+  broadcasts (client side; one increment per peer with `delivered=true|false` label for Prom rate
+  computation). `PeriodicExportingMetricReader` at default 60s cadence; shutdown handler force-flushes
+  both providers on SIGTERM/SIGINT. Closes the deferred T6 metrics AC from testbed#242 Phase D /
+  Claim 1b synthesis.
+- **PreToolUse hook for mention-routing-hygiene ([#275], closes [#272])** —
+  `check-mention-routing.sh` distributed via canonical scripts directory; blocks `gh issue comment`
+  / `gh pr comment` / `gh issue close --comment` invocations whose `--body` contains raw
+  `@<bot>[bot]` mentions in describing-context positions (mid-line, not backticked, not at
+  line-start). Implements `mention-routing-hygiene.md` §5 enforcement structurally per
+  science-agent's empirical motivation (6 routing-hygiene class breaches in 1.5 days; codification
+  caught ~80%; structural defense closes the 20% gap). Override: `MACF_SKIP_MENTION_CHECK=1`.
+  Bash command-type hook (not mcp_tool) per the substrate-compatibility decision rule documented
+  in DR-023 amendment ([#279]).
+
+### Documentation
+- **DR-023 substrate-compatibility amendment ([#279])** —
+  Promotes the architectural insight from PR #275 to DR-level decision rule: `PreToolUse`-blocking
+  hooks (UC-2 LGTM gate, UC-4 routing-leak) must use bash command-type form because mcp_tool hooks
+  fail open (non-blocking) when the named MCP server is unavailable — permanent state on substrate
+  workspaces, transient state on consumer workspaces. `Stop` / `SessionStart` best-effort hooks
+  (UC-1 notify_peer, UC-3 checkpoint) keep mcp_tool form because failure-to-fire only loses an
+  observability event there. UC-2 ([#270]) issue body reframed accordingly.
+
+[#270]: https://github.com/groundnuty/macf/issues/270
+[#272]: https://github.com/groundnuty/macf/issues/272
+[#275]: https://github.com/groundnuty/macf/pull/275
+[#278]: https://github.com/groundnuty/macf/issues/278
+[#279]: https://github.com/groundnuty/macf/pull/279
+[#280]: https://github.com/groundnuty/macf/pull/280
+[testbed#242]: https://github.com/groundnuty/macf-testbed/issues/242
+
 ## [0.2.4] — 2026-04-27
 
 ### Reliability
