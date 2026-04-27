@@ -70,14 +70,20 @@ export async function bootstrapOtel(): Promise<void> {
   // available via `npm install` unless opted into observability.
   let sdkNode: typeof import('@opentelemetry/sdk-trace-node');
   let sdkBase: typeof import('@opentelemetry/sdk-trace-base');
-  let exporter: typeof import('@opentelemetry/exporter-trace-otlp-proto');
+  let traceExporter: typeof import('@opentelemetry/exporter-trace-otlp-proto');
+  let sdkMetrics: typeof import('@opentelemetry/sdk-metrics');
+  let metricsExporter: typeof import('@opentelemetry/exporter-metrics-otlp-proto');
+  let metricsApi: typeof import('@opentelemetry/api');
   let resources: typeof import('@opentelemetry/resources');
   let semconv: typeof import('@opentelemetry/semantic-conventions');
   try {
-    [sdkNode, sdkBase, exporter, resources, semconv] = await Promise.all([
+    [sdkNode, sdkBase, traceExporter, sdkMetrics, metricsExporter, metricsApi, resources, semconv] = await Promise.all([
       import('@opentelemetry/sdk-trace-node'),
       import('@opentelemetry/sdk-trace-base'),
       import('@opentelemetry/exporter-trace-otlp-proto'),
+      import('@opentelemetry/sdk-metrics'),
+      import('@opentelemetry/exporter-metrics-otlp-proto'),
+      import('@opentelemetry/api'),
       import('@opentelemetry/resources'),
       import('@opentelemetry/semantic-conventions'),
     ]);
@@ -102,24 +108,46 @@ export async function bootstrapOtel(): Promise<void> {
     }),
   );
 
-  const provider = new sdkNode.NodeTracerProvider({
+  const tracerProvider = new sdkNode.NodeTracerProvider({
     resource,
-    spanProcessors: [new sdkBase.BatchSpanProcessor(new exporter.OTLPTraceExporter())],
+    spanProcessors: [new sdkBase.BatchSpanProcessor(new traceExporter.OTLPTraceExporter())],
   });
 
   // register() installs the provider as global + sets W3C trace-
   // context propagator as default. After this call,
   // `trace.getTracer('macf')` from anywhere in the process returns a
   // recording tracer bound to this provider.
-  provider.register();
+  tracerProvider.register();
 
-  // Clean shutdown: flush queued spans before process exits. Without
+  // Metrics provider — parallel to traces. Per testbed#242 T6 closure
+  // (groundnuty/macf#278): channel-server emits OTel metrics so paper-
+  // evidence pipelines have notify_received / notify_peer counter data
+  // alongside trace data. Same OTLP endpoint as traces (the collector
+  // routes /v1/metrics vs /v1/traces internally).
+  //
+  // PeriodicExportingMetricReader: collects + exports at a fixed
+  // cadence (default 60s). For the test scenarios + paper-evidence
+  // sweeps that complete in ~5min, the default cadence delivers data
+  // within the run window; no need to tune it.
+  const meterProvider = new sdkMetrics.MeterProvider({
+    resource,
+    readers: [
+      new sdkMetrics.PeriodicExportingMetricReader({
+        exporter: new metricsExporter.OTLPMetricExporter(),
+      }),
+    ],
+  });
+  metricsApi.metrics.setGlobalMeterProvider(meterProvider);
+
+  // Clean shutdown: flush both providers before process exits. Without
   // these handlers, in-flight batches are dropped on SIGTERM/SIGINT —
   // the last few seconds of coordination events never reach the
-  // collector.
+  // collector. For metrics specifically, the periodic reader's last
+  // unflushed batch (up to `exportIntervalMillis` worth of counter
+  // increments) would be lost without explicit shutdown.
   const shutdown = async (): Promise<void> => {
     try {
-      await provider.shutdown();
+      await Promise.all([tracerProvider.shutdown(), meterProvider.shutdown()]);
     } catch {
       // Silent — we're exiting regardless; don't spam stderr.
     }
