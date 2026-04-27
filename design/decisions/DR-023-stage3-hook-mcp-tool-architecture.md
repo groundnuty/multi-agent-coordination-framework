@@ -147,6 +147,26 @@ server.registerTool(
 
 The `Stop` event itself is non-blocking regardless of `isError` — `isError` only signals to the LLM for self-correction in the next turn (e.g., "all peers offline; falling back to GitHub-issue-mediated notification").
 
+**Wire payload — `peer_notification` NotifyType** (added macf#256 v0.2.3 per the same Option B refinement):
+
+The MCP tool's input is what the calling LLM sees; the wire payload sent to the peer's `/notify` endpoint uses the canonical `NotifyPayloadSchema` from `@groundnuty/macf-core`. To keep peer-notification traffic distinguishable from GitHub @mention routing in observability surfaces (Tempo `gen_ai.operation.name` dimension, channel-server tracing), `notify_peer` posts a dedicated `type: "peer_notification"` payload variant:
+
+```json
+{
+  "type": "peer_notification",
+  "source": "macf-tester-1-agent",
+  "event": "session-end",
+  "message": "optional human-readable",
+  "context": {"optional": "structured data"}
+}
+```
+
+The receiver discriminates via `type === 'peer_notification'` and renders via `notify-formatter.ts` (e.g., `"Peer macf-tester-1-agent reports event: session-end"`). `tracing.ts` `operationNameForNotifyType` maps this type to the `peer_notify` GenAI op-name, distinct from `notify` (status-update class) and `invoke_agent` (mention class).
+
+Initial v0.2.2 implementation reused `type: input.event` directly, which collided with the `/notify` endpoint's strict NotifyType enum (HTTP 400 validation error). Empirical macf#256 validation surfaced this; v0.2.3 fix dedicates the type and adds the `event` discriminator field.
+
+**Self-exclusion comparison must normalize** (added macf#256 v0.2.3): Registry's `list()` returns names in GitHub Variables canonical form (uppercased, hyphens-to-underscores per `toVariableSegment` in `@groundnuty/macf-core:registry/variable-name.ts`). The `notify_peer` self-exclusion check (single-peer + broadcast) MUST normalize both sides via `toVariableSegment` before comparison — raw-string comparison against canonical `selfAgentName` would never match → broadcasts loop back to self → triggers the `(server, tool, input)` deduplication cycle this DR's §"Cycle prevention" warns about. Empirical surfacing on testbed validation; codified in DR for future implementers.
+
 **Latency budget:** <500ms typical (well within `Stop` event's tolerance for non-interactive shutdown).
 
 **Why first:** lowest blast-radius. Failure mode is "peer doesn't get heads-up" — recoverable via polling. Validates the wire-level pattern with minimal risk surface.

@@ -70,5 +70,12 @@ export function operationNameForNotifyType(type: NotifyPayload['type']): string 
     case 'startup_check':
     case 'ci_completion':
       return 'notify';
+    // macf#256 / DR-023 UC-1: dedicated GenAI op-name for hook-driven
+    // peer notifications (notify_peer MCP tool). Distinct from `notify`
+    // (status-update class) and `invoke_agent` (mention class) so Phase
+    // D / Claim 1b cell-effect measurements can isolate framework-induced
+    // peer-traffic from GitHub-driven routing without conflation.
+    case 'peer_notification':
+      return 'peer_notify';
   }
 }

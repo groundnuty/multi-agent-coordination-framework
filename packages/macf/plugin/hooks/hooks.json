@@ -26,7 +26,7 @@
         "hooks": [
           {
             "type": "mcp_tool",
-            "server": "macf-agent",
+            "server": "plugin:macf-agent:macf-agent",
             "tool": "notify_peer",
             "input": {
               "event": "session-end"

@@ -12,6 +12,15 @@ export const NotifyTypeSchema = z.enum([
   // shoehorned the notification into `type: 'mention'` with
   // `source: 'ci_completion'` as a discriminator.
   'ci_completion',
+  // `peer_notification` landed with macf#256 — sent by the channel
+  // server's `notify_peer` MCP tool (DR-023 UC-1) when a hook fires
+  // a peer-to-peer event (e.g., `Stop` hook → `event: "session-end"`).
+  // Distinct from `mention` so observability surfaces (Tempo span
+  // attributes, Langfuse op-name dimension) keep peer-notification
+  // traffic separate from GitHub @mention routing — important for
+  // Phase D / Claim 1b cell-effect measurements where conflating the
+  // two would muddy framework-induced traffic signal.
+  'peer_notification',
 ]);
 
 export type NotifyType = z.infer<typeof NotifyTypeSchema>;
@@ -49,6 +58,12 @@ export const NotifyPayloadSchema = z.object({
   pr_url: z.string().url().optional(),
   conclusion: CheckSuiteConclusionSchema.optional(),
   failing_check_name: z.string().nullable().optional(),
+  // peer_notification variant fields (macf#256, DR-023 UC-1). Optional
+  // at the top level to preserve backward-compat with producers that
+  // only send other variants. Producers (the channel-server's
+  // `notify_peer` MCP tool) construct + validate against the narrower
+  // PeerNotificationPayloadSchema below before POST.
+  event: z.enum(['session-end', 'turn-complete', 'error', 'custom']).optional(),
 });
 
 export type NotifyPayload = z.infer<typeof NotifyPayloadSchema>;
@@ -78,6 +93,27 @@ export const CiCompletionPayloadSchema = z.object({
 });
 
 export type CiCompletionPayload = z.infer<typeof CiCompletionPayloadSchema>;
+
+/**
+ * Narrower schema for `peer_notification` payloads (macf#256, DR-023 UC-1).
+ * Producers (the channel server's `notify_peer` MCP tool) construct +
+ * validate against this before POST. Receivers parse via the wider
+ * `NotifyPayloadSchema` (backward-compat) and narrow via the
+ * `type === 'peer_notification'` discriminator.
+ *
+ * `event` distinguishes the triggering hook context (per DR-023 §UC-1
+ * inputSchema). `source` is the sending peer's agent name. `message`
+ * is optional human-readable; `context` is optional structured payload.
+ */
+export const PeerNotificationPayloadSchema = z.object({
+  type: z.literal('peer_notification'),
+  source: z.string().min(1),
+  event: z.enum(['session-end', 'turn-complete', 'error', 'custom']),
+  message: z.string().optional(),
+  context: z.record(z.string(), z.unknown()).optional(),
+});
+
+export type PeerNotificationPayload = z.infer<typeof PeerNotificationPayloadSchema>;
 
 // --- Health response (GET /health body) ---
 

@@ -69,6 +69,22 @@ export function formatNotifyContent(payload: NotifyPayload): FormattedNotify {
     return { content: 'CI completed' };
   }
 
+  if (payload.type === 'peer_notification') {
+    // macf#256 / DR-023 UC-1: rendered when the channel-server's
+    // notify_peer MCP tool POSTs to a peer's /notify. Source is the
+    // sending peer's agent name; event is the hook context that
+    // triggered the notification (session-end / turn-complete /
+    // error / custom). Prefer producer's `message` if present;
+    // otherwise synthesize a minimal "Peer X reports event Y" line.
+    if (payload.message) {
+      const prefix = payload.source ? `Peer ${payload.source}: ` : 'Peer notification: ';
+      return { content: `${prefix}${payload.message}` };
+    }
+    const sourcePart = payload.source ? `Peer ${payload.source}` : 'A peer';
+    const eventPart = payload.event ? ` reports event: ${payload.event}` : ' sent a notification';
+    return { content: `${sourcePart}${eventPart}` };
+  }
+
   // startup_check or any future variant falls through here
   return { content: payload.message ?? 'Pending issues found at startup' };
 }

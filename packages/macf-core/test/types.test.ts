@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import {
   NotifyPayloadSchema, NotifyTypeSchema, HealthResponseSchema,
   CiCompletionPayloadSchema, CheckSuiteConclusionSchema,
+  PeerNotificationPayloadSchema,
 } from '../src/types.js';
 
 describe('NotifyTypeSchema', () => {
@@ -10,6 +11,7 @@ describe('NotifyTypeSchema', () => {
     expect(NotifyTypeSchema.parse('mention')).toBe('mention');
     expect(NotifyTypeSchema.parse('startup_check')).toBe('startup_check');
     expect(NotifyTypeSchema.parse('ci_completion')).toBe('ci_completion');
+    expect(NotifyTypeSchema.parse('peer_notification')).toBe('peer_notification');
   });
 
   it('rejects unknown types', () => {
@@ -47,6 +49,66 @@ describe('NotifyPayloadSchema', () => {
     expect(() => NotifyPayloadSchema.parse({ type: 'mention', issue_number: -1 })).toThrow();
     expect(() => NotifyPayloadSchema.parse({ type: 'mention', issue_number: 0 })).toThrow();
     expect(() => NotifyPayloadSchema.parse({ type: 'mention', issue_number: 1.5 })).toThrow();
+  });
+});
+
+describe('PeerNotificationPayloadSchema (macf#256, DR-023 UC-1)', () => {
+  it('accepts minimal valid payload', () => {
+    const result = PeerNotificationPayloadSchema.parse({
+      type: 'peer_notification',
+      source: 'macf-tester-1-agent',
+      event: 'session-end',
+    });
+    expect(result.type).toBe('peer_notification');
+    expect(result.source).toBe('macf-tester-1-agent');
+    expect(result.event).toBe('session-end');
+  });
+
+  it('accepts full payload with optional fields', () => {
+    const result = PeerNotificationPayloadSchema.parse({
+      type: 'peer_notification',
+      source: 'macf-tester-1-agent',
+      event: 'turn-complete',
+      message: 'wrapped up issue #42',
+      context: { issue_number: 42 },
+    });
+    expect(result.message).toBe('wrapped up issue #42');
+    expect(result.context).toEqual({ issue_number: 42 });
+  });
+
+  it('accepts all four event values', () => {
+    for (const event of ['session-end', 'turn-complete', 'error', 'custom'] as const) {
+      const result = PeerNotificationPayloadSchema.parse({
+        type: 'peer_notification', source: 'a', event,
+      });
+      expect(result.event).toBe(event);
+    }
+  });
+
+  it('rejects unknown event', () => {
+    expect(() => PeerNotificationPayloadSchema.parse({
+      type: 'peer_notification', source: 'a', event: 'unknown-event',
+    })).toThrow();
+  });
+
+  it('rejects missing source', () => {
+    expect(() => PeerNotificationPayloadSchema.parse({
+      type: 'peer_notification', event: 'session-end',
+    })).toThrow();
+  });
+
+  it('parses cleanly via wider NotifyPayloadSchema discriminator', () => {
+    // Receivers parse via wider schema + discriminate on type. This
+    // mirrors the channel server's /notify dispatch path.
+    const wide = NotifyPayloadSchema.parse({
+      type: 'peer_notification',
+      source: 'macf-tester-1-agent',
+      event: 'session-end',
+      message: 'bye',
+    });
+    expect(wide.type).toBe('peer_notification');
+    expect(wide.source).toBe('macf-tester-1-agent');
+    expect(wide.event).toBe('session-end');
   });
 });
 

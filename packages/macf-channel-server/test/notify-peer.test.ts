@@ -57,13 +57,16 @@ function makeRegistry(opts: {
  * callback with res. We simulate the latter; res.resume() + res.on('end')
  * are called after a microtask.
  */
+/** Captures the most recent POST body for assertion in tests. */
+let lastPostedBody: string | undefined;
+
 function nextHttpsRespondsWith(statusCode: number): void {
   requestMock.mockImplementationOnce((...args: unknown[]) => {
     const cb = args[1] as ((res: EventEmitter & { statusCode: number; resume: () => void }) => void);
     const req = new EventEmitter() as EventEmitter & {
-      write: () => void; end: () => void; destroy: () => void;
+      write: (body: string) => void; end: () => void; destroy: () => void;
     };
-    req.write = () => undefined;
+    req.write = (body: string) => { lastPostedBody = body; };
     req.end = () => {
       const res = new EventEmitter() as EventEmitter & {
         statusCode: number; resume: () => void;
@@ -96,6 +99,47 @@ function nextHttpsErrorsWith(error: Error): void {
 describe('notify_peer tool', () => {
   beforeEach(() => {
     requestMock.mockReset();
+    lastPostedBody = undefined;
+  });
+
+  describe('payload shape (macf#256 Bug 2)', () => {
+    it('POSTs type=peer_notification (not the input.event)', async () => {
+      // Regression: v0.2.2 sent `type: input.event` (e.g., "session-end")
+      // which isn't a valid NotifyType → /notify HTTP 400. v0.2.3 sends
+      // the dedicated `peer_notification` type with hook-event in a
+      // separate `event` field.
+      const reg = makeRegistry({
+        get: { host: '127.0.0.1', port: 9000, type: 'permanent', instance_id: 'a', started: 't' },
+      });
+      nextHttpsRespondsWith(200);
+      await notifyPeer(makeDeps(reg), {
+        to: 'peer-a',
+        event: 'session-end',
+        message: 'tester-1 wrapped up',
+      });
+      expect(lastPostedBody).toBeDefined();
+      const body = JSON.parse(lastPostedBody!);
+      expect(body.type).toBe('peer_notification');
+      expect(body.event).toBe('session-end');
+      expect(body.source).toBe('self-agent');
+      expect(body.message).toBe('tester-1 wrapped up');
+    });
+
+    it('omits optional fields when not provided', async () => {
+      const reg = makeRegistry({
+        get: { host: '127.0.0.1', port: 9000, type: 'permanent', instance_id: 'a', started: 't' },
+      });
+      nextHttpsRespondsWith(200);
+      await notifyPeer(makeDeps(reg), {
+        to: 'peer-a',
+        event: 'turn-complete',
+      });
+      const body = JSON.parse(lastPostedBody!);
+      expect(body.type).toBe('peer_notification');
+      expect(body.event).toBe('turn-complete');
+      expect('message' in body).toBe(false);
+      expect('context' in body).toBe(false);
+    });
   });
 
   describe('single-peer mode (`to` provided)', () => {
@@ -173,6 +217,25 @@ describe('notify_peer tool', () => {
       expect(result.peers_attempted).toBe(0);
       expect(reg.get).not.toHaveBeenCalled(); // short-circuit before registry lookup
     });
+
+    it('self-exclusion uses toVariableSegment normalization (macf#256 Bug 1)', async () => {
+      // Regression: registry's list() returns names in GitHub Variables
+      // canonical form (uppercased, hyphens-to-underscores). Single-peer
+      // mode's `to` arg may also arrive in either form. Self-check must
+      // compare normalized strings.
+      const reg = makeRegistry({
+        get: { host: '127.0.0.1', port: 9000, type: 'permanent', instance_id: 'a', started: 't' },
+      });
+      // selfAgentName in deps is 'self-agent' (canonical); the variable-
+      // form equivalent would be 'SELF_AGENT'. Test that passing 'SELF_AGENT'
+      // also short-circuits as self.
+      const result = await notifyPeer(makeDeps(reg), {
+        to: 'SELF_AGENT',
+        event: 'session-end',
+      });
+      expect(result.peers_attempted).toBe(0);
+      expect(reg.get).not.toHaveBeenCalled();
+    });
   });
 
   describe('broadcast mode (`to` absent)', () => {
@@ -196,6 +259,27 @@ describe('notify_peer tool', () => {
       const result = await notifyPeer(makeDeps(reg), { event: 'session-end' });
       expect(result.peers_attempted).toBe(0);
       expect(requestMock).not.toHaveBeenCalled();
+    });
+
+    it('excludes self when registry returns variable-format name (macf#256 Bug 1)', async () => {
+      // Regression: real-world Registry.list() returns names like
+      // 'MACF_TESTER_1_AGENT' (uppercased + underscored per
+      // toVariableSegment) — comparison against the canonical
+      // selfAgentName 'self-agent' would never match without
+      // normalization, leaking self into the broadcast and triggering
+      // the (server, tool, input) deduplication cycle DR-023 warns about.
+      const reg = makeRegistry({
+        list: [
+          // Variable-format equivalent of 'self-agent' is 'SELF_AGENT'
+          { name: 'SELF_AGENT', info: { host: '127.0.0.1', port: 9000, type: 'permanent', instance_id: 'a', started: 't' } },
+          { name: 'PEER_B', info: { host: '127.0.0.1', port: 9001, type: 'permanent', instance_id: 'b', started: 't' } },
+        ],
+      });
+      nextHttpsRespondsWith(200);
+      const result = await notifyPeer(makeDeps(reg), { event: 'session-end' });
+      expect(result.peers_attempted).toBe(1); // only PEER_B; SELF_AGENT filtered as self
+      expect(result.peers_delivered).toBe(1);
+      expect(requestMock).toHaveBeenCalledTimes(1);
     });
 
     it('broadcasts to all non-self peers in parallel; aggregates delivered count', async () => {
