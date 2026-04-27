@@ -63,10 +63,27 @@ function registryEnvLines(cfg: MacfAgentConfig): string[] {
  *                                deployments without an observability
  *                                stack; avoids retry-spam to a
  *                                non-existent collector. See macf#197.
- *   MACF_OTEL_ENDPOINT=<url>   → override the default
- *                                `http://localhost:4318`. For central
- *                                obs hosts reachable over Tailscale /
- *                                other network paths.
+ *   MACF_OTEL_ENDPOINT=<url>   → bake a custom default into the
+ *                                generated `claude.sh` (template-time
+ *                                override). For central obs hosts
+ *                                reachable over Tailscale / other
+ *                                network paths.
+ *
+ * Default endpoint is `http://localhost:14318` per the canonical k3d
+ * cluster topology (`groundnuty/macf-devops-toolkit:CLAUDE.md` —
+ * `:14318` is the host-port-mapped serverlb endpoint; the
+ * pre-2026-04-25 compose-stack `:4318` is retired). Surfaced in
+ * groundnuty/macf#282 — CV-agents had zero telemetry for 34min because
+ * the previous default landed on the retired port.
+ *
+ * Run-time override: the GENERATED claude.sh emits
+ * `${OTEL_EXPORTER_OTLP_ENDPOINT:-<default>}` so a per-launch
+ * `OTEL_EXPORTER_OTLP_ENDPOINT=<url>` in the operator's shell wins
+ * over the baked default. Two-layer override pattern:
+ *   - Template-time (`MACF_OTEL_ENDPOINT` at `macf init` / `macf update`):
+ *     bakes a different default into claude.sh
+ *   - Run-time (`OTEL_EXPORTER_OTLP_ENDPOINT` before `./claude.sh`):
+ *     overrides the baked default for that launch
  *
  * Exported for unit tests.
  *
@@ -80,7 +97,7 @@ export function otelTelemetryLines(
     return [];
   }
 
-  const endpoint = env['MACF_OTEL_ENDPOINT'] ?? 'http://localhost:4318';
+  const endpoint = env['MACF_OTEL_ENDPOINT'] ?? 'http://localhost:14318';
 
   // The endpoint value gets embedded verbatim in a shell double-
   // quoted export. Reject chars that would break quoting or trigger
@@ -109,13 +126,18 @@ export function otelTelemetryLines(
     '# gap — only traces had the exporter set; metrics + logs were dark).',
     '# Omit the whole block by setting MACF_OTEL_DISABLED=1 at `macf update`',
     '# time — e.g. deployments without the obs stack running locally.',
-    '# Override endpoint via MACF_OTEL_ENDPOINT for central-collector setups.',
+    '# Endpoint override has two layers (groundnuty/macf#282):',
+    '#   - Template-time: MACF_OTEL_ENDPOINT=<url> at `macf init` /',
+    '#     `macf update` bakes a different default into this script',
+    '#   - Run-time: OTEL_EXPORTER_OTLP_ENDPOINT=<url> in the shell',
+    '#     BEFORE invoking ./claude.sh overrides the baked default',
+    '#     (per-launch knob; matches OTel canonical env var name)',
     'export CLAUDE_CODE_ENABLE_TELEMETRY=1',
     'export CLAUDE_CODE_ENHANCED_TELEMETRY_BETA=1',
     'export OTEL_TRACES_EXPORTER=otlp',
     'export OTEL_METRICS_EXPORTER=otlp',
     'export OTEL_LOGS_EXPORTER=otlp',
-    `export OTEL_EXPORTER_OTLP_ENDPOINT="${endpoint}"`,
+    `export OTEL_EXPORTER_OTLP_ENDPOINT="\${OTEL_EXPORTER_OTLP_ENDPOINT:-${endpoint}}"`,
     'export OTEL_EXPORTER_OTLP_PROTOCOL=http/protobuf',
     `export OTEL_SERVICE_NAME="macf-agent-${config.agent_name}"`,
     `export OTEL_RESOURCE_ATTRIBUTES="gen_ai.agent.name=${config.agent_name},gen_ai.agent.role=${config.agent_role},service.namespace=macf"`,
