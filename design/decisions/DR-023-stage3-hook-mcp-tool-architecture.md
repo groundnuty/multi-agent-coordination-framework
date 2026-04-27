@@ -167,6 +167,20 @@ Initial v0.2.2 implementation reused `type: input.event` directly, which collide
 
 **Self-exclusion comparison must normalize** (added macf#256 v0.2.3): Registry's `list()` returns names in GitHub Variables canonical form (uppercased, hyphens-to-underscores per `toVariableSegment` in `@groundnuty/macf-core:registry/variable-name.ts`). The `notify_peer` self-exclusion check (single-peer + broadcast) MUST normalize both sides via `toVariableSegment` before comparison — raw-string comparison against canonical `selfAgentName` would never match → broadcasts loop back to self → triggers the `(server, tool, input)` deduplication cycle this DR's §"Cycle prevention" warns about. Empirical surfacing on testbed validation; codified in DR for future implementers.
 
+**Observational-only delivery — peer_notification skips tmux wake** (added macf#267 v0.2.4): Receiver's `/notify` handler discriminates by payload type. For `type === 'peer_notification'`, the MCP push deposits the notification in channel state (visible via `/macf-status` + recipient's MCP channel content) but tmux wake is suppressed. For all other NotifyTypes (issue_routed, mention, startup_check, ci_completion), wake-on-receipt behavior is preserved.
+
+This stops a cross-agent loop class that the §"Cycle prevention" same-agent dedup doesn't cover: Stop hook on agent A → notify_peer broadcasts → agent B's tmux wakes → B's LLM processes input → completes turn → B's Stop hook fires → notify_peer back to A → loop. Each leg has its own `(server, tool, input)` tuple in its own MCP context; the platform dedup catches same-agent recursion but not cross-agent ping-pong. Empirical surfacing on testbed validation (~6s round-trip, 8 cycles in 50s observed before manual kill); v0.2.4 Option (d) fix structurally retires the loop class by making peer_notification observational rather than action-triggering.
+
+SessionStart polling-fallback (DR-020) catches missed notifications on next session start. The Stop hook becomes a passive notify (LLM sees the peer event in MCP channel content next time it queries channel state) rather than an active wake (no fresh turn on receipt).
+
+**Cross-channel-server trace correlation — sender-side OTel span + W3C traceparent propagation** (added macf#267 v0.2.4):
+
+- Sender wraps `notify_peer` body in `macf.tool.notify_peer` CLIENT-kind span (per `tracing.ts` `SpanNames.ToolNotifyPeer`). Span attributes: `gen_ai.operation.name=peer_notify`, `macf.notify.type=peer_notification`, `macf.notify.event`, `macf.notify.target`, `macf.notify.peers_attempted`, `macf.notify.peers_delivered`. Sender-side latency + outcome become observable.
+- Sender injects W3C traceparent header on outbound POST via `propagation.inject(context.active(), headers)`. Receiver's `/notify` handler already extracts via `propagation.extract(context.active(), req.headers)` (existing macf#194 behavior); receiver's `macf.server.notify_received` span becomes child of sender's `macf.tool.notify_peer` span.
+- Phase D / Claim 1b cell-effect measurement now sees full round-trip latency + parent-child trace relationship across channel-server boundary.
+
+**Sender-side timeout** (added macf#267 v0.2.4): per-peer `timeoutMs` is 5000ms (was 1000ms in v0.2.3). v0.2.3's 1s timeout cut off mid-receiver-wake (receiver's `/notify` handler did MCP push + tmux wake synchronously inside response; ~1050ms wake latency observed). With Option (d) suppressing tmux wake for peer_notification, response latency drops to ~5ms; 5s margin remains comfortable. Eliminates Finding 1's false-negative `peers_delivered=0` reports.
+
 **Latency budget:** <500ms typical (well within `Stop` event's tolerance for non-interactive shutdown).
 
 **Why first:** lowest blast-radius. Failure mode is "peer doesn't get heads-up" — recoverable via polling. Validates the wire-level pattern with minimal risk surface.

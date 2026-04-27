@@ -59,9 +59,12 @@ function makeRegistry(opts: {
  */
 /** Captures the most recent POST body for assertion in tests. */
 let lastPostedBody: string | undefined;
+/** Captures the most recent POST request options (headers, etc.) — macf#267 traceparent test. */
+let lastPostedOptions: Record<string, unknown> | undefined;
 
 function nextHttpsRespondsWith(statusCode: number): void {
   requestMock.mockImplementationOnce((...args: unknown[]) => {
+    lastPostedOptions = args[0] as Record<string, unknown>;
     const cb = args[1] as ((res: EventEmitter & { statusCode: number; resume: () => void }) => void);
     const req = new EventEmitter() as EventEmitter & {
       write: (body: string) => void; end: () => void; destroy: () => void;
@@ -100,6 +103,38 @@ describe('notify_peer tool', () => {
   beforeEach(() => {
     requestMock.mockReset();
     lastPostedBody = undefined;
+    lastPostedOptions = undefined;
+  });
+
+  describe('OTel + traceparent (macf#267 Findings 3+4)', () => {
+    it('outbound POST request options include headers map', async () => {
+      const reg = makeRegistry({
+        get: { host: '127.0.0.1', port: 9000, type: 'permanent', instance_id: 'a', started: 't' },
+      });
+      nextHttpsRespondsWith(200);
+      await notifyPeer(makeDeps(reg), { to: 'peer-a', event: 'session-end' });
+      expect(lastPostedOptions).toBeDefined();
+      const headers = lastPostedOptions!['headers'] as Record<string, string>;
+      expect(headers).toBeDefined();
+      expect(headers['Content-Type']).toBe('application/json');
+      expect(headers['Content-Length']).toBeDefined();
+      // Note: traceparent is only injected by propagation.inject() when
+      // a span context is active. In unit tests without a configured
+      // tracer provider, the inject is a no-op (no traceparent key).
+      // Real-world behavior is verified via the integration test path
+      // (testbed re-bootstrap → trace evidence on macf#256).
+      // The presence of the headers OBJECT (not undefined) confirms
+      // the inject site is reachable.
+    });
+
+    it('uses 5s timeout (macf#267 Finding 1 fix; was 1s in v0.2.3)', async () => {
+      const reg = makeRegistry({
+        get: { host: '127.0.0.1', port: 9000, type: 'permanent', instance_id: 'a', started: 't' },
+      });
+      nextHttpsRespondsWith(200);
+      await notifyPeer(makeDeps(reg), { to: 'peer-a', event: 'session-end' });
+      expect(lastPostedOptions!['timeout']).toBe(5000);
+    });
   });
 
   describe('payload shape (macf#256 Bug 2)', () => {

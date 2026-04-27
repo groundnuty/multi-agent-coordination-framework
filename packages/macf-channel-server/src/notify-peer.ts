@@ -30,6 +30,13 @@ import type { Registry, AgentInfo } from '@groundnuty/macf-core';
 import type { Logger } from '@groundnuty/macf-core';
 import { toVariableSegment } from '@groundnuty/macf-core';
 import { z } from 'zod';
+// macf#267 Findings 3+4: OTel span on outbound notify_peer + W3C
+// traceparent propagation to receiver. `propagation.inject()` writes
+// the traceparent + tracestate headers; `trace.getTracer()` provides
+// the per-call CLIENT span. See @opentelemetry/api 1.x propagation
+// API (canonical, verified at impl time).
+import { context, propagation, SpanKind, SpanStatusCode, trace } from '@opentelemetry/api';
+import { SpanNames, Attr, GenAiAttr } from './tracing.js';
 
 export const NotifyPeerInputSchema = {
   to: z.string().optional()
@@ -129,6 +136,18 @@ function postToPeer(
 ): Promise<{ readonly httpOk: boolean; readonly transportOk: boolean }> {
   return new Promise((resolve) => {
     const body = JSON.stringify(payload);
+    // macf#267 Finding 4: inject W3C traceparent on outbound POST so
+    // receiver's NotifyReceived span becomes a child of the calling
+    // agent's notify_peer span (cross-channel-server trace correlation).
+    // propagation.inject() writes into the headers carrier using the
+    // global propagator (ProvidedBy NodeTracerProvider in src/otel.ts).
+    // The carrier is a plain object; node:https consumes it as request
+    // headers verbatim.
+    const headers: Record<string, string> = {
+      'Content-Type': 'application/json',
+      'Content-Length': Buffer.byteLength(body).toString(),
+    };
+    propagation.inject(context.active(), headers);
     const req = httpsRequest(
       {
         hostname: peer.info.host,
@@ -143,10 +162,7 @@ function postToPeer(
         // mTLS ensures identity via cert chain, not hostname.
         rejectUnauthorized: true,
         checkServerIdentity: () => undefined,
-        headers: {
-          'Content-Type': 'application/json',
-          'Content-Length': Buffer.byteLength(body).toString(),
-        },
+        headers,
         timeout: timeoutMs,
       },
       (res) => {
@@ -183,52 +199,85 @@ function postToPeer(
 /**
  * Tool body — resolves peers, fans out, aggregates.
  *
- * Per-peer timeout is 1s (well under DR-023 Stop event's 500ms typical
- * budget for the whole tool call; broadcasts to N peers run in parallel
- * so wall-clock is max(per-peer-time), not sum).
+ * Per-peer timeout is 5s (macf#267 Finding 1 fix; was 1s in v0.2.3,
+ * which cut off mid-receiver-wake; comfortable margin even after
+ * Finding 2's Option (d) makes /notify return ~5ms for peer_notification).
+ *
+ * macf#267 Finding 3: wraps in OTel CLIENT span (`macf.tool.notify_peer`)
+ * with attributes (target, event, peers_attempted, peers_delivered) so
+ * sender-side latency + outcome are visible in Phase D / Claim 1b traces.
+ *
+ * macf#267 Finding 4: per-peer postToPeer injects W3C traceparent on
+ * outbound POST so receiver's NotifyReceived span becomes a child of
+ * this notify_peer span (cross-channel-server trace correlation).
  */
 export async function notifyPeer(
   deps: NotifyPeerDeps,
   input: NotifyPeerInput,
 ): Promise<NotifyPeerResult> {
-  const peers = await resolveTargetPeers(deps, input.to);
-  if (peers.length === 0) {
-    return {
-      delivered: false,
-      channel_state: 'offline',
-      peers_attempted: 0,
-      peers_delivered: 0,
-    };
-  }
+  const tracer = trace.getTracer('macf');
+  return tracer.startActiveSpan(
+    SpanNames.ToolNotifyPeer,
+    {
+      kind: SpanKind.CLIENT,
+      attributes: {
+        [GenAiAttr.System]: 'macf',
+        [GenAiAttr.OperationName]: 'peer_notify',
+        [Attr.NotifyType]: 'peer_notification',
+        [Attr.NotifyEvent]: input.event,
+        [Attr.NotifyTarget]: input.to ?? 'broadcast',
+      },
+    },
+    async (span) => {
+      try {
+        const peers = await resolveTargetPeers(deps, input.to);
+        if (peers.length === 0) {
+          span.setAttribute(Attr.PeersAttempted, 0);
+          span.setAttribute(Attr.PeersDelivered, 0);
+          span.setStatus({ code: SpanStatusCode.OK });
+          return {
+            delivered: false,
+            channel_state: 'offline' as const,
+            peers_attempted: 0,
+            peers_delivered: 0,
+          };
+        }
 
-  // macf#256 Bug 2 fix: payload `type` MUST match the receiver's
-  // /notify endpoint enum (NotifyTypeSchema in @groundnuty/macf-core
-  // types). The original v0.2.2 sent `type: input.event` (e.g.,
-  // "session-end"), which isn't a valid NotifyType → /notify HTTP 400.
-  // v0.2.3 sends the new dedicated `peer_notification` type (added to
-  // NotifyTypeSchema in macf-core in this PR per Option B), with the
-  // hook-event in a dedicated `event` field. Receiver discriminates
-  // via `type === 'peer_notification'` and renders the event in the
-  // notification (notify-formatter.ts).
-  const payload = {
-    type: 'peer_notification',
-    source: deps.selfAgentName,
-    event: input.event,
-    ...(input.message !== undefined ? { message: input.message } : {}),
-    ...(input.context !== undefined ? { context: input.context } : {}),
-  };
+        const payload = {
+          type: 'peer_notification',
+          source: deps.selfAgentName,
+          event: input.event,
+          ...(input.message !== undefined ? { message: input.message } : {}),
+          ...(input.context !== undefined ? { context: input.context } : {}),
+        };
 
-  const results = await Promise.all(
-    peers.map(p => postToPeer(deps, p, payload, 1000)),
+        const results = await Promise.all(
+          peers.map(p => postToPeer(deps, p, payload, 5000)),
+        );
+
+        const peers_delivered = results.filter(r => r.httpOk).length;
+        const peers_reachable = results.filter(r => r.transportOk).length;
+
+        span.setAttribute(Attr.PeersAttempted, peers.length);
+        span.setAttribute(Attr.PeersDelivered, peers_delivered);
+        span.setStatus({ code: SpanStatusCode.OK });
+
+        return {
+          delivered: peers_delivered > 0,
+          channel_state: peers_reachable > 0 ? 'online' as const : 'offline' as const,
+          peers_attempted: peers.length,
+          peers_delivered,
+        };
+      } catch (err) {
+        span.recordException(err as Error);
+        span.setStatus({
+          code: SpanStatusCode.ERROR,
+          message: err instanceof Error ? err.message : String(err),
+        });
+        throw err;
+      } finally {
+        span.end();
+      }
+    },
   );
-
-  const peers_delivered = results.filter(r => r.httpOk).length;
-  const peers_reachable = results.filter(r => r.transportOk).length;
-
-  return {
-    delivered: peers_delivered > 0,
-    channel_state: peers_reachable > 0 ? 'online' : 'offline',
-    peers_attempted: peers.length,
-    peers_delivered,
-  };
 }

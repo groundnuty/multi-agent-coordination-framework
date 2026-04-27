@@ -132,7 +132,22 @@ async function main(): Promise<void> {
     // turn, so the agent actually processes it. Fail-silent on any
     // path where tmux isn't available (no workspace dir, no tmux
     // session, helper missing, tmux command errors).
-    if (config.workspaceDir !== undefined) {
+    //
+    // macf#267 Finding 2 (Option d): peer_notification is observational
+    // only — MCP push deposits the notification in channel state for
+    // /macf-status visibility, but tmux wake is suppressed. This stops
+    // the cross-agent Stop-hook ping-pong loop: peer notifications no
+    // longer trigger fresh turns on receivers, so receivers don't fire
+    // their own Stop hooks in response. SessionStart polling-fallback
+    // (DR-020) catches notifications on next session start if needed.
+    // All other NotifyTypes (issue_routed, mention, startup_check,
+    // ci_completion) preserve existing wake-on-receipt behavior.
+    if (payload.type === 'peer_notification') {
+      logger.info('tmux_wake_skipped', {
+        reason: 'peer_notification_observational',
+        detail: 'macf#267 Option d — peer notifications skip tmux wake to prevent cross-agent Stop-hook loop',
+      });
+    } else if (config.workspaceDir !== undefined) {
       // Use the formatted content as the wake prompt — same text
       // Claude would see via the MCP channel, just delivered
       // through the input buffer path so it becomes an actual turn.
