@@ -9,6 +9,49 @@ Plugin + routing-workflow changes ship from separate repos
 [`groundnuty/macf-actions`](https://github.com/groundnuty/macf-actions))
 and are not included here — pin them explicitly in each workspace.
 
+## [0.2.2] — 2026-04-27
+
+### Features
+- **`notify_peer` MCP tool ([#265], implements [#256] Sub 2 of Stage 3 master tracker [#254])** —
+  new tool registered on `@groundnuty/macf-channel-server`'s MCP surface,
+  invokable from the plugin's `Stop` hook (`type: "mcp_tool"`). Resolves
+  peer agent's channel-server URL from the project registry, mTLS-POSTs
+  to peer's `/notify` HTTP endpoint. Supports both single-peer mode (`to`
+  argument) and broadcast mode (`to` absent → fan out to all registered
+  peers, exclude self for cycle prevention). Per DR-023 §UC-1; refines
+  the literal `to: z.string()` to `to: z.string().optional()` per the
+  Option A impl-time scope refinement (universal hook entry, no
+  per-workspace customization needed).
+- **`McpServer` API uplift in channel-server** — switched from low-level
+  `Server` to `McpServer` (canonical v1.x API per `@modelcontextprotocol/sdk`
+  1.29.0). `pushNotification` path preserved via the underlying
+  `mcp.server.notification` accessor for the Claude-Code-extension
+  `notifications/claude/channel` method. Same wire behavior; new tool
+  registration path enabled.
+- **Plugin `Stop` hook entry** in `packages/macf/plugin/hooks/hooks.json`
+  invoking `macf-agent:notify_peer` with `{event: "session-end"}`. Universal
+  across consumer workspaces (no per-agent `to:` customization needed).
+
+### Reliability
+- **Self-exclusion cycle prevention** for `notify_peer` in both single-peer
+  (`to === selfAgentName` short-circuit) and broadcast (registry.list filter)
+  modes. Blocks the `(server, tool, input)` deduplication cycle DR-023
+  §"Cycle prevention" warned about for universally-shipped hook inputs.
+
+### Tests
+- **789/789 unit + integration pass** (was 778; +10 new `notify-peer.test.ts`
+  cases covering single/broadcast modes + cycle prevention + transport
+  errors + partial-success aggregation; +1 `mcp.test.ts` for the new
+  `.mcp` accessor on the channel surface).
+
+### Docs
+- **DR-023 §UC-1 inline update** documenting the Option A refinement
+  (`to` optional + broadcast semantic + `isError` semantic asymmetry
+  between single-peer and broadcast modes).
+
+[#256]: https://github.com/groundnuty/macf/issues/256
+[#265]: https://github.com/groundnuty/macf/pull/265
+
 ## [0.2.1] — 2026-04-26
 
 ### Reliability
