@@ -36,6 +36,12 @@ export const SpanNames = {
   TmuxWakeDeliver: 'macf.tmux_wake.deliver',
   CertsVerifyChallenge: 'macf.certs.verify_challenge',
   CertsSign: 'macf.certs.sign',
+  // macf#267: outbound notify_peer span. CLIENT-kind (sender side).
+  // Wraps the httpsRequest call in notify-peer.ts; per-call OTel
+  // visibility for Phase D / Claim 1b cell-effect measurement +
+  // parent-child relationship to receiver's NotifyReceived span via
+  // W3C traceparent propagation.
+  ToolNotifyPeer: 'macf.tool.notify_peer',
 } as const;
 
 /** MACF-specific attribute keys (not covered by OTEL semconv). */
@@ -46,6 +52,14 @@ export const Attr = {
   RemoteCn: 'macf.remote_cn',
   TmuxTarget: 'macf.tmux.target',
   WakeOutcome: 'macf.wake.outcome',
+  // macf#267: notify_peer span attributes. Surface measurable Phase D /
+  // Claim 1b cell-effect dimensions (peers_attempted vs peers_delivered),
+  // identify the broadcast-vs-single-peer mode, and the triggering hook
+  // event for downstream slicing.
+  NotifyTarget: 'macf.notify.target',
+  NotifyEvent: 'macf.notify.event',
+  PeersAttempted: 'macf.notify.peers_attempted',
+  PeersDelivered: 'macf.notify.peers_delivered',
 } as const;
 
 /** GenAI semconv keys (experimental in v1.36+). */
