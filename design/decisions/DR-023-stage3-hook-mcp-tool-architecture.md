@@ -187,6 +187,8 @@ SessionStart polling-fallback (DR-020) catches missed notifications on next sess
 
 ### UC-2: Pre-merge LGTM gate (`PreToolUse` → `check_lgtm`)
 
+> **REFRAMED 2026-04-27 — see Amendment §"Substrate-compatibility" below.** The original mcp_tool framing in this section is **deprecated**. UC-2 is a PreToolUse-blocking hook → must use bash command-type form per the substrate-compat decision rule. The schema below documents the original mcp_tool framing for reference; the actually-shipped form will be a bash hook (`check-lgtm-gate.sh`) calling `gh api` directly. Tracker: macf#270.
+
 **Hook event:** `PreToolUse` with `if: "Bash(gh pr merge*)"` filter.
 
 **MCP tool:** `macf-channel:check_lgtm`.
@@ -235,11 +237,13 @@ server.registerTool(
 
 ### UC-4: Routing-leak detector (`PreToolUse` → `check_routing_hygiene`)
 
+> **REFRAMED + SHIPPED 2026-04-27 — see Amendment §"Substrate-compatibility" below.** UC-4 shipped via PR #275 (commit `9c5099d1`) as a **bash command-type PreToolUse hook** (`check-mention-routing.sh`), NOT as `type: "mcp_tool"`. Reframe driver: PreToolUse-blocking semantics + substrate-distribution + non-blocking-fail-mode of mcp_tool make bash form load-bearing. The mcp_tool framing below is deprecated for UC-4 specifically (general framework still applies for Stop hooks). Tracker: macf#272 (closed).
+
 **Hook event:** `PreToolUse` with `if: "Bash(gh issue comment *)"` and `if: "Bash(gh pr comment *)"`.
 
-**MCP tool:** `macf-lint:check_routing_hygiene` (hypothetical — would live in a separate `macf-lint` MCP server).
+**MCP tool (deprecated):** `macf-lint:check_routing_hygiene` (hypothetical — would live in a separate `macf-lint` MCP server).
 
-**Status:** **deferred.** The matcher-side fix in `groundnuty/macf-actions#33` is the structural solution for routing-leak prevention; the hook-side check is fallback enforcement. Defer until matcher-side defense gaps surface.
+**Actually-shipped form:** bash command-type PreToolUse hook at `packages/macf/scripts/check-mention-routing.sh`, distributed via canonical scripts directory; settings.json entry installed by extended `installGhTokenHook`. Override: `MACF_SKIP_MENTION_CHECK=1`.
 
 ## Architectural constraints (from re-verification)
 
@@ -353,8 +357,46 @@ Per macf#255 Sub 1's research-first AC + standing directive (memory `feedback_de
 - **`research/2026-04-25-stage3-hook-mcp-tool-architecture.md`** (`groundnuty/macf-science-agent`) — design doc + 4 use-case tradeoff record (corrected per §"Schema corrections")
 - **macf#241** — backlog tracker; this DR closes the architectural-primitive design surface
 
+## Amendment 2026-04-27 — Substrate-compatibility: bash-form vs mcp_tool selection rule
+
+**Reason for amendment:** PR #275 (macf#272) shipped UC-4 (routing-leak detector) as a **bash command-type PreToolUse hook**, NOT as `type: "mcp_tool"` per the original UC-4 framing. The reframe surfaced an architectural insight worth promoting from implementation note to DR-level decision rule; UC-2 (LGTM gate) needs the same reframe before code-agent picks up macf#270.
+
+**Architectural insight:**
+
+Per `feedback_substrate_workspaces_dont_use_macf.md` (operator directive 2026-04-27): substrate workspaces (science / code / devops) NEVER use the macf binary — `macf init` + `macf update` + `macf rules refresh` are all permanent-off-limit. The macf-agent MCP server is therefore not loaded on substrate, and mcp_tool hooks invoked there fail non-blocking ("MCP server not connected"); see "Failure-mode contract — non-blocking by default" §.
+
+The constraint is **broader than substrate-specific**: even on consumer workspaces (CV, testers, future macf-init'd projects), there's a startup window + occasional transient disconnect window where mcp_tool hooks fail open ("not connected" → exit 0). This means **mcp_tool hooks cannot reliably BLOCK** — when the failure-to-fire path is taken, the gated action proceeds without the check having run.
+
+**Decision rule:**
+
+| Hook event | Required semantics | Recommended form | Reason |
+|---|---|---|---|
+| `PreToolUse` (gating / blocking) | MUST reliably block on policy violation | **Bash command-type** | Non-blocking fail = silently allowed bypass |
+| `Stop` / `SessionStart` (best-effort) | OK to no-op when MCP unavailable | mcp_tool | Best-effort observability; missing notification = lost ping, not safety violation |
+| `PreToolUse` (telemetry-only) | OK to no-op when MCP unavailable | Either form | Same as Stop hooks |
+
+**Tactical rule:** if the hook's failure-to-fire would let an action complete that the policy intends to block, use bash form. If failure-to-fire only means "this observability event got lost," mcp_tool is fine.
+
+**Application across UCs:**
+
+| UC | Event | Original form (DR-023 v1) | Reframed form | Status |
+|---|---|---|---|---|
+| **UC-1** | Stop → notify_peer | mcp_tool | mcp_tool ✅ (unchanged) | **Shipped** v0.2.4 |
+| **UC-2** | PreToolUse → check_lgtm (blocking) | mcp_tool | **bash form** | macf#270 (issue body reframe pending) |
+| **UC-3** | Stop → checkpoint (best-effort) | mcp_tool | mcp_tool ✅ (unchanged) | macf#271 |
+| **UC-4** | PreToolUse → check_routing_hygiene (blocking) | mcp_tool | **bash form** | **Shipped** PR #275 (`9c5099d1`) as `check-mention-routing.sh` |
+
+**Distribution mechanics:** bash-form hooks ship via canonical `packages/macf/scripts/` directory, distributed to consumer workspaces by `macf init` / `macf update` / `macf rules refresh` (consumer-side; substrate excluded per directive). The `installGhTokenHook` function in `packages/macf/src/cli/settings-writer.ts` (kept-named for back-compat; now installs ALL canonical bash hooks) consumes the `MACF_HOOK_FILENAMES` array. Adding UC-2's eventual `check-lgtm-gate.sh` extends this array — no new framework plumbing required, mirrors PR #275's pattern.
+
+**For substrate fleet:** UC-2 + UC-4's structural defenses are observable via tester agents (which DO run macf init); substrate operates on rule-discipline + operator-correction loop. Per operator framing: *"all what you want will be made avilable in cv project and you can see all of that in action in tester agetns."* See `silent-fallback-hazards.md` Instance 3's two-tier defense entry for analogous framing.
+
+**Implications for future UC additions:** when proposing a new UC against this DR, the decision rule above is the first design question — "is this PreToolUse-blocking, or is this Stop / best-effort?" — before working out the MCP tool API. A blocking hook needs bash form; the rest of the design follows from that.
+
 ## Cross-references
 
+- **PR #275** (`groundnuty/macf#272`) — shipped UC-4 as bash form; first implementation of the bash-vs-mcp_tool decision rule
+- **`feedback_substrate_workspaces_dont_use_macf.md`** (private memory) — substrate-permanent-off-limit directive (2026-04-27)
+- **`silent-fallback-hazards.md` Instance 3** — two-tier defense (substrate vs non-substrate) precedent
 - **DR-015 (HTTP endpoints)** — amended to add §"Two surface types: HTTP endpoints + MCP tools" cross-referencing this DR
 - **DR-022 (channel-server-npm-npx)** — amended with cross-ref to this DR's tool surface
 - **DR-020 (notify-wake)** — amended to document RC IPC silent-fallback as known failure mode
