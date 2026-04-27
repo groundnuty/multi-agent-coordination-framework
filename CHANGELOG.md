@@ -9,6 +9,48 @@ Plugin + routing-workflow changes ship from separate repos
 [`groundnuty/macf-actions`](https://github.com/groundnuty/macf-actions))
 and are not included here — pin them explicitly in each workspace.
 
+## [0.2.3] — 2026-04-27
+
+### Reliability
+- **`notify_peer` self-exclusion normalization ([#266], fixes [#256] Bug 1)** —
+  `Registry.list()` returns names in GitHub Variables canonical form
+  (`MACF_TESTER_1_AGENT` — uppercased + hyphens-to-underscores per
+  `toVariableSegment`); `selfAgentName` is the canonical agent identity
+  (`macf-tester-1-agent`). Raw string comparison never matched →
+  broadcasts looped back to self → triggered the `(server, tool, input)`
+  deduplication cycle DR-023 §"Cycle prevention" warns about. Bug surfaced
+  during macf#256 v0.2.2 testbed validation (`peers_attempted=2` when
+  registry had only 1 peer + self). Fix normalizes BOTH sides via
+  `toVariableSegment` before comparison; applies to both single-peer
+  (`to` short-circuit) and broadcast (filter list) modes.
+
+### Features
+- **`peer_notification` NotifyType ([#266], fixes [#256] Bug 2)** —
+  v0.2.2 `notify_peer` POSTed `type: input.event` (e.g., `"session-end"`),
+  but the `/notify` endpoint validates against the closed `NotifyTypeSchema`
+  enum → HTTP 400 validation error. Per Option B (operator-authorized
+  on macf#256), `peer_notification` is added as a dedicated NotifyType
+  variant in `@groundnuty/macf-core` with a new narrow producer schema
+  `PeerNotificationPayloadSchema`. `notify_peer` now sends
+  `type: "peer_notification"`, `event: input.event`, `source: selfAgentName`.
+  `notify-formatter.ts` renders the new type (`"Peer X reports event: Y"`
+  or producer's `message`); `tracing.ts` `operationNameForNotifyType`
+  maps to `peer_notify` GenAI op-name (distinct from `notify` /
+  `invoke_agent` — preserves Phase D / Claim 1b cell-effect measurement
+  clarity).
+
+### Docs
+- **DR-023 §UC-1 inline amendment** documenting both refinements
+  (peer_notification payload variant + self-exclusion-must-normalize
+  discipline) so future implementers get the WHY, not just the WHAT.
+- **`packages/macf/plugin/hooks/hooks.json` server-reference fix** —
+  bare `"server": "macf-agent"` → `"server": "plugin:macf-agent:macf-agent"`
+  (Claude Code 2.1.x mounts plugin-provided MCP servers under that prefix;
+  bare key resolves only against global registry → "not connected" error).
+  Matches marketplace v0.2.2 fix.
+
+[#266]: https://github.com/groundnuty/macf/pull/266
+
 ## [0.2.2] — 2026-04-27
 
 ### Features
