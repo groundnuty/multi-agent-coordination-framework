@@ -7,6 +7,7 @@ import { NotifyPayloadSchema, SignRequestSchema } from '@groundnuty/macf-core';
 import type { NotifyPayload, SignRequest, HealthResponse, HttpsServer, Logger } from '@groundnuty/macf-core';
 import { PortExhaustedError, PortUnavailableError, HttpsServerError, HttpError } from '@groundnuty/macf-core';
 import { getTracer, SpanNames, Attr, GenAiAttr, operationNameForNotifyType } from './tracing.js';
+import { getNotifyReceivedCounter, MetricAttr } from './metrics.js';
 
 const MAX_BODY_BYTES = 64 * 1024; // 64KB
 export const PORT_RANGE_START = 8800;
@@ -197,6 +198,18 @@ export function createHttpsServer(config: {
         sendJson(res, 400, { error: `Validation failed: ${result.error.message}` });
         return;
       }
+
+      // testbed#242 T6 / macf#278: increment notify_received counter for
+      // every validated inbound /notify. Counts BEFORE handler runs so
+      // the metric reflects "what was received," not "what handler
+      // succeeded" — handler outcome is captured in the span's status
+      // code instead. Agent label sourced from MACF_AGENT_NAME env (set
+      // by claude.sh launcher); falls back to "unknown" if absent so
+      // the counter still emits in degraded-config scenarios.
+      getNotifyReceivedCounter().add(1, {
+        [MetricAttr.NotifyType]: result.data.type,
+        [MetricAttr.Agent]: process.env['MACF_AGENT_NAME'] ?? 'unknown',
+      });
 
       // macf#194: wrap onNotify in a SERVER span so child operations
       // (MCP push, tmux wake) attach to it via active-context

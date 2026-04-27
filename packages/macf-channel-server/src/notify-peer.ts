@@ -37,6 +37,7 @@ import { z } from 'zod';
 // API (canonical, verified at impl time).
 import { context, propagation, SpanKind, SpanStatusCode, trace } from '@opentelemetry/api';
 import { SpanNames, Attr, GenAiAttr } from './tracing.js';
+import { getNotifyPeerCounter, MetricAttr } from './metrics.js';
 
 export const NotifyPeerInputSchema = {
   to: z.string().optional()
@@ -257,6 +258,23 @@ export async function notifyPeer(
 
         const peers_delivered = results.filter(r => r.httpOk).length;
         const peers_reachable = results.filter(r => r.transportOk).length;
+
+        // testbed#242 T6 / macf#278: notify_peer counter increments
+        // ONCE per attempted peer (not once per call). delivered=true|
+        // false label distinguishes outcomes so Prometheus can compute
+        // delivery rate via `sum(rate(macf_notify_peer_total{delivered=
+        // "true"}[5m])) / sum(rate(macf_notify_peer_total[5m]))`.
+        // Counter increments BEFORE span finalization so OTel's
+        // periodic reader picks them up regardless of span outcome
+        // (consistent with the receiver-side notify_received pattern).
+        const peerCounter = getNotifyPeerCounter();
+        for (const result of results) {
+          peerCounter.add(1, {
+            [MetricAttr.Event]: input.event,
+            [MetricAttr.Delivered]: result.httpOk ? 'true' : 'false',
+            [MetricAttr.Agent]: deps.selfAgentName,
+          });
+        }
 
         span.setAttribute(Attr.PeersAttempted, peers.length);
         span.setAttribute(Attr.PeersDelivered, peers_delivered);
