@@ -280,8 +280,11 @@ describe('otelTelemetryLines (macf#197 + macf#245)', () => {
     expect(joined).toContain('export OTEL_TRACES_EXPORTER=otlp');
     expect(joined).toContain('export OTEL_METRICS_EXPORTER=otlp');
     expect(joined).toContain('export OTEL_LOGS_EXPORTER=otlp');
-    // Default endpoint.
-    expect(joined).toContain('export OTEL_EXPORTER_OTLP_ENDPOINT="http://localhost:4318"');
+    // Default endpoint — env-overridable form, default `:14318` per
+    // current k3d cluster topology (macf#282; pre-2026-04-25 default
+    // `:4318` was the retired compose-stack port). Run-time override
+    // via OTEL_EXPORTER_OTLP_ENDPOINT in the launching shell.
+    expect(joined).toContain('export OTEL_EXPORTER_OTLP_ENDPOINT="${OTEL_EXPORTER_OTLP_ENDPOINT:-http://localhost:14318}"');
     // Protocol.
     expect(joined).toContain('export OTEL_EXPORTER_OTLP_PROTOCOL=http/protobuf');
     // Per-agent service name + resource attrs (semconv-compliant
@@ -292,13 +295,45 @@ describe('otelTelemetryLines (macf#197 + macf#245)', () => {
     );
   });
 
-  it('honors MACF_OTEL_ENDPOINT override', () => {
+  it('honors MACF_OTEL_ENDPOINT template-time override (bakes custom default)', () => {
     const lines = otelTelemetryLines(sampleConfig, {
-      MACF_OTEL_ENDPOINT: 'http://obs.tailnet.ts.net:4318',
+      MACF_OTEL_ENDPOINT: 'http://obs.tailnet.ts.net:14318',
     });
     const joined = lines.join('\n');
-    expect(joined).toContain('export OTEL_EXPORTER_OTLP_ENDPOINT="http://obs.tailnet.ts.net:4318"');
+    // Template-time override bakes the custom URL into the default-side
+    // of the bash `${VAR:-default}` substitution, preserving run-time
+    // override via OTEL_EXPORTER_OTLP_ENDPOINT.
+    expect(joined).toContain('export OTEL_EXPORTER_OTLP_ENDPOINT="${OTEL_EXPORTER_OTLP_ENDPOINT:-http://obs.tailnet.ts.net:14318}"');
+    // No mention of the canonical default since we overrode it.
+    expect(joined).not.toContain('localhost:14318');
+    // No mention of the retired :4318 either (regression guard for macf#282).
+    expect(joined).not.toContain(':4318');
+  });
+
+  it('default endpoint is :14318 (current cluster), NOT :4318 (retired)', () => {
+    // macf#282 regression guard: the canonical claude-sh template
+    // hardcoded `:4318` (retired compose-stack port). CV agents had
+    // 34min of zero telemetry because of this. The fix moved the
+    // default to `:14318` (k3d serverlb host-port mapping per
+    // macf-devops-toolkit:CLAUDE.md).
+    const lines = otelTelemetryLines(sampleConfig, {});
+    const joined = lines.join('\n');
+    expect(joined).toContain('localhost:14318');
     expect(joined).not.toContain('localhost:4318');
+  });
+
+  it('emits env-overridable form for run-time OTEL_EXPORTER_OTLP_ENDPOINT override', () => {
+    // The bash `${OTEL_EXPORTER_OTLP_ENDPOINT:-<default>}` substitution
+    // means setting `OTEL_EXPORTER_OTLP_ENDPOINT=<url>` in the operator's
+    // shell BEFORE invoking ./claude.sh wins over the baked default.
+    // macf#282 fix: pre-2026-04-25 the export was unconditional
+    // (hardcoded value won regardless of operator env), which is what
+    // bit CV-agents.
+    const lines = otelTelemetryLines(sampleConfig, {});
+    const joined = lines.join('\n');
+    // Must contain the bash default-substitution syntax — not bare
+    // hardcoded value.
+    expect(joined).toMatch(/export OTEL_EXPORTER_OTLP_ENDPOINT="\$\{OTEL_EXPORTER_OTLP_ENDPOINT:-/);
   });
 
   it('omits the block entirely when MACF_OTEL_DISABLED=1', () => {
@@ -344,7 +379,7 @@ describe('generateClaudeSh integration with OTEL block (macf#197)', () => {
       expect(output).toContain('export CLAUDE_CODE_ENABLE_TELEMETRY=1');
       expect(output).toContain('export CLAUDE_CODE_ENHANCED_TELEMETRY_BETA=1');
       expect(output).toContain('export OTEL_TRACES_EXPORTER=otlp');
-      expect(output).toContain('export OTEL_EXPORTER_OTLP_ENDPOINT="http://localhost:4318"');
+      expect(output).toContain('export OTEL_EXPORTER_OTLP_ENDPOINT="${OTEL_EXPORTER_OTLP_ENDPOINT:-http://localhost:14318}"');
     } finally {
       if (backupDisabled !== undefined) process.env['MACF_OTEL_DISABLED'] = backupDisabled;
       if (backupEndpoint !== undefined) process.env['MACF_OTEL_ENDPOINT'] = backupEndpoint;
