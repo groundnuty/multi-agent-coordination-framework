@@ -57,3 +57,22 @@ Body (request): { "csr": "...", "agent_name": "new-agent", "project": "macf" }
 Body (challenge): { "challenge_id": "abc123", "instruction": "..." }
 Body (cert): { "cert": "-----BEGIN CERTIFICATE-----..." }
 ```
+
+## Two surface types: HTTP endpoints + MCP tools (added 2026-04-26)
+
+The original DR (2026-03-28) specified the channel server's only architectural surface as HTTP-mediated calls (`/notify`, `/health`, `/sign`). With Claude Code 2.1.118's `type: "mcp_tool"` hook surface (per DR-023), the channel server gains a **second surface type**: MCP tools invokable directly from in-process hooks.
+
+| Surface | Protocol | Caller context | Use cases |
+|---|---|---|---|
+| HTTP endpoints (this DR) | HTTPS + mTLS | Cross-process, cross-network | Routing Action → agent /notify; peer-agent /sign challenge-response; health-check polling |
+| MCP tools (DR-023) | MCP stdio | In-process (same Claude Code session) | Hook-driven invocation: notify_peer, check_lgtm, etc. |
+
+The two surfaces are **complementary, not redundant**:
+
+- Some operations have a thin MCP-tool wrapper around an HTTP /notify call (UC-1 `notify_peer` resolves the peer's channel-server URL, POSTs to its `/notify` endpoint)
+- Others are MCP-tool-only, since they only fire from in-process hooks (UC-2 `check_lgtm` reads PR state via `gh api` + returns decision JSON; no cross-network channel call needed)
+- The HTTP endpoints stay minimal + stable (3 endpoints); the MCP tool surface evolves with hook use cases (per DR-023)
+
+Both surfaces ship from the same npm package (`@groundnuty/macf-channel-server` per DR-022); the same process exposes both. No separate package, no separate process.
+
+Cross-ref DR-023 for MCP tool surface details + UC-1 through UC-4 design.

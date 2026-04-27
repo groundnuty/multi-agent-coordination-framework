@@ -388,3 +388,18 @@ The `v0.2.0-rc.0` → `v0.2.0-rc.1` bootstrap surfaced **four structural error c
 8. **Add a top-level `LICENSE` file** to the monorepo matching the `license` field in each package.json. npm warns (not errors) on publish when the package claims a license without a LICENSE file adjacent. Trivial hygiene; typical MIT template.
 
 **Why four cycles on this bootstrap:** MACF is the first `@groundnuty`-scoped publish. Every error class 1–4 is observable only through real-registry behavior; no dry-run or CI-time check catches them. Future frameworks published under the same scope skip errors 1–3 automatically because the workflow template, token, and package.json shape all exist; error 4 (shebang) is per-package and needs the `macf#220` regression guard to prevent.
+
+### Amendment K — MCP tool surface for hook invocation (added 2026-04-26)
+
+The original DR (2026-04-22) framed `@groundnuty/macf-channel-server` as the MCP server bridging HTTP `/notify` / `/health` / `/sign` endpoints (per DR-015) into Claude Code via MCP stdio. With Claude Code 2.1.118's `type: "mcp_tool"` hook surface (per DR-023), the channel server gains a new responsibility: **expose MCP tools for hook invocation**.
+
+**No new package.** Tools live in the same `@groundnuty/macf-channel-server` package — registered via `server.registerTool` (per `/modelcontextprotocol/typescript-sdk` v1.x). The same process that handles HTTP-mediated routing also handles in-process hook-driven tool calls.
+
+UC-1 (`notify_peer` Stop hook, per DR-023) is the first tool to ship. UC-2/3/4 ship in follow-up cycles.
+
+**No version-pinning consequence for the npm-dispatch flow.** `npx -y @groundnuty/macf-channel-server` continues to fetch the latest matching version; the tool surface is additive within the v0.x series. If breaking changes to the tool surface ever happen, the major-version bump (v1.x) carries the discontinuity per Amendment D's lock-step versioning rule.
+
+Cross-ref:
+
+- DR-015 amendment (two surface types: HTTP endpoints + MCP tools)
+- DR-023 (full mcp_tool hook architecture)

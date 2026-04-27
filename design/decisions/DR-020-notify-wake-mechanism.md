@@ -135,6 +135,48 @@ the source of truth for outstanding work).
 | Helper times out (>10s) | Returns false | `tmux_wake_failed reason=spawn_error error=...` |
 | Success | Delivered | `tmux_wake_delivered target=... prompt_length=...` |
 
+## Known failure mode: RC IPC silent-fallback (added 2026-04-26)
+
+**Empirical evidence:** 2× firings on real routes 2026-04-26 (`groundnuty/macf-actions#34` ~09:00Z + `groundnuty/macf-devops-toolkit#59` ~17:21Z). Cross-agent triangulated; both routes succeeded HTTP-200 at routing-Action; both `tmux_wake_delivered` log events fired (false-positive); recipient never received the prompt.
+
+### The hidden failure
+
+| Condition | Behavior | Log event | True outcome |
+|---|---|---|---|
+| Recipient TUI in Remote Control mode | Helper exits 0; `tmux send-keys` syscall succeeds | `tmux_wake_delivered` (**false-positive**) | Keystrokes silently bypassed; bound to RC SDK socket, not pane stdin |
+
+Helper-exit-0 is an insufficient invariant when the recipient's input handler is bound to a different IPC channel. This is `silent-fallback-hazards.md` Instance 3 — a class of hazards where API-boundary success doesn't guarantee semantic success.
+
+### Pattern C heartbeat detector (optional addition)
+
+Cheap fragility detector: sample `session_activity` timestamp pre/post `tmux send-keys`; if timestamp didn't advance within ~2s, log `tmux_wake_unconfirmed` warning. Implementation invokes tmux via the existing safe-spawn helpers (`execFileNoThrow` or equivalent); the conceptual flow:
+
+```
+PRE  ← spawnSync('tmux', ['display', '-p', '-t', target, '#{session_activity}'])
+spawnSync(scriptPath, [target, prompt], { timeout: 10_000 })
+sleep(2s)
+POST ← spawnSync('tmux', ['display', '-p', '-t', target, '#{session_activity}'])
+if POST <= PRE: logger.warn('tmux_wake_unconfirmed', { target, reason: 'session_activity_did_not_advance' })
+```
+
+The target argument is operator-trusted (config-derived per existing `resolveTmuxTarget()` flow); pass through `execFile`-style argv (no shell interpretation) per existing security stance in §Security below.
+
+This is a heuristic — `session_activity` advances on any pane I/O, including unrelated background output. False-positives possible (heartbeat looked like wake-success when something else also fired); false-negatives unlikely. Adding it improves observability without changing fail-silent policy.
+
+### Structural fix forward-pointer
+
+Stage 3 channel-server's MCP push (direct stdio between channel-server process + Claude Code process, per DR-002) bypasses the tmux layer entirely → not subject to this hazard. Substrate workspaces' migration to Stage 3 (macf#257 Sub 3) is the structural defense; tmux-wake stays as the consumer-side path until then.
+
+For UCs in DR-023 that depend on hook-fire reaching Claude Code reliably, this matters: hooks fire in-process inside the running session, NOT via tmux send-keys; the hook surface itself is RC-IPC-immune.
+
+Cross-ref:
+
+- `silent-fallback-hazards.md` Instance 3 (canonical-pending in substrate)
+- `insights/2026-04-26-remote-control-ipc-blocks-tmux-send-keys-routing.md` (in `groundnuty/macf-science-agent`)
+- DR-003 amendment (Stage 2 vs Stage 3 structural asymmetry)
+- DR-005 amendment (hidden online-but-routing-bypassed state)
+- DR-023 (mcp_tool hook surface; in-process; tmux-immune)
+
 ## Security
 
 **Shell injection surface:** zero. The prompt is passed as a discrete
