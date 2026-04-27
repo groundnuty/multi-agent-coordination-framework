@@ -180,3 +180,27 @@ The reusable workflow is **callable across repositories**. Consumers reference i
 - Migrating `groundnuty/macf` itself to the reusable workflow (Phase D, deferred)
 - Distributing composite actions separately (may emerge organically)
 - Marketplace listing (may add later for discoverability)
+
+---
+
+## Implementation status (2026-04-27 — `macf#257` audit)
+
+**Shipped in `groundnuty/macf-actions` v3.x.** `agent-router.yml` v3 is "registry-driven mTLS transport" per its own header — all three routing paths (`route-by-label`, `route-by-mention`, `route-by-ci-completion`) use the mTLS POST shape:
+
+```bash
+HTTP_CODE=$(curl --silent --show-error \
+  --max-time 30 -X POST "https://${HOST}:${PORT}/notify" \
+  ...)
+if [ "$CURL_RC" -eq 0 ] && [ "$HTTP_CODE" = "200" ]; then
+  echo "Routed issue #${ISSUE_NUMBER} to ${LABEL} via mTLS POST (HTTP 200)"
+```
+
+Pattern A result-invariant assertion (per `silent-fallback-hazards.md` Instance 3 defense): the HTTP 200 from the channel server is the receipt-acknowledgement check; the curl exit code alone is insufficient. SSH+tmux paths are gone from active code (only mentioned in legacy comments at line 42 noting v2.x fields are unread under v3).
+
+Address resolution per DR-005/DR-006/DR-007: `HOST`/`PORT` come from `MACF_<PROJECT>_AGENT_<NAME>` registry variable populated by the channel server on launch.
+
+**Remaining work for Stage 3 cutover (tracked in `macf#257`):**
+
+- Fleet cutover: each substrate agent runs `macf init` to enable channel server (operator-coordinated; per-agent self-migration per `macf#257` Phase B path 2)
+- Migration runbook: `design/stage2-to-stage3-migration.md` (Phase A deliverable)
+- `silent-fallback-hazards.md` Instance 3 status update post-observation-window (handled in `groundnuty/macf-science-agent`)
