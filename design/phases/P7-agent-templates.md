@@ -106,3 +106,30 @@ The `exp-*` agent templates intentionally **override** some of these universal p
 - Agent loads in Claude Code: `claude --agent macf-agent:code-agent`
 - Experiment variants: verify domain-only agent CAN'T reference code paths (test with mock issue)
 - Worker template: verify tagged comments include instance ID
+
+---
+
+## Implementation status (2026-04-27 — `macf#257` audit)
+
+**Shipped in `groundnuty/macf` v0.2.1 (canonical claude.sh template) + `groundnuty/macf-marketplace` v0.2.0+ (plugin).**
+
+`packages/macf/src/cli/claude-sh.ts` `writeClaudeSh()` writes a Stage-3-ready `claude.sh` that exports the full MACF_* env surface the channel server's `loadConfig` (in `@groundnuty/macf-channel-server` `dist/config.js`) requires:
+
+- `MACF_AGENT_NAME`, `MACF_PROJECT`, `MACF_AGENT_TYPE`, `MACF_AGENT_ROLE`
+- `MACF_CA_CERT`, `MACF_CA_KEY` (optional fallback per #196 — derived from CA_CERT if not set)
+- `MACF_AGENT_CERT`, `MACF_AGENT_KEY`
+- `MACF_HOST`, `MACF_ADVERTISE_HOST` (per `--advertise-host` flag; defaults `127.0.0.1`)
+- `MACF_LOG_PATH`, `MACF_DEBUG`
+- `MACF_TMUX_SESSION` (optional, per `--tmux-session` flag — for on-notify wake per DR-020)
+- `MACF_REGISTRY_TYPE` + (`MACF_REGISTRY_REPO`|`MACF_REGISTRY_ORG`|`MACF_REGISTRY_USER`)
+- OTel block: `CLAUDE_CODE_ENABLE_TELEMETRY`, `CLAUDE_CODE_ENHANCED_TELEMETRY_BETA`, three exporters, `OTEL_SERVICE_NAME`, `OTEL_RESOURCE_ATTRIBUTES` (gated by `MACF_OTEL_DISABLED`/`MACF_OTEL_ENDPOINT`)
+
+The launcher invokes `claude --plugin-dir "$SCRIPT_DIR/.macf/plugin" "$@"` — the `--plugin-dir` flag is what makes Claude Code load the macf-agent plugin's `mcpServers.macf-agent` entry, which spawns the channel server as an MCP stdio child. Verified end-to-end on tester-1 in `macf-testbed#229` Phase B (channel server spawned via `mcpServers.macf-agent` → registered `MACF_TESTBED_AGENT_MACF_TESTER_1_AGENT` → confirmed via Tempo trace inventory).
+
+`macf init` also fetches the macf-agent plugin from `groundnuty/macf-marketplace@v<version>` (default `v0.2.0+` per the FALLBACK_VERSIONS bump in `macf#260`) into `.macf/plugin/`. The plugin manifest's `mcpServers.macf-agent` uses `command: "npx", args: ["-y", "@groundnuty/macf-channel-server"]` (DR-022 npm-dispatch), so node module resolution works regardless of plugin-dir layout.
+
+**Remaining work for Stage 3 cutover (tracked in `macf#257`):**
+
+- Per-substrate-agent: run `macf init` to get the v0.2.1 templates + plugin v0.2.0 in place (operator-coordinated; per-agent self-migration per `macf#257` Phase B path 2)
+- Migration runbook: `design/stage2-to-stage3-migration.md` (Phase A deliverable)
+- Substrate workspaces with custom `claude.sh` (e.g., extra OTel resource attrs, content-emission flags, tmux/sg-docker wrappers): hand-merge customizations into the canonical post-init claude.sh per the runbook's step-2 + step-3 pattern (same approach `macf-testbed:scripts/bootstrap-tester.sh` uses for the loaded/bare tester templates per `macf-testbed#230`)
