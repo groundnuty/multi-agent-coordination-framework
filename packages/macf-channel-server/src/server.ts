@@ -237,6 +237,49 @@ async function main(): Promise<void> {
     logger,
   });
 
+  // macf#256 / DR-023 UC-1: register notify_peer MCP tool on the MCP
+  // channel BEFORE connecting (registerTool is a one-shot capability
+  // declaration; can't add tools post-connect). Tool resolves peer URLs
+  // via the registry, mTLS-POSTs to peer's /notify HTTP endpoint.
+  // Per Option A (impl-time refinement to DR-023 §UC-1, approved on
+  // macf#256): `to` field is OPTIONAL — when absent, broadcasts to all
+  // peers in the project registry (excluding self).
+  const { readFileSync } = await import('node:fs');
+  const { notifyPeer, NotifyPeerInputSchema, NotifyPeerOutputSchema } = await import('./notify-peer.js');
+  const notifyPeerDeps = {
+    registry,
+    selfAgentName: config.agentName,
+    mTlsClientCertPem: readFileSync(config.agentCertPath, 'utf8'),
+    mTlsClientKeyPem: readFileSync(config.agentKeyPath, 'utf8'),
+    caCertPem: readFileSync(config.caCertPath, 'utf8'),
+    logger,
+  };
+  mcp.mcp.registerTool(
+    'notify_peer',
+    {
+      description: 'Notify a peer agent of an event via the channel-server network. ' +
+        'If `to` is provided, POSTs to that peer\'s /notify. If absent, broadcasts to ' +
+        'all registered peers in the project (excluding self). Failure semantics are ' +
+        'observational + non-blocking per DR-023 §"Failure-mode contract" — `isError: true` ' +
+        'when peers were attempted but none delivered, signaling LLM self-correction; ' +
+        'the triggering Stop event proceeds regardless.',
+      inputSchema: NotifyPeerInputSchema,
+      outputSchema: NotifyPeerOutputSchema,
+    },
+    async (input) => {
+      const result = await notifyPeer(notifyPeerDeps, input);
+      return {
+        content: [{ type: 'text' as const, text: JSON.stringify(result) }],
+        // Spread into a fresh object so the SDK's open
+        // `{[x: string]: unknown}` index-signature constraint accepts
+        // it. NotifyPeerResult's `readonly` props make the strict-shape
+        // assignment fail otherwise.
+        structuredContent: { ...result },
+        isError: result.peers_attempted > 0 && result.peers_delivered === 0,
+      };
+    },
+  );
+
   // P1: Connect MCP channel
   await mcp.connect();
 

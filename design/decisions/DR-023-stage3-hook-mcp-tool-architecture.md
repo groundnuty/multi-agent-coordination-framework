@@ -101,7 +101,7 @@ server.registerTool(
   {
     description: 'Notify a peer agent of an event via the channel-server network',
     inputSchema: z.object({
-      to: z.string(),
+      to: z.string().optional(),       // optional per macf#256 Option A
       event: z.enum(['session-end', 'turn-complete', 'error', 'custom']),
       message: z.string().optional(),
       context: z.record(z.unknown()).optional(),
@@ -109,16 +109,43 @@ server.registerTool(
     outputSchema: z.object({
       delivered: z.boolean(),
       channel_state: z.enum(['online', 'offline']),
+      peers_attempted: z.number().int().nonnegative(),
+      peers_delivered: z.number().int().nonnegative(),
     }),
   },
   async ({ to, event, message, context }) => {
-    // Resolves peer's channel-server URL from registry, POSTs /notify
-    // Returns content + structuredContent
+    // If `to` is provided, POSTs to that single peer's /notify (1:1).
+    // If absent, looks up all peers via Registry.list(), excludes self
+    // (cycle-prevention per §"Cycle prevention" tuple-dedup), POSTs in
+    // parallel to each (1:N broadcast). Returns content + structuredContent
+    // with per-peer aggregate counts.
   }
 );
 ```
 
+**`to` field semantic — refined post-design via macf#256 Option A (impl-time):**
+
+- `to` is OPTIONAL. The plugin-shipped Stop hook entry in
+  `packages/macf/plugin/hooks/hooks.json` ships universally to all
+  consumer workspaces; per-agent `to: "<peer>"` customization is not
+  feasible because hook-input substitution (`${path}`) only resolves
+  from the hook's JSON input + `${cwd}` — no env-var path. So the
+  default Stop hook fires `notify_peer` without `to`, broadcasting
+  to all registered peers. Single-peer mode is available for any
+  caller (other hook entries, MCP-tool-using agent code, ad-hoc
+  invocation) that needs explicit targeting.
+- Self-exclusion: when broadcasting, the tool excludes the calling
+  agent's own registration to prevent the (server, tool, input)
+  deduplication cycle warned about in §"Cycle prevention".
+
 **Failure profile:** observational — `Stop` events ignore non-blocking errors by design. If channel-server unreachable or peer offline, notification is missed but session-end proceeds normally. Polling-fallback (existing pattern) catches missed notifications on next session-start.
+
+**`isError` semantic** (paper-trail observability for the LLM):
+
+- Single-peer mode (`to` provided): `isError: true` if the named peer didn't deliver (transport error, peer-rejected, peer-not-registered)
+- Broadcast mode (`to` absent): `isError: true` if `peers_attempted > 0 && peers_delivered === 0` (tried but all failed). `isError: false` if `peers_attempted === 0` (no peers registered — not a failure, just empty state) or if at least one peer delivered (partial success counts as overall success)
+
+The `Stop` event itself is non-blocking regardless of `isError` — `isError` only signals to the LLM for self-correction in the next turn (e.g., "all peers offline; falling back to GitHub-issue-mediated notification").
 
 **Latency budget:** <500ms typical (well within `Stop` event's tolerance for non-interactive shutdown).
 
