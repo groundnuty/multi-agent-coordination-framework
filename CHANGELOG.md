@@ -9,6 +9,62 @@ Plugin + routing-workflow changes ship from separate repos
 [`groundnuty/macf-actions`](https://github.com/groundnuty/macf-actions))
 and are not included here — pin them explicitly in each workspace.
 
+## [0.2.4] — 2026-04-27
+
+### Reliability
+- **Cross-agent loop in `notify_peer` (Option d, [#268], fixes [#267] Finding 2)** —
+  Stop hook on agent A → notify_peer broadcasts → agent B's tmux wakes
+  → B's LLM processes input → completes turn → B's Stop hook fires →
+  notify back to A → loop. ~6s round-trip; 8 cycles in 50s observed
+  during macf#256 v0.2.3 testbed validation before manual kill. The
+  DR-023 §"Cycle prevention" same-agent `(server, tool, input)` dedup
+  doesn't catch cross-agent ping-pong (each leg has its own MCP context).
+  Fix: `server.ts` `onNotify` discriminates by payload type. For
+  `type === 'peer_notification'` → MCP push only, tmux wake skipped.
+  All other NotifyTypes preserve current wake-on-receipt behavior.
+  Recipient SEES the notification (channel state via `/macf-status`)
+  but doesn't auto-respond as a fresh turn → no Stop hook firing in
+  response → no notify back. SessionStart polling-fallback (DR-020)
+  catches missed notifications next session start.
+- **Sender timeout 1s → 5s ([#268], fixes [#267] Finding 1)** —
+  v0.2.3's 1s `notify_peer` timeout cut off mid-receiver-wake (~1050ms
+  total per Tempo trace `6a4764e42ac5...` — `tmux_wake_delivered` alone
+  was 1044ms). Sender reported `peers_delivered=0` even when delivery
+  succeeded → unreliable structuredContent metrics. Bumped to 5s;
+  Option d's tmux-wake-skip drops /notify response to ~5ms, so 5s is
+  comfortable margin even for any future receiver-path latency.
+
+### Features
+- **Sender-side OTel span `macf.tool.notify_peer` ([#268], fixes [#267] Finding 3)** —
+  v0.2.3 `notify_peer` invoked `httpsRequest` directly without OTel
+  instrumentation → sender side invisible in Tempo (only receiver's
+  `macf.server.notify_received` appeared). Fix: wrap body in
+  `tracer.startActiveSpan(SpanNames.ToolNotifyPeer, CLIENT, ...)`. Span
+  attributes: `gen_ai.operation.name=peer_notify`, `macf.notify.type`,
+  `macf.notify.event` (session-end | turn-complete | error | custom),
+  `macf.notify.target` (peer-name | "broadcast"),
+  `macf.notify.peers_attempted`, `macf.notify.peers_delivered`. Phase
+  D / Claim 1b cell-effect dimensions are now sliceable.
+- **W3C traceparent propagation cross-channel-server ([#268], fixes [#267] Finding 4)** —
+  v0.2.3 outbound POST had no traceparent header → receiver's
+  `notify_received` span was a ROOT (no parent) → cross-trace correlation
+  impossible. Fix: `notify-peer.ts` `postToPeer` injects via
+  `propagation.inject(context.active(), headers)` before sending.
+  Receiver-side extract was already in place from macf#194
+  (`https.ts` calls `propagation.extract(context.active(), req.headers)`
+  + uses as parent context for `notify_received` span). Result:
+  receiver's `NotifyReceived` becomes a child of sender's `notify_peer`
+  span; full cross-channel-server parent-child trace relationship.
+
+### Docs
+- **DR-023 §UC-1 inline amendment** documenting all 4 refinements
+  (Option d observational semantic, cross-agent loop class, sender-side
+  OTel span emission, traceparent propagation flow + 5s timeout
+  rationale) — future implementers get the WHY for each post-hoc fix.
+
+[#267]: https://github.com/groundnuty/macf/issues/267
+[#268]: https://github.com/groundnuty/macf/pull/268
+
 ## [0.2.3] — 2026-04-27
 
 ### Reliability
