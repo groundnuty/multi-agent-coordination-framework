@@ -28,6 +28,7 @@
 import { request as httpsRequest } from 'node:https';
 import type { Registry, AgentInfo } from '@groundnuty/macf-core';
 import type { Logger } from '@groundnuty/macf-core';
+import { toVariableSegment } from '@groundnuty/macf-core';
 import { z } from 'zod';
 
 export const NotifyPeerInputSchema = {
@@ -80,20 +81,34 @@ export interface NotifyPeerResult {
  * to all-but-self otherwise. Always excludes self to prevent the
  * (server, tool, input) deduplication cycle DR-023 §"Cycle prevention"
  * warns about.
+ *
+ * Self-exclusion comparison normalizes via `toVariableSegment` because
+ * Registry.list() returns names in GitHub-Variables-canonical form
+ * (uppercased, hyphens-to-underscores per
+ * `@groundnuty/macf-core:registry/variable-name.ts`), while
+ * `selfAgentName` is the canonical agent identity (lowercased,
+ * hyphenated). Comparing raw strings would never match → broadcasts
+ * would loop back to self, triggering the dedup-cycle the §"Cycle
+ * prevention" decision tree warns about. Bug surfaced in macf#256
+ * empirical validation; fix scoped here per Option B.
  */
 async function resolveTargetPeers(
   deps: NotifyPeerDeps,
   to: string | undefined,
 ): Promise<ReadonlyArray<{ readonly name: string; readonly info: AgentInfo }>> {
+  const selfNormalized = toVariableSegment(deps.selfAgentName);
   if (to !== undefined && to !== '') {
-    if (to === deps.selfAgentName) return [];
+    if (toVariableSegment(to) === selfNormalized) return [];
     const info = await deps.registry.get(to);
     if (info === null) return [];
     return [{ name: to, info }];
   }
-  // Broadcast: list all registered peers, exclude self
+  // Broadcast: list all registered peers, exclude self. Normalize BOTH
+  // sides since Registry.list() can return names in either canonical
+  // or variable form depending on the GitHubVariablesClient impl —
+  // safest comparison normalizes both.
   const all = await deps.registry.list('');
-  return all.filter(p => p.name !== deps.selfAgentName);
+  return all.filter(p => toVariableSegment(p.name) !== selfNormalized);
 }
 
 /**
@@ -186,9 +201,19 @@ export async function notifyPeer(
     };
   }
 
+  // macf#256 Bug 2 fix: payload `type` MUST match the receiver's
+  // /notify endpoint enum (NotifyTypeSchema in @groundnuty/macf-core
+  // types). The original v0.2.2 sent `type: input.event` (e.g.,
+  // "session-end"), which isn't a valid NotifyType → /notify HTTP 400.
+  // v0.2.3 sends the new dedicated `peer_notification` type (added to
+  // NotifyTypeSchema in macf-core in this PR per Option B), with the
+  // hook-event in a dedicated `event` field. Receiver discriminates
+  // via `type === 'peer_notification'` and renders the event in the
+  // notification (notify-formatter.ts).
   const payload = {
-    type: input.event,
+    type: 'peer_notification',
     source: deps.selfAgentName,
+    event: input.event,
     ...(input.message !== undefined ? { message: input.message } : {}),
     ...(input.context !== undefined ? { context: input.context } : {}),
   };
