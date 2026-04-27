@@ -1,9 +1,9 @@
 name: Agent Router
 
-# Delegates to the reusable workflow in groundnuty/macf-actions@v1.3.0
+# Delegates to the reusable workflow in groundnuty/macf-actions@v1.3.1
 # (see https://github.com/groundnuty/macf-actions for source).
 #
-# Pinned to immutable v1.3.0 rather than the floating @v1 tag so the
+# Pinned to immutable v1.3.1 rather than the floating @v1 tag so the
 # routing infrastructure macf itself depends on doesn't move without
 # an explicit PR here. When macf-actions cuts a new release, upgrade
 # the `uses:` ref by a dedicated PR on this repo — that gives the
@@ -36,5 +36,5 @@ permissions:
 
 jobs:
   route:
-    uses: groundnuty/macf-actions/.github/workflows/agent-router.yml@v1.3.0
+    uses: groundnuty/macf-actions/.github/workflows/agent-router.yml@v1.3.1
     secrets: inherit
