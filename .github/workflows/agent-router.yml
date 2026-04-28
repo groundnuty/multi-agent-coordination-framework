@@ -36,5 +36,5 @@ permissions:
 
 jobs:
   route:
-    uses: groundnuty/macf-actions/.github/workflows/agent-router.yml@v1.3.1
+    uses: groundnuty/macf-actions/.github/workflows/agent-router.yml@v3.2.0
     secrets: inherit
