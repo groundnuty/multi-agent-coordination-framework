@@ -113,12 +113,46 @@ program
 
 program
   .command('update')
-  .description('Bump pinned versions in macf-agent.json (cli, plugin, actions)')
-  .option('--all', 'Bump all components non-interactively', false)
-  .option('--cli', 'Bump only the CLI pin', false)
-  .option('--plugin', 'Bump only the plugin pin', false)
-  .option('--actions', 'Bump only the actions pin', false)
-  .option('--yes', 'Skip confirmation prompts', false)
+  .description(
+    'Refresh canonical assets + bump pinned versions. ' +
+    'ALWAYS regenerates claude.sh, coordination rules, helper scripts, ' +
+    'sandbox + hook entries from the installed CLI (template-evolution sync; ' +
+    'independent of the --cli/--plugin/--actions selection). The flags below ' +
+    'gate ONLY which version pins in macf-agent.json get bumped + when the ' +
+    'plugin dir gets re-fetched. See `update --help` notes below for details.',
+  )
+  .addHelpText('after', `
+Important — what gets refreshed UNCONDITIONALLY (independent of --cli/--plugin/--actions):
+  - .claude/scripts/        helper scripts (macf-gh-token.sh, check-gh-token.sh, etc.)
+  - .claude/rules/          coordination.md + other canonical rules
+  - .claude/settings.json   gh-token PreToolUse hook + plugin-skill permissions +
+                             sandbox.filesystem.allowRead + sandbox.excludedCommands
+                             entries (merge-preserving — operator-authored entries kept)
+  - claude.sh               regenerated from the installed CLI's launcher template
+                             so template-evolution lands without re-running \`macf init\`
+                             (e.g., #60 added --plugin-dir; #283 fixed retired :4318
+                             OTLP endpoint). The generated file carries a managed-file
+                             warning header.
+
+What the flags actually control:
+  --cli       bump versions.cli pin to latest
+  --plugin    bump versions.plugin pin + re-fetch .macf/plugin/ if pin bumped
+  --actions   bump versions.actions pin to latest
+  --all       bump all three non-interactively
+  --yes       skip per-pin confirmation prompts
+  --dry-run   show diff + would-bump list, write nothing
+
+Implication for reproducible bootstrap (cv-e2e-test, harness pinning, etc.):
+  The CLI BINARY's installed version determines what claude.sh template lands.
+  Pin via \`npx -y @groundnuty/macf@<version> update\` instead of bare \`macf update\`
+  if the bootstrap needs to use a specific binary version (vs whatever brew/system
+  has). See macf#291 for the surfacing context.
+`)
+  .option('--all', 'Bump all version pins non-interactively', false)
+  .option('--cli', 'Bump only the CLI version pin', false)
+  .option('--plugin', 'Bump only the plugin version pin (+ re-fetch .macf/plugin/ if bumped)', false)
+  .option('--actions', 'Bump only the macf-actions version pin', false)
+  .option('--yes', 'Skip per-pin confirmation prompts', false)
   .option('--dry-run', 'Show the diff but do not write the config', false)
   .option('--dir <path>', 'Project directory (defaults to auto-discovery from cwd)')
   .action(async (opts) => {
