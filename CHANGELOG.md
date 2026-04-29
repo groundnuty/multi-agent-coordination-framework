@@ -9,6 +9,30 @@ Plugin + routing-workflow changes ship from separate repos
 [`groundnuty/macf-actions`](https://github.com/groundnuty/macf-actions))
 and are not included here — pin them explicitly in each workspace.
 
+## [0.2.6] — 2026-04-29
+
+### Fixed
+- **Canonical claude-sh.ts hardcoded retired :4318 OTLP endpoint ([#283], closes [#282])** —
+  `packages/macf/src/cli/claude-sh.ts` produced a `claude.sh` template that hardcoded
+  `OTEL_EXPORTER_OTLP_ENDPOINT="http://localhost:4318"` — the retired compose-stack port
+  decommissioned 2026-04-25. Current k3d cluster topology uses `:14318` (host-port-mapped serverlb
+  endpoint per `groundnuty/macf-devops-toolkit:CLAUDE.md`). All consumer-workspace telemetry was
+  silently dropped pre-fix: TCP-connect-refused on `:4318`, OTel SDK retried quietly, no error
+  surfaced. Surfaced 2026-04-27 during cv-e2e-test smoke (CV agents had 34min of zero traces
+  + zero counters despite producing real coordination events). Two-part fix: (1) default endpoint
+  `:4318` → `:14318`, (2) emit env-overridable `${OTEL_EXPORTER_OTLP_ENDPOINT:-<default>}` form
+  instead of unconditional hardcoded export, so run-time `OTEL_EXPORTER_OTLP_ENDPOINT` in the
+  launching shell wins per OTel canonical semantics. Two-layer override pattern documented:
+  template-time `MACF_OTEL_ENDPOINT` (at `macf init` / `macf update`) bakes a custom default
+  into `claude.sh`; run-time `OTEL_EXPORTER_OTLP_ENDPOINT` overrides per-launch. Closes
+  silent-fallback-hazards.md Instance 8 distribution gap; CV consumers re-run `macf update`
+  post-release to converge on canonical (transient local patches in `groundnuty/academic-resume`
+  and `groundnuty/cv-project-archaeologist` get cleanly clobbered + re-generated with the canonical
+  fix on next update cycle).
+
+[#282]: https://github.com/groundnuty/macf/issues/282
+[#283]: https://github.com/groundnuty/macf/pull/283
+
 ## [0.2.5] — 2026-04-27
 
 ### Added
