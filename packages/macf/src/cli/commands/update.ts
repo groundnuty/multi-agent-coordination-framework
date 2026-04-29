@@ -1,6 +1,38 @@
 /**
- * macf update: read version pins from macf-agent.json, fetch latest available
- * for each component, show a diff, and bump selected pins.
+ * macf update: dual-purpose command (template-sync + version-bump).
+ *
+ * Two distinct things happen on every invocation:
+ *
+ * 1. **Always-on template sync** — refreshes canonical assets from the
+ *    INSTALLED CLI BINARY's bundled templates, regardless of any flag
+ *    selection. Independent of `versions.cli` / `versions.plugin` /
+ *    `versions.actions` in macf-agent.json. Files refreshed:
+ *    - `.claude/scripts/`         (canonical helper scripts; #61, #140)
+ *    - `.claude/rules/`           (coordination.md + other rules)
+ *    - `.claude/settings.json`    (gh-token PreToolUse hook + plugin-skill
+ *                                   permissions + sandbox.allowRead +
+ *                                   sandbox.excludedCommands; merge-preserving)
+ *    - `claude.sh`                (regenerated from current launcher
+ *                                   template; #63 — landing template-
+ *                                   evolution changes like #60's
+ *                                   `--plugin-dir` or #283's `:14318`
+ *                                   OTLP endpoint without re-running init)
+ *    - `.macf/plugin/`            (repair-fetch only, if dir is empty;
+ *                                   pin-bump fetch handled separately)
+ *
+ * 2. **Flag-gated version bumps** — `--cli` / `--plugin` / `--actions`
+ *    select which version pins in macf-agent.json get bumped to latest;
+ *    `--all` selects all three; `--yes` auto-accepts. `--plugin` bump
+ *    additionally triggers a fresh `.macf/plugin/` fetch at the new
+ *    version.
+ *
+ * Implication for downstream consumers + reproducible bootstrap (e.g.
+ * cv-e2e-test, harness pinning per macf#291): the CLI BINARY'S
+ * installed version determines what claude.sh template lands. Operators
+ * pinning via `npx -y @groundnuty/macf@<version> update` get a
+ * reproducible binary version + therefore a reproducible template.
+ * Operators using bare `macf update` get whatever brew/system has —
+ * which may pre-date a recent canonical fix (e.g. PR #283).
  *
  * Replaces the earlier plugin-update placeholder (P4). With PR #4 adding
  * version pins, this command is the canonical bumper.
