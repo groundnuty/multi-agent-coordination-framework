@@ -278,4 +278,104 @@ describe('check-mention-routing.sh (hook)', () => {
       expect(r.status).toBe(0);
     });
   });
+
+  describe('broadened HANDLE_PATTERN — fleet-agnostic (macf#276)', () => {
+    it('blocks describing-context CV-fleet handle (`@cv-architect[bot]`)', () => {
+      const r = runHook({
+        command:
+          'gh issue comment 123 --body "$(cat <<EOF\nThe @cv-architect[bot] response was clean.\nEOF\n)"',
+      });
+      expect(r.status).toBe(2);
+    });
+
+    it('blocks describing-context non-prefixed CV handle (`@academic-resume-author[bot]`)', () => {
+      const r = runHook({
+        command:
+          'gh issue comment 123 --body "$(cat <<EOF\nObserved @academic-resume-author[bot] in the loop.\nEOF\n)"',
+      });
+      expect(r.status).toBe(2);
+    });
+
+    it('blocks describing-context third-party bot (`@dependabot[bot]`)', () => {
+      // Third-party bots don't fire MACF routing, but blocking style is
+      // consistent with the discipline. Operators can use
+      // MACF_SKIP_MENTION_CHECK=1 for the rare legitimate describing case.
+      const r = runHook({
+        command:
+          'gh issue comment 123 --body "$(cat <<EOF\nThe @dependabot[bot] update was reverted.\nEOF\n)"',
+      });
+      expect(r.status).toBe(2);
+    });
+
+    it('blocks describing-context `@github-actions[bot]`', () => {
+      const r = runHook({
+        command:
+          'gh issue comment 123 --body "$(cat <<EOF\nThe @github-actions[bot] workflow ran twice.\nEOF\n)"',
+      });
+      expect(r.status).toBe(2);
+    });
+
+    it('allows backticked CV-fleet handle in describing context', () => {
+      const r = runHook({
+        command:
+          'gh issue comment 123 --body "The `@cv-architect[bot]` response was clean."',
+      });
+      expect(r.status).toBe(0);
+    });
+
+    it('allows line-start CV-fleet handle in addressing context', () => {
+      const r = runHook({
+        command:
+          'gh issue comment 123 --body "$(cat <<EOF\n@cv-architect[bot] please review the draft.\nEOF\n)"',
+      });
+      expect(r.status).toBe(0);
+    });
+
+    it('allows backticked third-party bot handle (legitimate describing reference)', () => {
+      const r = runHook({
+        command:
+          'gh issue comment 123 --body "Note that the `@dependabot[bot]` MR was reverted."',
+      });
+      expect(r.status).toBe(0);
+    });
+
+    it('does not match handle starting with digit (invalid GitHub handle shape)', () => {
+      // First-char letter requirement excludes leading-digit forms.
+      const r = runHook({
+        command: 'gh issue comment 123 --body "Reference @1bot[bot] in passing."',
+      });
+      expect(r.status).toBe(0);
+    });
+
+    it('does not match handle starting with underscore or hyphen', () => {
+      // Same first-char letter requirement.
+      const r1 = runHook({
+        command: 'gh issue comment 123 --body "Reference @_priv[bot] in passing."',
+      });
+      const r2 = runHook({
+        command: 'gh issue comment 123 --body "Reference @-leader[bot] in passing."',
+      });
+      expect(r1.status).toBe(0);
+      expect(r2.status).toBe(0);
+    });
+
+    it('does not match `@[bot]` with no handle body', () => {
+      // First-char letter requirement excludes the empty-handle form.
+      const r = runHook({
+        command: 'gh issue comment 123 --body "Reference @[bot] in passing."',
+      });
+      expect(r.status).toBe(0);
+    });
+
+    it('MACF_SKIP_MENTION_CHECK=1 still bypasses third-party bot blocks', () => {
+      // Override path covers the rare legitimate describing-context use
+      // of third-party bot handles.
+      const r = runHook({
+        command:
+          'gh issue comment 123 --body "$(cat <<EOF\nThe @dependabot[bot] update was reverted.\nEOF\n)"',
+        env: { MACF_SKIP_MENTION_CHECK: '1' },
+      });
+      expect(r.status).toBe(0);
+    });
+  });
 });
