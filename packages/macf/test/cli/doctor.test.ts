@@ -10,11 +10,15 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, it, expect } from 'vitest';
 import {
+  AUTONOMY_REQUIRED_TOOLS,
   MACF_REQUIRED_PERMISSIONS,
+  checkPermissionsAllow,
   checkSandboxFdAllowRead,
   diffPermissions,
   formatPermissionRow,
   describeNonJwtOutput,
+  hasToolDeny,
+  isToolFullyAllowed,
   type RequiredPermission,
 } from '../../src/cli/commands/doctor.js';
 import { SANDBOX_FD_READ_PATTERN } from '../../src/cli/settings-writer.js';
@@ -263,5 +267,208 @@ describe('checkSandboxFdAllowRead (macf#202)', () => {
     });
     const result = checkSandboxFdAllowRead(tmpRoot);
     expect(result.status).toBe('PASS');
+  });
+});
+
+describe('isToolFullyAllowed (macf#296)', () => {
+  it('true for bare tool name', () => {
+    expect(isToolFullyAllowed(['Write'], 'Write')).toBe(true);
+  });
+
+  it('true for glob form Tool(*)', () => {
+    expect(isToolFullyAllowed(['Write(*)'], 'Write')).toBe(true);
+  });
+
+  it('false for scoped pattern Tool(/path)', () => {
+    expect(isToolFullyAllowed(['Write(/etc/hosts)'], 'Write')).toBe(false);
+  });
+
+  it('false for unrelated entries', () => {
+    expect(isToolFullyAllowed(['Read', 'Bash(git *)'], 'Write')).toBe(false);
+  });
+
+  it('false for empty allow list', () => {
+    expect(isToolFullyAllowed([], 'Write')).toBe(false);
+  });
+
+  it('does not match a tool with overlapping prefix', () => {
+    // "Edit" must not be matched by an entry "Edit2" or "EditCustom"
+    expect(isToolFullyAllowed(['EditCustom'], 'Edit')).toBe(false);
+  });
+});
+
+describe('hasToolDeny (macf#296)', () => {
+  it('true for bare tool deny', () => {
+    expect(hasToolDeny(['Write'], 'Write')).toBe(true);
+  });
+
+  it('true for scoped tool deny Tool(/path)', () => {
+    expect(hasToolDeny(['Write(/etc/passwd)'], 'Write')).toBe(true);
+  });
+
+  it('false for unrelated deny entries', () => {
+    expect(hasToolDeny(['Bash(rm -rf *)'], 'Write')).toBe(false);
+  });
+
+  it('false for empty deny list', () => {
+    expect(hasToolDeny([], 'Write')).toBe(false);
+  });
+});
+
+describe('checkPermissionsAllow (macf#296)', () => {
+  let tmpRoot: string;
+  let settingsPath: string;
+
+  beforeEach(() => {
+    tmpRoot = mkdtempSync(join(tmpdir(), 'doctor-perms-'));
+    settingsPath = join(tmpRoot, '.claude', 'settings.json');
+  });
+
+  afterEach(() => {
+    rmSync(tmpRoot, { recursive: true, force: true });
+  });
+
+  function writeSettings(obj: unknown): void {
+    mkdirSync(join(tmpRoot, '.claude'), { recursive: true });
+    writeFileSync(settingsPath, JSON.stringify(obj, null, 2));
+  }
+
+  it('lists Write and Edit as the canonical autonomy-required tools', () => {
+    expect(AUTONOMY_REQUIRED_TOOLS).toEqual(['Write', 'Edit']);
+  });
+
+  it('PASS when allow contains both Write and Edit (bare)', () => {
+    writeSettings({ permissions: { allow: ['Write', 'Edit', 'Bash(*)'] } });
+    const result = checkPermissionsAllow(tmpRoot);
+    expect(result.status).toBe('PASS');
+    expect(result.findings).toHaveLength(0);
+  });
+
+  it('PASS when allow contains both Write(*) and Edit(*) (glob form)', () => {
+    writeSettings({ permissions: { allow: ['Write(*)', 'Edit(*)', 'Bash(*)'] } });
+    const result = checkPermissionsAllow(tmpRoot);
+    expect(result.status).toBe('PASS');
+    expect(result.findings).toHaveLength(0);
+  });
+
+  it('WARN with BLOCK severity when Write absent AND Bash absent', () => {
+    writeSettings({ permissions: { allow: ['Edit'] } });
+    const result = checkPermissionsAllow(tmpRoot);
+    expect(result.status).toBe('WARN');
+    expect(result.findings).toHaveLength(1);
+    const writeFinding = result.findings.find((f) => f.tool === 'Write');
+    expect(writeFinding?.severity).toBe('BLOCK');
+    expect(writeFinding?.hasBashFallback).toBe(false);
+    expect(writeFinding?.message).toContain('autonomous file creation impossible');
+  });
+
+  it('WARN with WARN severity when Write absent BUT Bash present (degraded fallback)', () => {
+    writeSettings({ permissions: { allow: ['Edit', 'Bash(*)'] } });
+    const result = checkPermissionsAllow(tmpRoot);
+    expect(result.status).toBe('WARN');
+    const writeFinding = result.findings.find((f) => f.tool === 'Write');
+    expect(writeFinding?.severity).toBe('WARN');
+    expect(writeFinding?.hasBashFallback).toBe(true);
+    expect(writeFinding?.message).toContain('Bash fallback is present');
+  });
+
+  it('WARN when Edit absent (Bash fallback irrelevant — Edit gets WARN regardless)', () => {
+    writeSettings({ permissions: { allow: ['Write', 'Bash(*)'] } });
+    const result = checkPermissionsAllow(tmpRoot);
+    expect(result.status).toBe('WARN');
+    expect(result.findings).toHaveLength(1);
+    expect(result.findings[0]?.tool).toBe('Edit');
+    expect(result.findings[0]?.severity).toBe('WARN');
+  });
+
+  it('reports BOTH tools when both absent + no Bash (one BLOCK + one WARN)', () => {
+    writeSettings({ permissions: { allow: ['Read'] } });
+    const result = checkPermissionsAllow(tmpRoot);
+    expect(result.status).toBe('WARN');
+    expect(result.findings).toHaveLength(2);
+    const writeFinding = result.findings.find((f) => f.tool === 'Write');
+    const editFinding = result.findings.find((f) => f.tool === 'Edit');
+    expect(writeFinding?.severity).toBe('BLOCK');
+    expect(editFinding?.severity).toBe('WARN');
+  });
+
+  it('INFO severity when Write absent AND deny rule present (deliberate scope)', () => {
+    writeSettings({
+      permissions: {
+        allow: ['Edit', 'Bash(*)'],
+        deny: ['Write(/etc/*)', 'Write(/root/*)'],
+      },
+    });
+    const result = checkPermissionsAllow(tmpRoot);
+    // Only Write is absent here (Edit IS present). With a deny rule for Write,
+    // the lone finding is INFO-severity, so overall status is INFO.
+    expect(result.status).toBe('INFO');
+    const writeFinding = result.findings.find((f) => f.tool === 'Write');
+    expect(writeFinding?.severity).toBe('INFO');
+    expect(writeFinding?.hasDenyRule).toBe(true);
+    expect(writeFinding?.message).toContain('likely deliberate scope');
+  });
+
+  it('overall status INFO when ALL findings are deny-rule deliberate', () => {
+    writeSettings({
+      permissions: {
+        allow: ['Bash(*)'],
+        deny: ['Write(/etc/*)', 'Edit(/etc/*)'],
+      },
+    });
+    const result = checkPermissionsAllow(tmpRoot);
+    expect(result.status).toBe('INFO');
+    expect(result.findings).toHaveLength(2);
+    expect(result.findings.every((f) => f.severity === 'INFO')).toBe(true);
+  });
+
+  it('does not treat scoped Write(/path) as fully present (still warns)', () => {
+    // Write(/specific/path) doesn't cover other paths — agents still
+    // prompt on writes elsewhere. Conservative: warn.
+    writeSettings({ permissions: { allow: ['Write(/tmp/*)', 'Edit', 'Bash(*)'] } });
+    const result = checkPermissionsAllow(tmpRoot);
+    expect(result.status).toBe('WARN');
+    const writeFinding = result.findings.find((f) => f.tool === 'Write');
+    expect(writeFinding).toBeDefined();
+    // Bash IS present, no deny rule → severity is WARN (not BLOCK or INFO)
+    expect(writeFinding?.severity).toBe('WARN');
+  });
+
+  it('PASS when Write(*) present plus scoped patterns (glob covers everything)', () => {
+    writeSettings({
+      permissions: {
+        allow: ['Write(*)', 'Write(/specific)', 'Edit(*)', 'Bash(*)'],
+      },
+    });
+    const result = checkPermissionsAllow(tmpRoot);
+    expect(result.status).toBe('PASS');
+  });
+
+  it('WARN with readError when settings.json is malformed', () => {
+    mkdirSync(join(tmpRoot, '.claude'), { recursive: true });
+    writeFileSync(settingsPath, '{ broken json');
+    const result = checkPermissionsAllow(tmpRoot);
+    expect(result.status).toBe('WARN');
+    expect(result.readError).toMatch(/Refusing to overwrite malformed/);
+    expect(result.findings).toHaveLength(0);
+  });
+
+  it('reports BLOCK + WARN when settings.json absent entirely (empty allow)', () => {
+    // No file → empty allow + empty deny → both Write and Edit missing,
+    // no Bash fallback → Write=BLOCK, Edit=WARN.
+    const result = checkPermissionsAllow(tmpRoot);
+    expect(result.status).toBe('WARN');
+    expect(result.findings).toHaveLength(2);
+    const writeFinding = result.findings.find((f) => f.tool === 'Write');
+    expect(writeFinding?.severity).toBe('BLOCK');
+  });
+
+  it('finding includes remediation snippet with concrete JSON shape hint', () => {
+    writeSettings({ permissions: { allow: [] } });
+    const result = checkPermissionsAllow(tmpRoot);
+    const writeFinding = result.findings.find((f) => f.tool === 'Write');
+    expect(writeFinding?.remediation).toContain('"Write"');
+    expect(writeFinding?.remediation).toContain('"Write(*)"');
+    expect(writeFinding?.remediation).toContain('permissions.allow');
   });
 });

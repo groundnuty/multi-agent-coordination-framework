@@ -16,7 +16,12 @@
  */
 import { execFileSync } from 'node:child_process';
 import { readAgentConfig, tokenSourceFromConfig } from '../config.js';
-import { getSandboxAllowRead, SANDBOX_FD_READ_PATTERN } from '../settings-writer.js';
+import {
+  getPermissionsAllow,
+  getPermissionsDeny,
+  getSandboxAllowRead,
+  SANDBOX_FD_READ_PATTERN,
+} from '../settings-writer.js';
 
 /**
  * One required permission entry from DR-019.
@@ -141,6 +146,169 @@ export function checkSandboxFdAllowRead(workspaceDir: string): SandboxFdCheck {
     status: 'FAIL',
     detail: `allowRead does not contain ${SANDBOX_FD_READ_PATTERN} — run \`macf update\` to refresh`,
   };
+}
+
+/**
+ * Tools whose absence from `permissions.allow` blocks autonomous
+ * coordination — Claude Code prompts the operator on each first
+ * invocation, stalling agents that can't dismiss the prompt.
+ *
+ * Surfaced empirically during cv-e2e-test rehearsal #11b
+ * (2026-04-30): cv-architect on `groundnuty/academic-resume` blocked
+ * mid-test on a Write tool prompt because the workspace's
+ * `permissions.allow` lacked `Write`. Sister CV agent
+ * `cv-project-archaeologist` had the entry; this was operator-
+ * authored drift.
+ */
+export const AUTONOMY_REQUIRED_TOOLS: readonly string[] = ['Write', 'Edit'];
+
+/**
+ * Returns true if `allow` grants the named tool unrestricted use:
+ *   - Bare tool name (`"Write"`) — Claude Code's "tool only" form
+ *   - Glob form (`"Write(*)"`)
+ *
+ * Scoped patterns like `Write(/specific/path)` are NOT considered
+ * "fully present" — they cover only that path; calls to other paths
+ * still prompt. Conservative-by-design: an operator with scoped Write
+ * still gets a warning that surfaces the partial coverage.
+ */
+export function isToolFullyAllowed(allow: readonly string[], tool: string): boolean {
+  return allow.includes(tool) || allow.includes(`${tool}(*)`);
+}
+
+/**
+ * Returns true if `deny` has any entry referencing the named tool —
+ * either bare (`"Write"`) or scoped (`"Write(/path)"`). Used to
+ * contextualise an allow-list gap as deliberate (security-driven,
+ * common in operator-restricted workspaces) rather than accidental
+ * drift. Soft signal — doctor still warns, just with a different
+ * framing.
+ */
+export function hasToolDeny(deny: readonly string[], tool: string): boolean {
+  for (const entry of deny) {
+    if (entry === tool || entry.startsWith(`${tool}(`)) return true;
+  }
+  return false;
+}
+
+/**
+ * One per-tool finding from the permissions-allow check.
+ *
+ * `severity`:
+ *   - `WARN` — tool absent but Bash fallback exists (Edit absent, OR
+ *     Write absent + Bash present). Autonomous coordination still works
+ *     for code paths that use Bash; tool-using paths prompt.
+ *   - `INFO` — tool absent AND deny rule exists. Treated as deliberate
+ *     operator decision (security posture) rather than drift. Surfaces
+ *     the gap so it's visible, but doesn't recommend fix.
+ *   - `BLOCK` — tool absent AND no fallback (Write + Edit + Bash all
+ *     absent). Autonomous coordination fails entirely on first agentic
+ *     file op.
+ *
+ * Doctor exit code is unchanged by this check (per #296 AC: warn-only,
+ * no error). Severity drives output formatting + remediation suggestion.
+ */
+export interface PermissionFinding {
+  readonly tool: string;
+  readonly severity: 'WARN' | 'INFO' | 'BLOCK';
+  readonly hasBashFallback: boolean;
+  readonly hasDenyRule: boolean;
+  readonly message: string;
+  readonly remediation: string;
+}
+
+/**
+ * Result of the permissions-allow check (macf#296). `findings` lists
+ * one entry per missing autonomy-required tool; `status` summarises
+ * across them — `PASS` if no findings, `WARN` if any non-INFO finding,
+ * `INFO` if all findings are deliberate-deny cases.
+ */
+export interface PermissionsAllowCheckResult {
+  readonly status: 'PASS' | 'WARN' | 'INFO';
+  readonly findings: readonly PermissionFinding[];
+  /** Set when the JSON was malformed; `findings` will be empty. */
+  readonly readError?: string;
+}
+
+/**
+ * Check that `permissions.allow` grants the autonomy-required tools
+ * (`Write`, `Edit`). For each absent tool, build a `PermissionFinding`
+ * with severity tuned to the failure mode (BLOCK if no Bash fallback,
+ * WARN if Bash works, INFO if a deny rule signals deliberate scope).
+ *
+ * Sister CV reference: cv-project-archaeologist's settings.json has
+ * Write+Edit; academic-resume drifted without them. Surfaces here at
+ * health-check time rather than mid-coordination block.
+ *
+ * Schema reference: Claude Code permissions.allow accepts both bare
+ * tool names ("Write") and patterned forms ("Write(*)", "Write(/path)").
+ * Verified against the canonical settings.json schema documented in
+ * Claude Code's update-config skill (stable form across recent versions).
+ */
+export function checkPermissionsAllow(workspaceDir: string): PermissionsAllowCheckResult {
+  let allow: readonly string[];
+  let deny: readonly string[];
+  try {
+    allow = getPermissionsAllow(workspaceDir);
+    deny = getPermissionsDeny(workspaceDir);
+  } catch (err) {
+    return {
+      status: 'WARN',
+      findings: [],
+      readError: err instanceof Error ? err.message : String(err),
+    };
+  }
+
+  const hasBashFallback = isToolFullyAllowed(allow, 'Bash');
+  const findings: PermissionFinding[] = [];
+
+  for (const tool of AUTONOMY_REQUIRED_TOOLS) {
+    if (isToolFullyAllowed(allow, tool)) continue;
+
+    const hasDenyRule = hasToolDeny(deny, tool);
+    const isWrite = tool === 'Write';
+
+    let severity: PermissionFinding['severity'];
+    let message: string;
+    if (hasDenyRule) {
+      severity = 'INFO';
+      message =
+        `${tool} absent from permissions.allow; deny rule present — likely deliberate scope ` +
+        `(security posture). Autonomous file ops via ${tool} will prompt; agents can fall ` +
+        `back to Bash where allowed.`;
+    } else if (isWrite && !hasBashFallback) {
+      severity = 'BLOCK';
+      message =
+        `Write absent AND Bash absent — autonomous file creation impossible. ` +
+        `Agents will block on every Write/Bash invocation waiting for operator click-through.`;
+    } else {
+      severity = 'WARN';
+      message =
+        `${tool} absent from permissions.allow — autonomous ${tool} tool calls fire interactive ` +
+        `permission prompts. Sister CV agent cv-project-archaeologist has this entry; if this ` +
+        `workspace is also a CV/coordination consumer, the gap is likely operator-authored drift ` +
+        `(empirical incident: cv-e2e-test rehearsal #11b 2026-04-30).` +
+        (isWrite ? ' Bash fallback is present, so file-write via shell still works (degraded autonomy).' : '');
+    }
+
+    const remediation =
+      `Add to .claude/settings.json under permissions.allow: "${tool}" (bare; allows all paths) ` +
+      `OR "${tool}(*)" (glob form). For scoped use, prefer "${tool}(/path/*)" patterns + matching ` +
+      `deny rules for sensitive paths.`;
+
+    findings.push({
+      tool,
+      severity,
+      hasBashFallback,
+      hasDenyRule,
+      message,
+      remediation,
+    });
+  }
+
+  if (findings.length === 0) return { status: 'PASS', findings: [] };
+  const allInfo = findings.every((f) => f.severity === 'INFO');
+  return { status: allInfo ? 'INFO' : 'WARN', findings };
 }
 
 /**
@@ -288,6 +456,26 @@ export async function runDoctor(projectDir: string): Promise<number> {
   } else {
     console.log(`  ✗ sandbox.filesystem.allowRead missing ${SANDBOX_FD_READ_PATTERN}   [FAIL — run \`macf update\` to fix]`);
     if (sandboxCheck.detail) console.log(`    ${sandboxCheck.detail}`);
+  }
+
+  console.log('');
+  console.log('Workspace permissions (macf#296)');
+  console.log('──────────────────────────────────────────────────────────────');
+  const permsCheck = checkPermissionsAllow(projectDir);
+  if (permsCheck.readError) {
+    console.log(`  ⚠ could not parse .claude/settings.json: ${permsCheck.readError}`);
+  } else if (permsCheck.status === 'PASS') {
+    console.log(`  ✓ permissions.allow grants Write + Edit (autonomous coordination unblocked)  [PASS]`);
+  } else {
+    const summary = permsCheck.status === 'INFO'
+      ? `ℹ ${permsCheck.findings.length} autonomy-required tool(s) absent (deny rules present — likely deliberate)  [INFO]`
+      : `⚠ ${permsCheck.findings.length} autonomy-required tool(s) absent or scoped  [WARN]`;
+    console.log(`  ${summary}`);
+    for (const f of permsCheck.findings) {
+      const symbol = f.severity === 'BLOCK' ? '✗' : (f.severity === 'WARN' ? '⚠' : 'ℹ');
+      console.log(`    ${symbol} ${f.tool}: ${f.message}`);
+      console.log(`      Fix: ${f.remediation}`);
+    }
   }
 
   const permissionsFailed = finding.missing.length > 0 || finding.insufficient.length > 0;
