@@ -91,5 +91,14 @@ export function operationNameForNotifyType(type: NotifyPayload['type']): string 
     // peer-traffic from GitHub-driven routing without conflation.
     case 'peer_notification':
       return 'peer_notify';
+    // macf-actions#39 (v3.3.0): PR review-state-change routes via the
+    // route-by-pr-review-state job to the PR author's channel-server.
+    // Mapped to `handoff` (work-unit state advancement) per the GenAI
+    // semconv distinction: `invoke_agent` is reserved for addressed
+    // mentions; `handoff` is structural state-change-driven routing of
+    // a work unit (PR) to the agent who owns the next step. Sister to
+    // `issue_routed` which also maps to `handoff`.
+    case 'pr_review_state':
+      return 'handoff';
   }
 }

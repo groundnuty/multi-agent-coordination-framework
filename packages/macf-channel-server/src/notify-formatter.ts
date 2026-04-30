@@ -85,6 +85,33 @@ export function formatNotifyContent(payload: NotifyPayload): FormattedNotify {
     return { content: `${sourcePart}${eventPart}` };
   }
 
+  if (payload.type === 'pr_review_state') {
+    // macf-actions#39 (v3.3.0): rendered when the route-by-pr-review-state
+    // job POSTs on a `pull_request_review` event with state in
+    // {approved, changes_requested}. Receiver is the PR author. The
+    // verb is determined by review_state; reviewer_login surfaces who
+    // acted; pr_url locates the work unit. review_url (if provided)
+    // deep-links to the review comment for receivers that want it —
+    // omitted from the rendered string to keep it terse but available
+    // on the payload for programmatic use.
+    const reviewer = payload.reviewer_login ?? 'A reviewer';
+    const verb =
+      payload.review_state === 'approved'
+        ? 'approved'
+        : payload.review_state === 'changes_requested'
+          ? 'requested changes on'
+          : 'reviewed';
+    if (payload.pr_number !== undefined) {
+      const linkSuffix = payload.pr_url ? `: ${payload.pr_url}` : '';
+      return { content: `${reviewer} ${verb} PR #${payload.pr_number}${linkSuffix}` };
+    }
+    return {
+      content: payload.pr_url
+        ? `${reviewer} ${verb} PR: ${payload.pr_url}`
+        : `${reviewer} ${verb} a PR`,
+    };
+  }
+
   // startup_check or any future variant falls through here
   return { content: payload.message ?? 'Pending issues found at startup' };
 }

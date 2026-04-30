@@ -21,6 +21,15 @@ export const NotifyTypeSchema = z.enum([
   // Phase D / Claim 1b cell-effect measurements where conflating the
   // two would muddy framework-induced traffic signal.
   'peer_notification',
+  // `pr_review_state` landed with macf-actions#39 (v3.3.0) — routed by
+  // the route-by-pr-review-state job when a PR review is submitted
+  // (action=submitted) with state in {approved, changes_requested}.
+  // Receiver is the PR author's channel-server. Closes the LGTM→merge
+  // handoff gap that was the final cv-e2e-test cascade cause: routing-
+  // Action's pre-#39 event coverage didn't fire when reviewers approved
+  // without an explicit @<author>[bot] in the review body. The
+  // structural state-change IS the notification.
+  'pr_review_state',
 ]);
 
 export type NotifyType = z.infer<typeof NotifyTypeSchema>;
@@ -64,6 +73,16 @@ export const NotifyPayloadSchema = z.object({
   // `notify_peer` MCP tool) construct + validate against the narrower
   // PeerNotificationPayloadSchema below before POST.
   event: z.enum(['session-end', 'turn-complete', 'error', 'custom']).optional(),
+  // pr_review_state variant fields (macf-actions#39, v3.3.0). Optional
+  // at the top level to preserve backward-compat. Producers (the
+  // route-by-pr-review-state job) construct + validate against the
+  // narrower PrReviewStatePayloadSchema below before POST. `pr_number`
+  // and `pr_url` reuse the ci_completion variant's fields (same
+  // semantic meaning); `review_state`, `reviewer_login`, `review_url`
+  // are review-specific.
+  review_state: z.enum(['approved', 'changes_requested']).optional(),
+  reviewer_login: z.string().optional(),
+  review_url: z.string().url().optional(),
 });
 
 export type NotifyPayload = z.infer<typeof NotifyPayloadSchema>;
@@ -114,6 +133,39 @@ export const PeerNotificationPayloadSchema = z.object({
 });
 
 export type PeerNotificationPayload = z.infer<typeof PeerNotificationPayloadSchema>;
+
+/**
+ * Narrower schema for `pr_review_state` payloads (macf-actions#39, v3.3.0).
+ * Producers (the route-by-pr-review-state job) construct + validate against
+ * this before POST. Receivers parse via the wider `NotifyPayloadSchema`
+ * (backward-compat) and narrow via the `type === 'pr_review_state'`
+ * discriminator.
+ *
+ * `review_state` discriminates the actionable verb at the receiver:
+ *   - `approved`         → PR author can react with merge
+ *   - `changes_requested` → PR author can react with fix
+ *
+ * `reviewer_login` is the reviewer's bot login (e.g., `cv-architect[bot]`)
+ * so the rendered notification surfaces who acted. `pr_number` + `pr_url`
+ * locate the work unit. `review_url` deep-links to the review comment for
+ * receivers that want to fetch the body programmatically (optional —
+ * cheap to include, free at the receiver if unused).
+ *
+ * The job filters at the workflow layer to action=submitted only (per
+ * issue#39 design Q3 disposition — dismissed reviews are out-of-scope at
+ * v3.3.0). State filter is workflow-side too; the schema only carries the
+ * narrowed enum so receivers don't need to re-validate.
+ */
+export const PrReviewStatePayloadSchema = z.object({
+  type: z.literal('pr_review_state'),
+  review_state: z.enum(['approved', 'changes_requested']),
+  reviewer_login: z.string().min(1),
+  pr_number: z.number().int().positive(),
+  pr_url: z.string().url(),
+  review_url: z.string().url().optional(),
+});
+
+export type PrReviewStatePayload = z.infer<typeof PrReviewStatePayloadSchema>;
 
 // --- Health response (GET /health body) ---
 

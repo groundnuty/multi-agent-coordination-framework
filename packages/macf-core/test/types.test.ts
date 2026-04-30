@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import {
   NotifyPayloadSchema, NotifyTypeSchema, HealthResponseSchema,
   CiCompletionPayloadSchema, CheckSuiteConclusionSchema,
-  PeerNotificationPayloadSchema,
+  PeerNotificationPayloadSchema, PrReviewStatePayloadSchema,
 } from '../src/types.js';
 
 describe('NotifyTypeSchema', () => {
@@ -12,6 +12,8 @@ describe('NotifyTypeSchema', () => {
     expect(NotifyTypeSchema.parse('startup_check')).toBe('startup_check');
     expect(NotifyTypeSchema.parse('ci_completion')).toBe('ci_completion');
     expect(NotifyTypeSchema.parse('peer_notification')).toBe('peer_notification');
+    // macf-actions#39 (v3.3.0)
+    expect(NotifyTypeSchema.parse('pr_review_state')).toBe('pr_review_state');
   });
 
   it('rejects unknown types', () => {
@@ -109,6 +111,131 @@ describe('PeerNotificationPayloadSchema (macf#256, DR-023 UC-1)', () => {
     expect(wide.type).toBe('peer_notification');
     expect(wide.source).toBe('macf-tester-1-agent');
     expect(wide.event).toBe('session-end');
+  });
+});
+
+describe('PrReviewStatePayloadSchema (macf-actions#39, v3.3.0)', () => {
+  it('accepts minimal valid payload (approved review)', () => {
+    const result = PrReviewStatePayloadSchema.parse({
+      type: 'pr_review_state',
+      review_state: 'approved',
+      reviewer_login: 'cv-architect[bot]',
+      pr_number: 42,
+      pr_url: 'https://github.com/groundnuty/academic-resume/pull/42',
+    });
+    expect(result.type).toBe('pr_review_state');
+    expect(result.review_state).toBe('approved');
+    expect(result.reviewer_login).toBe('cv-architect[bot]');
+    expect(result.pr_number).toBe(42);
+  });
+
+  it('accepts changes_requested state', () => {
+    const result = PrReviewStatePayloadSchema.parse({
+      type: 'pr_review_state',
+      review_state: 'changes_requested',
+      reviewer_login: 'cv-architect[bot]',
+      pr_number: 42,
+      pr_url: 'https://github.com/groundnuty/academic-resume/pull/42',
+    });
+    expect(result.review_state).toBe('changes_requested');
+  });
+
+  it('accepts optional review_url for deep-linking', () => {
+    const result = PrReviewStatePayloadSchema.parse({
+      type: 'pr_review_state',
+      review_state: 'approved',
+      reviewer_login: 'cv-architect[bot]',
+      pr_number: 42,
+      pr_url: 'https://github.com/groundnuty/academic-resume/pull/42',
+      review_url: 'https://github.com/groundnuty/academic-resume/pull/42#pullrequestreview-12345',
+    });
+    expect(result.review_url).toBe(
+      'https://github.com/groundnuty/academic-resume/pull/42#pullrequestreview-12345',
+    );
+  });
+
+  it('rejects unknown review_state (e.g., commented or dismissed)', () => {
+    // commented + dismissed are out-of-scope for v3.3.0 routing per the
+    // design Q3 disposition on macf-actions#39. Schema enforces this so
+    // future extension is an explicit choice (add to the enum), not a
+    // silent accept.
+    expect(() =>
+      PrReviewStatePayloadSchema.parse({
+        type: 'pr_review_state',
+        review_state: 'commented',
+        reviewer_login: 'cv-architect[bot]',
+        pr_number: 42,
+        pr_url: 'https://github.com/g/r/pull/42',
+      }),
+    ).toThrow();
+    expect(() =>
+      PrReviewStatePayloadSchema.parse({
+        type: 'pr_review_state',
+        review_state: 'dismissed',
+        reviewer_login: 'cv-architect[bot]',
+        pr_number: 42,
+        pr_url: 'https://github.com/g/r/pull/42',
+      }),
+    ).toThrow();
+  });
+
+  it('rejects missing required fields', () => {
+    // No reviewer_login
+    expect(() =>
+      PrReviewStatePayloadSchema.parse({
+        type: 'pr_review_state',
+        review_state: 'approved',
+        pr_number: 42,
+        pr_url: 'https://github.com/g/r/pull/42',
+      }),
+    ).toThrow();
+    // No pr_number
+    expect(() =>
+      PrReviewStatePayloadSchema.parse({
+        type: 'pr_review_state',
+        review_state: 'approved',
+        reviewer_login: 'cv-architect[bot]',
+        pr_url: 'https://github.com/g/r/pull/42',
+      }),
+    ).toThrow();
+    // No pr_url
+    expect(() =>
+      PrReviewStatePayloadSchema.parse({
+        type: 'pr_review_state',
+        review_state: 'approved',
+        reviewer_login: 'cv-architect[bot]',
+        pr_number: 42,
+      }),
+    ).toThrow();
+  });
+
+  it('rejects invalid pr_url (not a URL)', () => {
+    expect(() =>
+      PrReviewStatePayloadSchema.parse({
+        type: 'pr_review_state',
+        review_state: 'approved',
+        reviewer_login: 'cv-architect[bot]',
+        pr_number: 42,
+        pr_url: 'not-a-url',
+      }),
+    ).toThrow();
+  });
+
+  it('parses cleanly via wider NotifyPayloadSchema discriminator', () => {
+    // Receivers parse via wider schema + discriminate on type. Mirrors
+    // channel-server's /notify dispatch path; ensures the wider schema
+    // accepts the v3.3.0 payload shape backward-compat.
+    const wide = NotifyPayloadSchema.parse({
+      type: 'pr_review_state',
+      review_state: 'approved',
+      reviewer_login: 'cv-architect[bot]',
+      pr_number: 42,
+      pr_url: 'https://github.com/groundnuty/academic-resume/pull/42',
+    });
+    expect(wide.type).toBe('pr_review_state');
+    expect(wide.review_state).toBe('approved');
+    expect(wide.reviewer_login).toBe('cv-architect[bot]');
+    expect(wide.pr_number).toBe(42);
   });
 });
 
