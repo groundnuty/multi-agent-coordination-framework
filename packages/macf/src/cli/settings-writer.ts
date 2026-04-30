@@ -186,6 +186,41 @@ export function getSandboxAllowRead(workspaceDir: string): readonly string[] {
 }
 
 /**
+ * Read `.claude/settings.json`'s `permissions.allow` array. Returns an
+ * empty array if the file is absent or the nested shape isn't a string
+ * list. Throws on malformed JSON (matches `getSandboxAllowRead` posture).
+ *
+ * Used by `macf doctor` (macf#296) to surface allow-list gaps that
+ * would block autonomous coordination — specifically Write/Edit absence
+ * causing interactive permission prompts mid-test.
+ */
+export function getPermissionsAllow(workspaceDir: string): readonly string[] {
+  const absDir = resolve(workspaceDir);
+  const path = join(absDir, '.claude', 'settings.json');
+  const settings = readSettings(path);
+  const permissionsRaw = (settings['permissions'] as Record<string, unknown> | undefined) ?? {};
+  const list = permissionsRaw['allow'];
+  if (!Array.isArray(list)) return [];
+  return list.filter((v): v is string => typeof v === 'string');
+}
+
+/**
+ * Read `.claude/settings.json`'s `permissions.deny` array. Sister to
+ * `getPermissionsAllow` — used to detect operator-authored deny rules
+ * that contextualise an allow-list gap as deliberate (security-driven)
+ * rather than accidental drift.
+ */
+export function getPermissionsDeny(workspaceDir: string): readonly string[] {
+  const absDir = resolve(workspaceDir);
+  const path = join(absDir, '.claude', 'settings.json');
+  const settings = readSettings(path);
+  const permissionsRaw = (settings['permissions'] as Record<string, unknown> | undefined) ?? {};
+  const list = permissionsRaw['deny'];
+  if (!Array.isArray(list)) return [];
+  return list.filter((v): v is string => typeof v === 'string');
+}
+
+/**
  * Legacy MACF-managed patterns that earlier CLI versions wrote to
  * `allowRead`. Dropped from the array before installing the current
  * `SANDBOX_FD_READ_PATTERN` — the `/**` glob suffix was treated

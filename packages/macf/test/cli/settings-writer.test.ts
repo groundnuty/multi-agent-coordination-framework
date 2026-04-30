@@ -8,7 +8,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, rmSync, statSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { installGhTokenHook, MACF_HOOK_COMMAND, MACF_MENTION_HOOK_COMMAND, installPluginSkillPermissions, PLUGIN_SKILL_PERMISSIONS, installSandboxFdAllowRead, SANDBOX_FD_READ_PATTERN, installSandboxExcludedCommands, SANDBOX_EXCLUDED_COMMANDS, getSandboxExcludedCommands } from '../../src/cli/settings-writer.js';
+import { installGhTokenHook, MACF_HOOK_COMMAND, MACF_MENTION_HOOK_COMMAND, installPluginSkillPermissions, PLUGIN_SKILL_PERMISSIONS, installSandboxFdAllowRead, SANDBOX_FD_READ_PATTERN, installSandboxExcludedCommands, SANDBOX_EXCLUDED_COMMANDS, getSandboxExcludedCommands, getPermissionsAllow, getPermissionsDeny } from '../../src/cli/settings-writer.js';
 
 describe('installGhTokenHook', () => {
   let tmpRoot: string;
@@ -718,5 +718,59 @@ describe('installSandboxExcludedCommands (macf#211)', () => {
     installSandboxExcludedCommands(tmpRoot);
     const got = getSandboxExcludedCommands(tmpRoot);
     expect(got).toEqual([...SANDBOX_EXCLUDED_COMMANDS]);
+  });
+});
+
+describe('getPermissionsAllow / getPermissionsDeny (macf#296)', () => {
+  let tmpRoot: string;
+  let settingsPath: string;
+
+  beforeEach(() => {
+    tmpRoot = mkdtempSync(join(tmpdir(), 'perms-read-'));
+    settingsPath = join(tmpRoot, '.claude', 'settings.json');
+  });
+
+  afterEach(() => {
+    rmSync(tmpRoot, { recursive: true, force: true });
+  });
+
+  function writeSettings(obj: unknown): void {
+    mkdirSync(join(tmpRoot, '.claude'), { recursive: true });
+    writeFileSync(settingsPath, JSON.stringify(obj, null, 2));
+  }
+
+  it('getPermissionsAllow returns the allow array', () => {
+    writeSettings({ permissions: { allow: ['Write', 'Edit', 'Bash(*)'] } });
+    expect(getPermissionsAllow(tmpRoot)).toEqual(['Write', 'Edit', 'Bash(*)']);
+  });
+
+  it('getPermissionsAllow returns empty array when settings absent', () => {
+    expect(getPermissionsAllow(tmpRoot)).toEqual([]);
+  });
+
+  it('getPermissionsAllow returns empty array when permissions key missing', () => {
+    writeSettings({ hooks: {} });
+    expect(getPermissionsAllow(tmpRoot)).toEqual([]);
+  });
+
+  it('getPermissionsAllow filters non-string entries', () => {
+    writeSettings({ permissions: { allow: ['Write', 42, null, 'Edit'] } });
+    expect(getPermissionsAllow(tmpRoot)).toEqual(['Write', 'Edit']);
+  });
+
+  it('getPermissionsAllow throws on malformed JSON (matches getSandboxAllowRead posture)', () => {
+    mkdirSync(join(tmpRoot, '.claude'), { recursive: true });
+    writeFileSync(settingsPath, '{ broken json');
+    expect(() => getPermissionsAllow(tmpRoot)).toThrow(/Refusing to overwrite malformed/);
+  });
+
+  it('getPermissionsDeny returns the deny array', () => {
+    writeSettings({ permissions: { deny: ['Bash(rm -rf *)'] } });
+    expect(getPermissionsDeny(tmpRoot)).toEqual(['Bash(rm -rf *)']);
+  });
+
+  it('getPermissionsDeny returns empty array when permissions absent', () => {
+    writeSettings({ hooks: {} });
+    expect(getPermissionsDeny(tmpRoot)).toEqual([]);
   });
 });
