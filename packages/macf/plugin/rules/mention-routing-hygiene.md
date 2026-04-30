@@ -118,6 +118,13 @@ The hook is the same shape as `check-gh-token.sh` (#140 attribution-trap defense
 - At line-start (after optional whitespace, blockquote `>`, or list-item markers `* ` / `- ` / `1. `) → allowed (canonical addressing form §3)
 - Otherwise → BLOCK with stderr citing this rule + the offending line + the `MACF_SKIP_MENTION_CHECK=1` operator override
 
+**Note on code blocks (clarification per macf#277):** The hook does NOT parse Markdown structure. Triple-backtick fences and 4-space-indent code blocks are both currently passed by the hook, but the *mechanism* differs:
+
+- **Triple-backtick code blocks** — pass via the *adjacent-backtick check* in the heuristic (the `` ` `` characters bracketing the block satisfy the "already wrapped in backticks" predicate at the handle's character positions).
+- **4-space-indented code blocks** — pass via the *line-start addressing allowance*, not via code-block recognition. The leading whitespace satisfies the line-start regex `^[[:space:]>]*([0-9]+\.[[:space:]]+|[-*][[:space:]]+)?` ahead of `@<bot>[bot]`, so the line is treated as addressing form (§3) and allowed. Same outcome as the triple-backtick case, different reasoning.
+
+This is a heuristic side-effect, not an explicit code-block parser. If a future refinement tightens the line-start allowance (e.g., requires the FIRST non-whitespace character on the line to be `@`), 4-space-indented examples would need explicit backtick-wrapping or the `MACF_SKIP_MENTION_CHECK=1` override on the affected `gh ... comment` invocation. GitHub's renderer parses code blocks correctly regardless — the documented routing-firing risk (§2) is unaffected by the hook's heuristic.
+
 **False-positive trade-off:** The heuristic leans toward false-positive over false-negative. Edge cases the heuristic flags:
 
 - Single-line bodies with addressing form right after `--body "` (no preceding newline) — operator should typically put addressing on its own line in multi-line bodies
