@@ -154,6 +154,78 @@ foreign-reporter, use `Refs` for all of them.
 
 ---
 
+## How to submit LGTM — formal review, not comment
+
+**LGTM and "request changes" decisions MUST be submitted as formal GitHub
+reviews via `gh pr review --approve` or `gh pr review --request-changes`,
+not as plain `gh pr comment` text.**
+
+```bash
+# CORRECT — formal review submission
+gh pr review <PR-number> --repo <owner>/<repo> --approve --body-file <review.md>
+
+# CORRECT — formal request-changes submission
+gh pr review <PR-number> --repo <owner>/<repo> --request-changes --body-file <review.md>
+
+# WRONG — review communicated only via issue/PR comment
+gh pr comment <PR-number> --repo <owner>/<repo> --body "LGTM, you can merge"
+gh issue comment <issue-N> --repo <owner>/<repo> --body "@<author> LGTM on PR #M"
+```
+
+**Why this matters structurally:**
+
+Formal review submission fires GitHub's `pull_request_review` webhook
+event with `state in {approved, changes_requested}`. The MACF routing
+Action's `route-by-pr-review-state` job (macf-actions v3.3.0+, per
+macf-actions#39) listens for this exact event and notifies the PR author's
+channel-server directly — independent of whether the reviewer @mentioned
+the author in the body. **This is the structural defense for the
+LGTM→merge handoff: the state-change IS the wake signal.**
+
+If the LGTM is communicated only as a plain `gh pr comment`,
+`pull_request_review` never fires; routing falls back to `route-by-mention`
+which depends on body parsing (and `mention-routing-hygiene.md §5`
+backtick-suppression discipline can suppress what looks like an addressing
+mention). Empirically observed: cv-e2e-test rehearsals #9, #10, #11b
+(2026-04-29 and 2026-04-30) — agents merged PRs without firing
+`pull_request_review` at all, leaving `route-by-pr-review-state` an
+untested code path despite being shipped via macf-actions v3.3.0.
+
+**Same shape as the silent-fallback hazard class (`silent-fallback-hazards.md`):
+the comment-form succeeds at the API boundary (`gh pr comment` returns 0)
+but the semantic outcome (wake recipient via routing-Action's structural
+defense) silently doesn't happen. Pattern A defense at the discipline
+layer: assert the LGTM uses a state-change-firing mechanism, not just
+text-on-the-thread.**
+
+**The body content of the formal review** is the same kind of content you'd
+otherwise put in a comment — substantive review notes, what's strong, what
+needs changes, dispositions on prior feedback. The `--body-file` path is
+the canonical way to pass that body without shell-quoting issues (per the
+backticks-in-comments hazard noted in `mention-routing-hygiene.md`).
+
+**Verifying your review actually landed as a state-change** (per
+`verify-before-claim.md §2`):
+
+```bash
+# After gh pr review, confirm state is APPROVED (or CHANGES_REQUESTED)
+gh pr view <PR-number> --repo <owner>/<repo> --json reviews \
+  --jq '.reviews[-1] | {author: .author.login, state}'
+```
+
+If the most recent review's `state` is `COMMENTED` rather than `APPROVED`,
+the review was submitted as a comment-style review and won't fire the
+`pull_request_review.submitted` event with an actionable state — the
+routing won't engage. Re-submit with `--approve` or `--request-changes`.
+
+**When `--comment` (no state change) IS appropriate:** mid-review
+clarifying questions, partial-review notes before completing the read-
+through, or out-of-band observations on a PR that's not blocking your
+LGTM/changes decision. These don't fire structural routing; agents on
+both sides should treat them as informational, not as merge-gating signals.
+
+---
+
 ## Merge-by-implementer
 
 **The implementer who wrote the PR merges it, not the reviewer.**
