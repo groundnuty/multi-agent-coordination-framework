@@ -774,3 +774,123 @@ describe('getPermissionsAllow / getPermissionsDeny (macf#296)', () => {
     expect(getPermissionsDeny(tmpRoot)).toEqual([]);
   });
 });
+
+describe('end-to-end: macf update preserves operator-authored allow entries (macf#302 regression)', () => {
+  // Scenario reproduces macf#302: cv-architect's `.claude/settings.json`
+  // had operator-authored `Write` + `Edit` entries plus a legacy
+  // `Skill(macf-agent:*)` wildcard. After observing the after-state
+  // (Write/Edit stripped, wildcard preserved, 4 specific Skill entries
+  // missing), science-agent reported the drift as a macf-update bug.
+  //
+  // This test runs the EXACT 4 settings-writers `update.ts` invokes
+  // (in update-order) on the empirical before-state and asserts the
+  // expected after-state. PASS = macf-update is NOT the culprit;
+  // operator entries round-trip cleanly. The drift on academic-resume
+  // is therefore traceable to a non-macf surface (rehearsal harness
+  // template-overwrite, TUI startup normalization, or similar) rather
+  // than the macf settings-writers.
+  //
+  // Defensive purpose: any future regression in installGhTokenHook /
+  // installPluginSkillPermissions / installSandboxFdAllowRead /
+  // installSandboxExcludedCommands that strips operator-authored allow
+  // entries fails this test.
+  let tmpRoot: string;
+  let settingsPath: string;
+
+  beforeEach(() => {
+    tmpRoot = mkdtempSync(join(tmpdir(), 'macf-302-regression-'));
+    settingsPath = join(tmpRoot, '.claude', 'settings.json');
+  });
+
+  afterEach(() => {
+    rmSync(tmpRoot, { recursive: true, force: true });
+  });
+
+  it('preserves Write + Edit through full update sequence (#302 reproducer)', () => {
+    // Empirical BEFORE state from cv-architect's academic-resume workspace
+    // pre-rehearsal #12b (per #302 issue body):
+    mkdirSync(join(tmpRoot, '.claude'), { recursive: true });
+    writeFileSync(settingsPath, JSON.stringify({
+      permissions: {
+        allow: [
+          'Read', 'Write', 'Edit', 'Glob', 'Grep',
+          'WebFetch', 'WebSearch', 'Bash(*)', 'Agent',
+          'mcp__*', 'Skill(macf-agent:*)',
+        ],
+      },
+    }, null, 2));
+
+    // Run the exact 4 settings-writers in update.ts ordering:
+    installGhTokenHook(tmpRoot);
+    installPluginSkillPermissions(tmpRoot);
+    installSandboxFdAllowRead(tmpRoot);
+    installSandboxExcludedCommands(tmpRoot);
+
+    const s = JSON.parse(readFileSync(settingsPath, 'utf-8'));
+    const allow: readonly string[] = s.permissions.allow;
+
+    // Operator-authored entries MUST round-trip:
+    expect(allow).toContain('Write');
+    expect(allow).toContain('Edit');
+    expect(allow).toContain('Read');
+    expect(allow).toContain('Glob');
+    expect(allow).toContain('Grep');
+    expect(allow).toContain('WebFetch');
+    expect(allow).toContain('WebSearch');
+    expect(allow).toContain('Bash(*)');
+    expect(allow).toContain('Agent');
+    expect(allow).toContain('mcp__*');
+
+    // MACF-managed: 4 specific Skill entries installed:
+    expect(allow).toContain('Skill(macf-agent:macf-status)');
+    expect(allow).toContain('Skill(macf-agent:macf-issues)');
+    expect(allow).toContain('Skill(macf-agent:macf-peers)');
+    expect(allow).toContain('Skill(macf-agent:macf-ping)');
+
+    // MACF-managed: legacy wildcard dropped (current pattern is 4 specific
+    // entries — wildcard would auto-approve future-added skills without
+    // operator review). See packages/macf/src/cli/settings-writer.ts:138.
+    expect(allow).not.toContain('Skill(macf-agent:*)');
+  });
+
+  it('does not strip Write/Edit when sandbox + hook writers run after plugin-skill writer', () => {
+    // Defends against a future refactor that orders the writers differently
+    // and accidentally drops permissions.allow during a sandbox-section update.
+    // Each writer is supposed to be merge-preserving; the test enforces this
+    // across all 4 in any future ordering.
+    mkdirSync(join(tmpRoot, '.claude'), { recursive: true });
+    writeFileSync(settingsPath, JSON.stringify({
+      permissions: { allow: ['Write', 'Edit'] },
+    }, null, 2));
+
+    // Reverse order — same merge-preservation requirement.
+    installSandboxExcludedCommands(tmpRoot);
+    installSandboxFdAllowRead(tmpRoot);
+    installPluginSkillPermissions(tmpRoot);
+    installGhTokenHook(tmpRoot);
+
+    const s = JSON.parse(readFileSync(settingsPath, 'utf-8'));
+    expect(s.permissions.allow).toContain('Write');
+    expect(s.permissions.allow).toContain('Edit');
+  });
+
+  it('preserves operator deny rules alongside operator allow (defensive)', () => {
+    mkdirSync(join(tmpRoot, '.claude'), { recursive: true });
+    writeFileSync(settingsPath, JSON.stringify({
+      permissions: {
+        allow: ['Write', 'Edit', 'Bash(*)'],
+        deny: ['Bash(rm -rf /)', 'Write(/etc/*)'],
+      },
+    }, null, 2));
+
+    installGhTokenHook(tmpRoot);
+    installPluginSkillPermissions(tmpRoot);
+    installSandboxFdAllowRead(tmpRoot);
+    installSandboxExcludedCommands(tmpRoot);
+
+    const s = JSON.parse(readFileSync(settingsPath, 'utf-8'));
+    expect(s.permissions.allow).toContain('Write');
+    expect(s.permissions.allow).toContain('Edit');
+    expect(s.permissions.deny).toEqual(['Bash(rm -rf /)', 'Write(/etc/*)']);
+  });
+});
