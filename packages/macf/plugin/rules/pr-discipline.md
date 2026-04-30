@@ -204,25 +204,48 @@ needs changes, dispositions on prior feedback. The `--body-file` path is
 the canonical way to pass that body without shell-quoting issues (per the
 backticks-in-comments hazard noted in `mention-routing-hygiene.md`).
 
+**This rule complements `coordination.md §Communication 2`** ("discussion
+in issue comments, not PR comments"). The two surfaces serve different
+purposes:
+
+- **State-change events** (LGTM, request-changes) fire on the PR via
+  formal review submission — engages the routing-Action structural
+  defense (`route-by-pr-review-state`).
+- **Substantive discussion ABOUT the work** persists on the issue thread
+  — visible on the Projects board, persists after the PR is merged or
+  closed.
+
+Both surfaces are load-bearing. Don't skip the formal review thinking
+"the issue thread is the canonical place"; don't skip the issue-thread
+discussion thinking "the formal review covers everything."
+
 **Verifying your review actually landed as a state-change** (per
 `verify-before-claim.md §2`):
 
 ```bash
-# After gh pr review, confirm state is APPROVED (or CHANGES_REQUESTED)
+# After gh pr review, confirm a state-change review exists.
+# Filter for APPROVED or CHANGES_REQUESTED specifically — `[-1]` alone
+# can mistake a follow-up COMMENTED review for the missing state-change.
 gh pr view <PR-number> --repo <owner>/<repo> --json reviews \
-  --jq '.reviews[-1] | {author: .author.login, state}'
+  --jq '[.reviews[] | select(.state == "APPROVED" or .state == "CHANGES_REQUESTED")]
+        | last // "no state-change review"'
 ```
 
-If the most recent review's `state` is `COMMENTED` rather than `APPROVED`,
-the review was submitted as a comment-style review and won't fire the
-`pull_request_review.submitted` event with an actionable state — the
-routing won't engage. Re-submit with `--approve` or `--request-changes`.
+If the most recent state-change review is missing (output: `"no state-change
+review"`) OR the most recent review overall has `state == "COMMENTED"` and
+no prior state-change exists, the review was submitted as a comment-style
+review and won't fire the `pull_request_review.submitted` event with an
+actionable state — the routing won't engage. Re-submit with `--approve` or
+`--request-changes`.
 
-**When `--comment` (no state change) IS appropriate:** mid-review
-clarifying questions, partial-review notes before completing the read-
-through, or out-of-band observations on a PR that's not blocking your
-LGTM/changes decision. These don't fire structural routing; agents on
-both sides should treat them as informational, not as merge-gating signals.
+**When `--comment` (no state change) IS appropriate:**
+
+- **Mid-review clarifying questions** — partial-review feedback before completing the read-through, asking the implementer to disambiguate before you decide
+- **Partial-review notes** — observations on parts of the diff while the rest is in flight (e.g., "skimmed the `src/server.ts` changes; will read tests next pass")
+- **Out-of-band observations** — comments on a PR that's not blocking your LGTM/changes decision (style nits, future-work suggestions, links to adjacent context)
+- **Review-pickup acknowledgment** — comment like *"picking this up; will review tonight"* or *"queued behind X; ETA Y"* so the PR author knows when to expect feedback. Coordination-discipline (saves the implementer from polling) but isn't a state-change.
+
+These don't fire structural routing; agents on both sides should treat them as informational, not as merge-gating signals.
 
 ---
 
