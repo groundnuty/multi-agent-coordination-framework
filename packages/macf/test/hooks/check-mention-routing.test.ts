@@ -119,9 +119,12 @@ describe('check-mention-routing.sh (hook)', () => {
 
   describe('positive path — backticked describing form is allowed', () => {
     it('allows backticked `@<bot>[bot]` mid-line (canonical describing §5)', () => {
+      // Body has an addressing line + a backticked describing line. Check B
+      // (describing-leak) doesn't fire on the backticked form per §5; Check A
+      // (must-have-mention; macf#244) is satisfied by the addressing line.
       const r = runHook({
         command:
-          'gh issue comment 123 --body "$(cat <<EOF\nThe `@macf-tester-1-agent[bot]` response was clean.\nEOF\n)"',
+          'gh issue comment 123 --body "$(cat <<EOF\n@macf-recipient-agent[bot] note:\nThe `@macf-tester-1-agent[bot]` response was clean.\nEOF\n)"',
       });
       expect(r.status).toBe(0);
     });
@@ -224,23 +227,32 @@ describe('check-mention-routing.sh (hook)', () => {
 
   describe('edge cases', () => {
     it('handles empty body (no @ mentions at all)', () => {
+      // Switched to `gh issue close --comment` form — bypasses Check A
+      // (must-have-mention; macf#244) which would otherwise BLOCK on a
+      // body with no @<bot>[bot] mentions. The intent here is "hook
+      // doesn't crash on degenerate inputs"; close subcommand exercises
+      // the same parser without the Check A gate.
       const r = runHook({
-        command: 'gh issue comment 123 --body "Just a status update, no mentions."',
+        command: 'gh issue close 123 --comment "Just a status update, no mentions."',
       });
       expect(r.status).toBe(0);
     });
 
     it('handles body with no agent handles (only non-bot @ refs)', () => {
+      // Same close-bypass rationale as above. Tests that the regex
+      // doesn't false-positive-match @<word> without [bot] suffix.
       const r = runHook({
         command:
-          'gh issue comment 123 --body "Mention @somebody (not a bot pattern) in passing."',
+          'gh issue close 123 --comment "Mention @somebody (not a bot pattern) in passing."',
       });
       expect(r.status).toBe(0);
     });
 
     it('does not match similar-looking patterns without [bot] suffix', () => {
+      // Close-bypass rationale per above — Check B's regex still
+      // exercised; "no [bot] suffix → no match → no BLOCK" verified.
       const r = runHook({
-        command: 'gh issue comment 123 --body "Reference @macf-code-agent without bot suffix."',
+        command: 'gh issue close 123 --comment "Reference @macf-code-agent without bot suffix."',
       });
       expect(r.status).toBe(0);
     });
@@ -316,9 +328,12 @@ describe('check-mention-routing.sh (hook)', () => {
     });
 
     it('allows backticked CV-fleet handle in describing context', () => {
+      // Close-bypass for Check A; Check B's backtick-suppression on
+      // CV-fleet handles is the real assertion (broadened HANDLE_PATTERN
+      // matches @cv-architect[bot] but backticks suppress the BLOCK).
       const r = runHook({
         command:
-          'gh issue comment 123 --body "The `@cv-architect[bot]` response was clean."',
+          'gh issue close 123 --comment "The `@cv-architect[bot]` response was clean."',
       });
       expect(r.status).toBe(0);
     });
@@ -332,28 +347,31 @@ describe('check-mention-routing.sh (hook)', () => {
     });
 
     it('allows backticked third-party bot handle (legitimate describing reference)', () => {
+      // Close-bypass for Check A; Check B verified — third-party-bot
+      // backtick-suppression behaves the same as macf-fleet.
       const r = runHook({
         command:
-          'gh issue comment 123 --body "Note that the `@dependabot[bot]` MR was reverted."',
+          'gh issue close 123 --comment "Note that the `@dependabot[bot]` MR was reverted."',
       });
       expect(r.status).toBe(0);
     });
 
     it('does not match handle starting with digit (invalid GitHub handle shape)', () => {
       // First-char letter requirement excludes leading-digit forms.
+      // Close-bypass per above (Check B regex still exercised).
       const r = runHook({
-        command: 'gh issue comment 123 --body "Reference @1bot[bot] in passing."',
+        command: 'gh issue close 123 --comment "Reference @1bot[bot] in passing."',
       });
       expect(r.status).toBe(0);
     });
 
     it('does not match handle starting with underscore or hyphen', () => {
-      // Same first-char letter requirement.
+      // Same first-char letter requirement; close-bypass for Check A.
       const r1 = runHook({
-        command: 'gh issue comment 123 --body "Reference @_priv[bot] in passing."',
+        command: 'gh issue close 123 --comment "Reference @_priv[bot] in passing."',
       });
       const r2 = runHook({
-        command: 'gh issue comment 123 --body "Reference @-leader[bot] in passing."',
+        command: 'gh issue close 123 --comment "Reference @-leader[bot] in passing."',
       });
       expect(r1.status).toBe(0);
       expect(r2.status).toBe(0);
@@ -361,8 +379,9 @@ describe('check-mention-routing.sh (hook)', () => {
 
     it('does not match `@[bot]` with no handle body', () => {
       // First-char letter requirement excludes the empty-handle form.
+      // Close-bypass per above.
       const r = runHook({
-        command: 'gh issue comment 123 --body "Reference @[bot] in passing."',
+        command: 'gh issue close 123 --comment "Reference @[bot] in passing."',
       });
       expect(r.status).toBe(0);
     });
@@ -374,6 +393,140 @@ describe('check-mention-routing.sh (hook)', () => {
         command:
           'gh issue comment 123 --body "$(cat <<EOF\nThe @dependabot[bot] update was reverted.\nEOF\n)"',
         env: { MACF_SKIP_MENTION_CHECK: '1' },
+      });
+      expect(r.status).toBe(0);
+    });
+  });
+
+  describe('Check A — must-have-mention (macf#244)', () => {
+    it('blocks `gh issue comment` with body containing zero @mentions', () => {
+      // The canonical Check A failure mode: peer agent never sees the
+      // comment because routing depends on @mention presence.
+      const r = runHook({
+        command: 'gh issue comment 123 --body "Just a status update."',
+      });
+      expect(r.status).toBe(2);
+      expect(r.stderr).toContain('zero');
+      expect(r.stderr).toContain('routing-active');
+    });
+
+    it('blocks `gh pr comment` with body containing zero @mentions (sister case)', () => {
+      const r = runHook({
+        command: 'gh pr comment 123 --body "Status pushed."',
+      });
+      expect(r.status).toBe(2);
+    });
+
+    it('blocks body with only backticked mentions (routing-suppressed)', () => {
+      // Backticked mentions are describing-form (§5) and do NOT fire
+      // routing. A body containing only backticked handles still has
+      // zero routing-active mentions → Check A blocks.
+      const r = runHook({
+        command:
+          'gh issue comment 123 --body "Per the `@macf-code-agent[bot]` notes, status is X"',
+      });
+      expect(r.status).toBe(2);
+      expect(r.stderr).toContain('routing-active');
+    });
+
+    it('allows body with line-start addressing mention (routing-active)', () => {
+      const r = runHook({
+        command:
+          'gh issue comment 123 --body "$(cat <<EOF\n@macf-code-agent[bot] LGTM, you can merge.\nEOF\n)"',
+      });
+      expect(r.status).toBe(0);
+    });
+
+    it('allows mixed body: backticked describing + line-start addressing', () => {
+      // Realistic comment shape — references one peer in describing-form
+      // and addresses another. Routing-active count == 1 → Check A passes.
+      const r = runHook({
+        command:
+          'gh issue comment 123 --body "$(cat <<EOF\nPer `@macf-code-agent[bot]` notes, status is good.\n@macf-science-agent[bot] please confirm.\nEOF\n)"',
+      });
+      expect(r.status).toBe(0);
+    });
+
+    it('Check B (describing-leak) takes precedence over Check A (no addressing)', () => {
+      // If a body has only a mid-line raw mention (Check B BLOCK trigger),
+      // that mention is also routing-active (Check A passes — count > 0).
+      // The describing-leak BLOCK message surfaces, not the no-addressing one.
+      const r = runHook({
+        command:
+          'gh issue comment 123 --body "$(cat <<EOF\nThe @macf-code-agent[bot] response was clean.\nEOF\n)"',
+      });
+      expect(r.status).toBe(2);
+      // The Check B message mentions describing-context leak; Check A's
+      // distinctive phrase ("zero ... mentions") should NOT appear.
+      expect(r.stderr).toContain('describing-context');
+      expect(r.stderr).not.toContain('zero');
+    });
+
+    it('MACF_SKIP_MENTION_CHECK=1 bypasses Check A (legitimate no-recipient cases)', () => {
+      const r = runHook({
+        command: 'gh issue comment 123 --body "Just a status update."',
+        env: { MACF_SKIP_MENTION_CHECK: '1' },
+      });
+      expect(r.status).toBe(0);
+    });
+
+    it('block message cites coordination.md §Communication 2', () => {
+      const r = runHook({
+        command: 'gh issue comment 123 --body "no mention here"',
+      });
+      expect(r.status).toBe(2);
+      expect(r.stderr).toContain('coordination.md');
+      expect(r.stderr).toContain('Communication 2');
+    });
+
+    it('block message includes example fix + override hint', () => {
+      const r = runHook({
+        command: 'gh issue comment 123 --body "no mention here"',
+      });
+      expect(r.stderr).toContain('@<recipient-handle>[bot]');
+      expect(r.stderr).toContain('MACF_SKIP_MENTION_CHECK=1');
+    });
+  });
+
+  describe('Check A — close-subcommand bypass (self-close pattern)', () => {
+    it('allows `gh issue close --comment` without @mention (canonical self-close)', () => {
+      // Per coordination.md §Issue Lifecycle 1 case 2: self-close
+      // verification comments are reporter-internal, no recipient. The
+      // close action itself is the routing-end signal; no addressed
+      // mention required. Check A bypasses the close subcommand.
+      const r = runHook({
+        command:
+          'gh issue close 123 --reason completed --comment "Verified on main after PR #M merged. Closing as reporter."',
+      });
+      expect(r.status).toBe(0);
+    });
+
+    it('allows `gh pr close --comment` without @mention', () => {
+      const r = runHook({
+        command: 'gh pr close 123 --comment "Superseded by PR #N."',
+      });
+      expect(r.status).toBe(0);
+    });
+
+    it('still blocks `gh issue close --comment` with describing-leak (Check B applies)', () => {
+      // Check B leak prevention is independent of recipient semantics —
+      // a describing-leak in close --comment still fires false-positive
+      // routing on the leaked handle.
+      const r = runHook({
+        command:
+          'gh issue close 123 --comment "$(cat <<EOF\nThe @macf-tester-1-agent[bot] sweep was clean.\nEOF\n)"',
+      });
+      expect(r.status).toBe(2);
+      expect(r.stderr).toContain('describing-context');
+    });
+
+    it('allows `gh issue close --comment` with both describing-leak-suppressed (backticked) and no addressing', () => {
+      // close --comment with backticked describing reference + no
+      // addressing → Check A bypassed (close subcommand) + Check B not
+      // triggered (backticks suppress) → ALLOW.
+      const r = runHook({
+        command:
+          'gh issue close 123 --comment "Verified `@macf-tester-1-agent[bot]` data; closing."',
       });
       expect(r.status).toBe(0);
     });
