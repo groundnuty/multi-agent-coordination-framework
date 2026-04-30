@@ -202,5 +202,5 @@ Address resolution per DR-005/DR-006/DR-007: `HOST`/`PORT` come from `MACF_<PROJ
 **Remaining work for Stage 3 cutover (tracked in `macf#257`):**
 
 - Fleet cutover: each substrate agent runs `macf init` to enable channel server (operator-coordinated; per-agent self-migration per `macf#257` Phase B path 2)
-- Migration runbook: `design/stage2-to-stage3-migration.md` (Phase A deliverable)
+- Consumer onboarding runbook: `design/macf-consumer-onboarding.md` (originally drafted as `stage2-to-stage3-migration.md` for substrate migration per `macf#257` Phase A; reshaped per `macf#273`)
 - `silent-fallback-hazards.md` Instance 3 status update post-observation-window (handled in `groundnuty/macf-science-agent`)

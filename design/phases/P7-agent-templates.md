@@ -131,5 +131,5 @@ The launcher invokes `claude --plugin-dir "$SCRIPT_DIR/.macf/plugin" "$@"` — t
 **Remaining work for Stage 3 cutover (tracked in `macf#257`):**
 
 - Per-substrate-agent: run `macf init` to get the v0.2.1 templates + plugin v0.2.0 in place (operator-coordinated; per-agent self-migration per `macf#257` Phase B path 2)
-- Migration runbook: `design/stage2-to-stage3-migration.md` (Phase A deliverable)
+- Consumer onboarding runbook: `design/macf-consumer-onboarding.md` (originally drafted as `stage2-to-stage3-migration.md` for substrate migration per `macf#257` Phase A; reshaped per `macf#273` after the substrate-permanent-Stage-2 directive made the migration framing obsolete — actual reusable surface is consumer onboarding)
 - Substrate workspaces with custom `claude.sh` (e.g., extra OTel resource attrs, content-emission flags, tmux/sg-docker wrappers): hand-merge customizations into the canonical post-init claude.sh per the runbook's step-2 + step-3 pattern (same approach `macf-testbed:scripts/bootstrap-tester.sh` uses for the loaded/bare tester templates per `macf-testbed#230`)
