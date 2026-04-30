@@ -775,6 +775,113 @@ describe('getPermissionsAllow / getPermissionsDeny (macf#296)', () => {
   });
 });
 
+describe('getPermissionsAllow / getPermissionsDeny merge with settings.local.json (macf#305)', () => {
+  let tmpRoot: string;
+  let mainPath: string;
+  let localPath: string;
+
+  beforeEach(() => {
+    tmpRoot = mkdtempSync(join(tmpdir(), 'perms-merge-'));
+    mainPath = join(tmpRoot, '.claude', 'settings.json');
+    localPath = join(tmpRoot, '.claude', 'settings.local.json');
+    mkdirSync(join(tmpRoot, '.claude'), { recursive: true });
+  });
+
+  afterEach(() => {
+    rmSync(tmpRoot, { recursive: true, force: true });
+  });
+
+  function writeMain(obj: unknown): void {
+    writeFileSync(mainPath, JSON.stringify(obj, null, 2));
+  }
+
+  function writeLocal(obj: unknown): void {
+    writeFileSync(localPath, JSON.stringify(obj, null, 2));
+  }
+
+  it('settings.json-only — returns settings.json allow (unchanged behavior)', () => {
+    writeMain({ permissions: { allow: ['Write', 'Edit'] } });
+    expect(getPermissionsAllow(tmpRoot)).toEqual(['Write', 'Edit']);
+  });
+
+  it('settings.local.json-only — returns settings.local.json allow (the macf#305 fix)', () => {
+    // The exact case driving #305: cv-architect + cv-project-archaeologist
+    // moved Write+Edit to settings.local.json after the macf#302 drift
+    // workaround. Pre-#305 doctor missed these workspaces.
+    writeLocal({ permissions: { allow: ['Write', 'Edit'] } });
+    expect(getPermissionsAllow(tmpRoot)).toEqual(['Write', 'Edit']);
+  });
+
+  it('both files — returns deduped union per Claude Code merge semantics', () => {
+    writeMain({ permissions: { allow: ['Read', 'Bash(*)'] } });
+    writeLocal({ permissions: { allow: ['Write', 'Edit'] } });
+    const result = getPermissionsAllow(tmpRoot);
+    expect(result).toContain('Read');
+    expect(result).toContain('Bash(*)');
+    expect(result).toContain('Write');
+    expect(result).toContain('Edit');
+    expect(result).toHaveLength(4);
+  });
+
+  it('both files — duplicates deduped (string equality)', () => {
+    writeMain({ permissions: { allow: ['Write', 'Edit', 'Bash(*)'] } });
+    writeLocal({ permissions: { allow: ['Edit', 'Read'] } });
+    const result = getPermissionsAllow(tmpRoot);
+    expect(result).toContain('Write');
+    expect(result).toContain('Edit');
+    expect(result).toContain('Bash(*)');
+    expect(result).toContain('Read');
+    // Edit appears in both files but only once in the merged result.
+    expect(result.filter((e) => e === 'Edit')).toHaveLength(1);
+  });
+
+  it('neither file present — returns empty array (existing posture)', () => {
+    expect(getPermissionsAllow(tmpRoot)).toEqual([]);
+    expect(getPermissionsDeny(tmpRoot)).toEqual([]);
+  });
+
+  it('throws with shape-aware error when settings.json is malformed', () => {
+    writeFileSync(mainPath, '{ broken main');
+    writeLocal({ permissions: { allow: ['Write'] } });
+    expect(() => getPermissionsAllow(tmpRoot)).toThrow(/Refusing to overwrite malformed/);
+    expect(() => getPermissionsAllow(tmpRoot)).toThrow(/settings\.json/);
+    // The path in the error message is shape-aware — surfaces WHICH file failed parse.
+  });
+
+  it('throws with shape-aware error when settings.local.json is malformed', () => {
+    writeMain({ permissions: { allow: ['Write'] } });
+    writeFileSync(localPath, '{ broken local');
+    expect(() => getPermissionsAllow(tmpRoot)).toThrow(/Refusing to overwrite malformed/);
+    expect(() => getPermissionsAllow(tmpRoot)).toThrow(/settings\.local\.json/);
+  });
+
+  it('getPermissionsDeny mirrors merge semantics', () => {
+    writeMain({ permissions: { deny: ['Write(/etc/*)'] } });
+    writeLocal({ permissions: { deny: ['Write(/root/*)', 'Edit(/etc/*)'] } });
+    const result = getPermissionsDeny(tmpRoot);
+    expect(result).toContain('Write(/etc/*)');
+    expect(result).toContain('Write(/root/*)');
+    expect(result).toContain('Edit(/etc/*)');
+    expect(result).toHaveLength(3);
+  });
+
+  it('one file has permissions, other has unrelated keys — handles gracefully', () => {
+    writeMain({ hooks: { PreToolUse: [] }, env: { FOO: 'bar' } });
+    writeLocal({ permissions: { allow: ['Write', 'Edit'] } });
+    expect(getPermissionsAllow(tmpRoot)).toEqual(['Write', 'Edit']);
+  });
+
+  it('preserves order: settings.json entries first, settings.local.json second', () => {
+    // Order-dependence not strictly required by AC but useful for
+    // debugging — operator can scan the merged list and tell where
+    // each entry came from.
+    writeMain({ permissions: { allow: ['Read', 'Bash(*)'] } });
+    writeLocal({ permissions: { allow: ['Write', 'Edit'] } });
+    const result = getPermissionsAllow(tmpRoot);
+    expect(result).toEqual(['Read', 'Bash(*)', 'Write', 'Edit']);
+  });
+});
+
 describe('end-to-end: macf update preserves operator-authored allow entries (macf#302 regression)', () => {
   // Scenario reproduces macf#302: cv-architect's `.claude/settings.json`
   // had operator-authored `Write` + `Edit` entries plus a legacy

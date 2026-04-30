@@ -186,38 +186,68 @@ export function getSandboxAllowRead(workspaceDir: string): readonly string[] {
 }
 
 /**
- * Read `.claude/settings.json`'s `permissions.allow` array. Returns an
- * empty array if the file is absent or the nested shape isn't a string
- * list. Throws on malformed JSON (matches `getSandboxAllowRead` posture).
+ * Read `permissions.<key>` from a single settings file path. Returns an
+ * empty array if the file is absent, no `permissions` block, or the array
+ * isn't a string list. Throws on malformed JSON via `readSettings`.
  *
- * Used by `macf doctor` (macf#296) to surface allow-list gaps that
- * would block autonomous coordination — specifically Write/Edit absence
- * causing interactive permission prompts mid-test.
+ * Internal helper — `getPermissionsAllow` / `getPermissionsDeny` use this
+ * to read each scope (settings.json + settings.local.json) before
+ * merging.
  */
-export function getPermissionsAllow(workspaceDir: string): readonly string[] {
-  const absDir = resolve(workspaceDir);
-  const path = join(absDir, '.claude', 'settings.json');
-  const settings = readSettings(path);
+function readPermissionsArray(filePath: string, key: 'allow' | 'deny'): readonly string[] {
+  const settings = readSettings(filePath);
   const permissionsRaw = (settings['permissions'] as Record<string, unknown> | undefined) ?? {};
-  const list = permissionsRaw['allow'];
+  const list = permissionsRaw[key];
   if (!Array.isArray(list)) return [];
   return list.filter((v): v is string => typeof v === 'string');
 }
 
 /**
- * Read `.claude/settings.json`'s `permissions.deny` array. Sister to
- * `getPermissionsAllow` — used to detect operator-authored deny rules
- * that contextualise an allow-list gap as deliberate (security-driven)
- * rather than accidental drift.
+ * Read the workspace-effective `permissions.allow` array — merge of
+ * `.claude/settings.json` + `.claude/settings.local.json` (macf#305).
+ *
+ * Per Claude Code's canonical settings semantics, `permissions.allow` /
+ * `deny` / `ask` arrays MERGE/concatenate across scopes (not replace —
+ * opposite to scalar settings which higher-priority scopes replace).
+ * The doctor's effective-permissions check therefore unions both
+ * scopes; an entry present in EITHER file counts as granted.
+ *
+ * Duplicates are removed. Empty array if neither file exists. Throws
+ * on malformed JSON in either file (the path is in the error message,
+ * surfacing which file failed to parse).
+ *
+ * Used by `macf doctor` (macf#296 / #298) to surface allow-list gaps
+ * that would block autonomous coordination — specifically Write/Edit
+ * absence causing interactive permission prompts mid-test. Pre-#305
+ * the helper read settings.json only; this caused false-positive WARNs
+ * on workspaces where operators canonically placed Write/Edit in
+ * settings.local.json (as cv-architect / cv-project-archaeologist did
+ * after the macf#302 substrate-side drift workaround).
+ */
+export function getPermissionsAllow(workspaceDir: string): readonly string[] {
+  const absDir = resolve(workspaceDir);
+  const claudeDir = join(absDir, '.claude');
+  const main = readPermissionsArray(join(claudeDir, 'settings.json'), 'allow');
+  const local = readPermissionsArray(join(claudeDir, 'settings.local.json'), 'allow');
+  return Array.from(new Set([...main, ...local]));
+}
+
+/**
+ * Read the workspace-effective `permissions.deny` array — sister to
+ * `getPermissionsAllow`. Same merge semantics: union of
+ * settings.json + settings.local.json deny arrays, deduped (macf#305).
+ *
+ * Used to detect operator-authored deny rules that contextualise an
+ * allow-list gap as deliberate (security-driven) rather than
+ * accidental drift. A deny rule in EITHER scope counts; the doctor's
+ * INFO-severity classification fires on the union.
  */
 export function getPermissionsDeny(workspaceDir: string): readonly string[] {
   const absDir = resolve(workspaceDir);
-  const path = join(absDir, '.claude', 'settings.json');
-  const settings = readSettings(path);
-  const permissionsRaw = (settings['permissions'] as Record<string, unknown> | undefined) ?? {};
-  const list = permissionsRaw['deny'];
-  if (!Array.isArray(list)) return [];
-  return list.filter((v): v is string => typeof v === 'string');
+  const claudeDir = join(absDir, '.claude');
+  const main = readPermissionsArray(join(claudeDir, 'settings.json'), 'deny');
+  const local = readPermissionsArray(join(claudeDir, 'settings.local.json'), 'deny');
+  return Array.from(new Set([...main, ...local]));
 }
 
 /**
