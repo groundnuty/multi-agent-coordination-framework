@@ -9,6 +9,92 @@ Plugin + routing-workflow changes ship from separate repos
 [`groundnuty/macf-actions`](https://github.com/groundnuty/macf-actions))
 and are not included here — pin them explicitly in each workspace.
 
+## [0.2.9] — 2026-04-30
+
+Bundles 6 changes accumulated since v0.2.8: 2 doctor enhancements, 1 hook
+broadening, 1 regression test, and 2 canonical-rule clarifications.
+
+### Added
+- **`macf doctor` warns when `permissions.allow` missing Write/Edit ([#298], closes [#296])** —
+  New "Workspace permissions" report section parallel to the existing Sandbox
+  filesystem block. Surfaces the configuration drift class that blocks
+  autonomous coordination via interactive permission prompts on first
+  Write/Edit invocation. Severity classification: `BLOCK` (Write absent +
+  no Bash fallback), `WARN` (tool absent + Bash fallback present), `INFO`
+  (tool absent + deny rule present — deliberate). Doctor exit code unchanged
+  by this check (warn-only). Empirical motivation: cv-architect blocked
+  mid-test on a Write tool prompt during cv-e2e-test rehearsal #11b
+  (2026-04-30) because `permissions.allow` lacked Write — sister
+  cv-project-archaeologist had it; operator-authored drift.
+- **`check-mention-routing.sh` HANDLE_PATTERN broadened beyond macf fleet ([#301], closes [#276])** —
+  Generalizes from `@macf-*-agent[bot]` to `@<any-handle>[bot]` so the hook
+  protects describing-context discipline across the full bot ecosystem:
+  macf-* fleet, future CV fleet (`@cv-architect`, `@academic-resume-author`,
+  similar shapes), future MACF-consumer fleets, AND third-party bots
+  (`@dependabot`, `@github-actions`). First-char-letter constraint excludes
+  invalid handle shapes (`@1bot[bot]`, `@_bot[bot]`, `@[bot]`).
+
+### Fixed
+- **`macf doctor` reads merged `settings.json` + `settings.local.json` for permissions ([#306], closes [#305])** —
+  Pre-fix the doctor read only `.claude/settings.json` for the Write/Edit
+  warning, but Claude Code merges `permissions.{allow,deny,ask}` arrays
+  across both files (operators canonically place Write/Edit in
+  settings.local.json since Claude Code TUI doesn't auto-rewrite that
+  file). Post-fix `getPermissionsAllow` / `getPermissionsDeny` return the
+  deduped union. Closes the false-positive WARN trap on workspaces where
+  Write/Edit is canonically placed in the local override file
+  (academic-resume + cv-project-archaeologist post-macf#302 workaround).
+
+### Documentation
+- **`coordination.md` closure-direction independence from fix-authorship ([#304])** —
+  New "Inversion warning" subsection in §Issue Lifecycle 1 explicitly
+  addressing the failure mode where the issue reporter delegates closure
+  mechanics back to the implementer of a PR that addressed their issue.
+  Names the substitution-mistake (fix-author ≠ reporter), enumerates the
+  4 cases of `{filed, implemented} × {self, peer}` with explicit
+  closure-owner per case, reinforces the `gh issue view --json author`
+  self-check. Empirical motivation: 4 observed cross-agent occurrences
+  (testbed#185 → macf#291 → macf#302 → macf#305).
+- **`mention-routing-hygiene.md` §7 4-space-indent mechanism clarification ([#299], closes [#277])** —
+  Documents that 4-space-indent code blocks pass the hook via the
+  line-start addressing-allowance regex (NOT via code-block recognition).
+  Triple-backtick passes via the adjacent-backtick check; 4-space-indent
+  passes via leading-whitespace satisfying the line-start prefix regex.
+  Same allowed outcome, different reasoning.
+
+### Tests
+- **Regression test: macf update preserves operator-authored allow entries ([#303], refs [#302])** —
+  Locks in the round-trip preservation guarantee for `permissions.allow`
+  through the 4 settings-writers (`installGhTokenHook` +
+  `installPluginSkillPermissions` + `installSandboxFdAllowRead` +
+  `installSandboxExcludedCommands`). Investigation of macf#302 confirmed
+  macf-update is NOT the source of operator-entry drift on academic-resume
+  (the 2:30 mtime gap and structural inconsistency of the after-state
+  rule out macf as the writer); the regression test defends against any
+  future refactor introducing a stripping bug.
+
+### Investigation summary
+
+The 6-change accumulation reflects the discipline-canonicalization
+substrate-evolution cycle (per macf-science-agent's
+`insights/2026-04-30-rehearsal-13b-empirical-witnesses.md`): cv-e2e-test
+rehearsal #11b/#12b/#13b surfaced multiple coordination-discipline gaps;
+each was addressed at one of the three promotion paths (Path 1 doc /
+Path 2 hook / Path 3 detection). Rehearsal #13b reached 10/11 PASS
+empirically validating the LGTM-routing structural defense.
+
+[#296]: https://github.com/groundnuty/macf/issues/296
+[#298]: https://github.com/groundnuty/macf/pull/298
+[#277]: https://github.com/groundnuty/macf/issues/277
+[#299]: https://github.com/groundnuty/macf/pull/299
+[#276]: https://github.com/groundnuty/macf/issues/276
+[#301]: https://github.com/groundnuty/macf/pull/301
+[#302]: https://github.com/groundnuty/macf/issues/302
+[#303]: https://github.com/groundnuty/macf/pull/303
+[#304]: https://github.com/groundnuty/macf/pull/304
+[#305]: https://github.com/groundnuty/macf/issues/305
+[#306]: https://github.com/groundnuty/macf/pull/306
+
 ## [0.2.8] — 2026-04-30
 
 ### Documentation
