@@ -51,9 +51,61 @@ test/             ← unit tests (default vitest run) + test/e2e/ (excluded)
 
 ## Implementation Status
 
-P1–P7 all implemented. Post-P7 work is bug-fix + security + hardening driven
-by issue queue and periodic audits. Currently at **v0.1.1** (see `CHANGELOG.md`).
-Recent security-critical landings:
+P1–P7 all implemented. Stage 3 master tracker (#254) closed 2026-04-27;
+substrate fleet (science-/code-/devops-agent) stays on Stage 2 SSH+tmux as
+permanent operating state per operator directive. Stage 3 (mTLS HTTP POST
+to `/notify` via channel server) operational on consumer fleet (CV agents,
+testers, future macf-init'd projects). Currently at **v0.2.7** (see
+`CHANGELOG.md`); paired with `groundnuty/macf-actions` v3.3.0 + plugin
+`groundnuty/macf-marketplace` v0.2.7.
+
+Recent landings (most recent first; earlier security/hardening still
+load-bearing):
+
+### v0.2.7 (2026-04-30)
+
+- **#293 / pr_review_state NotifyType** — receiver-side schema + handler
+  chain for `macf-actions` v3.3.0's `route-by-pr-review-state` job. Closes
+  the LGTM→merge handoff gap (cv-e2e-test rehearsals #9+#10 evidence —
+  reviewers approving without explicit `@<author>[bot]` left PR author
+  idle). `NotifyTypeSchema` adds `'pr_review_state'`; `formatNotifyContent`
+  + `operationNameForNotifyType` map cleanly. Pattern E (Pattern E
+  observational-only at receiver per DR-023 v0.2.4) does NOT apply —
+  PR author SHOULD wake to merge/fix.
+- **#292 / `macf update` flag-semantics docs** — CLI `--description` +
+  JSDoc + `update --help` extended block now document that `claude.sh`
+  regeneration is unconditional (template-evolution sync per #63);
+  flags only gate version-pin bumps + plugin re-fetch. Behavior unchanged.
+
+### v0.2.6 (2026-04-29)
+
+- **#283 / canonical claude-sh OTLP-endpoint fix** (silent-fallback
+  Instance 8) — `packages/macf/src/cli/claude-sh.ts` hardcoded retired
+  `:4318` (compose-stack decommissioned 2026-04-25); now defaults to
+  `:14318` (current k3d cluster) AND emits env-overridable
+  `${OTEL_EXPORTER_OTLP_ENDPOINT:-...}` form. Two-layer override
+  documented (template-time `MACF_OTEL_ENDPOINT` + run-time
+  `OTEL_EXPORTER_OTLP_ENDPOINT`).
+
+### v0.2.5 (2026-04-27)
+
+- **#280 / T6 channel-server metrics** — `macf.notify_received_total{type, agent}` +
+  `macf.notify_peer_total{event, delivered, agent}` counters on
+  `macf-channel-server`. `MeterProvider` bootstrap parallel to
+  `TracerProvider` in `otel.ts`; same DR-021 zero-cost-default. Closes
+  testbed#242 T6 deferred AC.
+- **#279 / DR-023 substrate-compat amendment** — promotes architectural
+  insight from #275 to DR-level decision rule: PreToolUse-blocking hooks
+  (UC-2 LGTM gate, UC-4 routing-leak) need bash command-type form;
+  `Stop` / `SessionStart` best-effort hooks (UC-1 notify_peer, UC-3
+  checkpoint) keep mcp_tool form.
+- **#275 / mention-routing-hygiene PreToolUse hook** (UC-4) —
+  `check-mention-routing.sh` blocks raw `@<bot>[bot]` patterns in
+  describing-context positions on `gh comment` invocations. Bash hook
+  (NOT mcp_tool) per substrate-compat reasoning. Override:
+  `MACF_SKIP_MENTION_CHECK=1`. Same shape as #140 attribution-trap hook.
+
+### Earlier security-critical landings:
 
 - **#140 / attribution-trap PreToolUse hook** — structural block of `gh` /
   `git push` invocations when `GH_TOKEN` isn't a `ghs_` bot token.
