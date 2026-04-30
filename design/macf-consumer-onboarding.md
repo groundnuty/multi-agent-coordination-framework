@@ -6,6 +6,8 @@
 
 This document is what an operator (or the consumer agent itself, picking up the directive) reads to bootstrap a new MACF-consumer project against Stage 3 routing infrastructure (mTLS HTTP-POST `/notify` against per-agent channel servers).
 
+For a hands-on tutorial walking through the bootstrap path step-by-step (with concrete time budgets per step), see [`docs/quickstart.md`](../docs/quickstart.md). This document is the **reference runbook** (more detail per step + decommission + rollback paths); `quickstart.md` is the **tutorial** (linear, ~30 min, designed for first-time bootstrap).
+
 ## What you get
 
 After bootstrap, a consumer agent participates in MACF coordination via:
