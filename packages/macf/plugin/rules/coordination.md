@@ -36,6 +36,24 @@ The rules here are topology-agnostic: they work whether the project uses a scien
 
    **Why this rule matters:** Reporter-owns-closure gives the reporter a chance to verify the fix matches their intent before the issue disappears from their queue. In a multi-agent workflow, the reporter often has context the implementer doesn't (why it was filed at that priority, what the acceptance criteria really meant, what adjacent work it blocks). Auto-close strips that context; reflexive handoff on self-filed issues wastes it.
 
+   **Inversion warning — closure direction is independent of who implemented the fix.** A common failure mode after PR-merge handoffs: the reporter mistakes the implementer for the closer because the implementer just finished the work. Rule 1A says **reporter** owns closure, NOT **fix-author**:
+
+   - **You filed the issue + you implemented the PR + you merged it** → you close (you're both reporter AND implementer).
+   - **You filed the issue + a peer implemented the PR + the peer merged it** → **you still close** (you're the reporter; the peer is implementer-but-not-reporter; their action ends at "post handoff comment + stop" per failure mode A).
+   - **A peer filed the issue + you implemented + you merged the PR** → **the peer closes** (they're the reporter; you @mention them with `ready for you to close when verified` per failure mode A).
+   - **A peer filed the issue + a peer implemented + a peer merged the PR** → reporter closes; you're observer.
+
+   The trap is symmetric to failure mode A. Failure mode A is "I close someone else's issue because I implemented the fix" (forgetting that fix-author ≠ reporter); the inverse is "I tell the implementer to self-close my issue because they merged the fix" (same forgetting, opposite direction). Both are the same conceptual mistake — substituting fix-authorship for issue-reportership.
+
+   **Reinforced self-check after any PR-merge that addresses an issue:**
+
+        gh issue view <N> --json author --jq '.author.login'
+
+   - Output is YOUR login → **YOU close** with verification comment (regardless of who implemented). Run `gh issue close <N> --reason completed --comment "..."`.
+   - Output is the peer's login → **THEY close**. Post `@<author> PR #M merged, ready for you to close when verified.` and STOP. Don't try to delegate the closure mechanics back to yourself.
+
+   This check is one cheap shell command; the inversion is silent (the recipient may not catch it if they're not paying attention to attribution).
+
 2. **Work through the queue without prompting.** When an issue is complete, check your assigned-label queue and pick up the next one immediately. Do NOT ask the reporter to ping you or reply "continue" before starting. Only wait when (a) your PR is in review, or (b) the queue is empty. If an issue is ambiguous, ask clarifying questions on that issue and move to the next queued one while waiting.
 
 3. **Never remove your own agent label.** Status labels (`in-progress`, `in-review`, `blocked`) swap as work moves; assignment labels stay.
