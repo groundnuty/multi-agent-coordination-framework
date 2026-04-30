@@ -198,12 +198,25 @@ The operator can attach to any agent's tmux window at any time (`tmux attach -t 
 
 We maintain a GitHub [Projects board](https://github.com/groundnuty/macf/projects) tracking design decisions, implementation phases, and research items. Adding a new repo to a project typically takes two steps: add it via the Projects UI, then `macf repo-init` so routing events also populate the board.
 
+## First-user docs
+
+The [`docs/`](docs/) directory is the first-user surface — 7 docs covering quickstart + concepts + features + use-cases + troubleshooting + FAQ + glossary. Suggested reading order in [`docs/README.md`](docs/README.md):
+
+- **[`docs/quickstart.md`](docs/quickstart.md)** — bootstrap your first agent in ~30 minutes (hands-on tutorial)
+- **[`docs/concepts.md`](docs/concepts.md)** — what MACF is + how it works + why the design is shaped this way (with DR citations)
+- **[`docs/use-cases.md`](docs/use-cases.md)** — when to use, when not to, comparison to academic + open-source peers
+- **[`docs/features.md`](docs/features.md)** — concrete v0.2.9 inventory (CLI, hooks, routing jobs, channel-server endpoints)
+- **[`docs/troubleshooting.md`](docs/troubleshooting.md)** — failure modes catalogued
+- **[`docs/faq.md`](docs/faq.md)** — common questions with concrete answers
+- **[`docs/glossary.md`](docs/glossary.md)** — term lookup with canonical-artifact pointers
+
 ## Deeper reading
 
-- **[Design Decisions (19)](design/decisions/)** — architecturally-significant choices with rationale. Entry points: [DR-004 mTLS](design/decisions/DR-004-authentication-mtls.md), [DR-010 cert signing](design/decisions/DR-010-cert-signing.md), [DR-011 CA key backup](design/decisions/DR-011-ca-key-backup.md), [DR-019 App permissions](design/decisions/DR-019-app-permissions.md).
+- **[Design Decisions (23)](design/decisions/)** — architecturally-significant choices with rationale. Entry points: [DR-004 mTLS](design/decisions/DR-004-authentication-mtls.md), [DR-010 cert signing](design/decisions/DR-010-cert-signing.md), [DR-011 CA key backup](design/decisions/DR-011-ca-key-backup.md), [DR-019 App permissions](design/decisions/DR-019-app-permissions.md), [DR-022 channel-server-npm-npx](design/decisions/DR-022-channel-server-npm-npx.md), [DR-023 stage3-hook-mcp-tool-architecture](design/decisions/DR-023-stage3-hook-mcp-tool-architecture.md).
 - **[Phase specs (7)](design/phases/)** — P1 channel server → P7 agent templates. Each phase maps to a concrete implementation slice.
 - **[Research corpus (16)](research/)** — literature reviews, empirical analysis, comparison to prior multi-agent work.
-- **[`coordination.md`](plugin/rules/coordination.md)** — canonical cross-cutting rules distributed to every agent workspace. Single source of truth; `macf rules refresh` propagates updates.
+- **[`coordination.md`](packages/macf/plugin/rules/coordination.md)** — canonical cross-cutting rules distributed to every agent workspace. Single source of truth; `macf rules refresh` propagates updates.
+- **[`design/macf-consumer-onboarding.md`](design/macf-consumer-onboarding.md)** — full consumer-bootstrap reference (deeper than quickstart).
 - **[`CHANGELOG.md`](CHANGELOG.md)** — per-release notes. Keep-a-Changelog format.
 
 ## Related repositories
@@ -218,10 +231,10 @@ Releases are tag-versioned per repo; consumers pin to major tags (`@v1`, `@v2`) 
 
 ## Status
 
-- **Latest CLI release**: [`v0.1.1`](CHANGELOG.md#011--2026-04-20) (2026-04-20)
+- **Latest CLI release**: [`v0.2.9`](CHANGELOG.md#029--2026-04-30) (2026-04-30)
 - **Phases P1–P7**: shipped and on main
-- **Stage 2 routing** (SSH + tmux): production
-- **Stage 3 routing** (mTLS HTTPS POST): shipped in `macf-actions@v2`, opt-in per consumer repo
+- **Stage 2 routing** (SSH + tmux): permanent for substrate workspaces per operator directive 2026-04-27
+- **Stage 3 routing** (mTLS HTTPS POST): shipped in `macf-actions@v3.3.0`, primary path for consumer-fleet projects
 - **Security hardening**: PBKDF2 at OWASP 2023 levels, clientAuth EKU enforcement, attribution-trap PreToolUse hook (structural, not behavioral), `/sign` challenge verification, schema-validated payloads
 - **Operator reliability**: stale-dist detection + `macf self-update`, E2E suite running post-merge + daily cron on the CLI repo, auto-opened issues on drift
 - **CV deployment** (first external project using MACF): Phase 6 launch pending
