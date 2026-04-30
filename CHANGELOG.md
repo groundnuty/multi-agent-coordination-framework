@@ -9,6 +9,37 @@ Plugin + routing-workflow changes ship from separate repos
 [`groundnuty/macf-actions`](https://github.com/groundnuty/macf-actions))
 and are not included here — pin them explicitly in each workspace.
 
+## [0.2.8] — 2026-04-30
+
+### Documentation
+- **Canonical `silent-fallback-hazards.md` rule ([#294], merges [macf-science-agent#9])** —
+  New canonical rule file at `plugin/rules/silent-fallback-hazards.md` distributed via
+  `macf init` / `macf update` / `macf rules refresh`. Codifies the 8-instance
+  silent-fallback hazard class with 5 defense patterns (A — result-invariant
+  assertion; B — dual-source corroboration; C — fail-loud chain; D — structural
+  prevention; E — observational-only delivery). Includes the three promotion paths
+  framework as an inline "When to apply Path 1 vs Path 2 vs Path 3" decision rule.
+  Reaches consumer agents (CV, devops, science) only via this release — bundled-template
+  architecture means rule changes require an npm publish to propagate beyond the macf
+  monorepo.
+- **`pr-discipline.md` formal-review-submission requirement ([#297])** —
+  Adds a new "How to submit LGTM — formal review, not comment" section to
+  `plugin/rules/pr-discipline.md`. Mandates `gh pr review --approve` /
+  `--request-changes` (not `gh pr comment`) for state-change decisions.
+  Engages `route-by-pr-review-state` (macf-actions v3.3.0+, [macf-actions#39]) — the
+  Path-2 structural defense for the LGTM→merge handoff. Empirical motivation:
+  cv-e2e-test rehearsals #9 / #10 / #11b completed with zero `pull_request_review`
+  events firing because agents communicated approval via `gh pr comment`.
+  CORRECT/WRONG worked examples + verification snippet
+  (`gh pr view --json reviews | jq '[.reviews[] | select(.state == "APPROVED" or .state == "CHANGES_REQUESTED")] | last'`)
+  + when `--comment` IS appropriate (mid-review clarifying questions, scope-of-change
+  questions, parking-lot async discussion, review-pickup acknowledgment).
+
+[#294]: https://github.com/groundnuty/macf/pull/294
+[#297]: https://github.com/groundnuty/macf/pull/297
+[macf-science-agent#9]: https://github.com/groundnuty/macf-science-agent/pull/9
+[macf-actions#39]: https://github.com/groundnuty/macf-actions/issues/39
+
 ## [0.2.7] — 2026-04-30
 
 ### Added
