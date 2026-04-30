@@ -38,10 +38,12 @@ The rules here are topology-agnostic: they work whether the project uses a scien
 
    **Inversion warning — closure direction is independent of who implemented the fix.** A common failure mode after PR-merge handoffs: the reporter mistakes the implementer for the closer because the implementer just finished the work. Rule 1A says **reporter** owns closure, NOT **fix-author**:
 
-   - **You filed the issue + you implemented the PR + you merged it** → you close (you're both reporter AND implementer).
+   *(The 4 cases below assume merge-by-implementer per `pr-discipline.md` — `implementer == merger`. Different topologies expand the table accordingly.)*
+
+   - **You filed the issue + you implemented the PR + you merged it** → **you close** (you're both reporter AND implementer).
    - **You filed the issue + a peer implemented the PR + the peer merged it** → **you still close** (you're the reporter; the peer is implementer-but-not-reporter; their action ends at "post handoff comment + stop" per failure mode A).
    - **A peer filed the issue + you implemented + you merged the PR** → **the peer closes** (they're the reporter; you @mention them with `ready for you to close when verified` per failure mode A).
-   - **A peer filed the issue + a peer implemented + a peer merged the PR** → reporter closes; you're observer.
+   - **A peer filed the issue + a peer implemented + a peer merged the PR** → **reporter closes**; you're observer.
 
    The trap is symmetric to failure mode A. Failure mode A is "I close someone else's issue because I implemented the fix" (forgetting that fix-author ≠ reporter); the inverse is "I tell the implementer to self-close my issue because they merged the fix" (same forgetting, opposite direction). Both are the same conceptual mistake — substituting fix-authorship for issue-reportership.
 
