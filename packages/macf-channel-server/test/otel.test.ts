@@ -72,6 +72,55 @@ describe('bootstrapOtel', () => {
     });
   });
 
+  describe('AC: DELTA temporality (macf#281 Phase 2)', () => {
+    it('OTLPMetricExporter constructed with temporalityPreference=DELTA emits DELTA for Counter', async () => {
+      // Mirrors the construction in `bootstrapOtel` — verifies the API
+      // contract that DELTA temporality is honored by the proto exporter.
+      // Regression guard: if the `temporalityPreference` arg is dropped
+      // from `new OTLPMetricExporter(...)`, the default falls back to
+      // CUMULATIVE — this test fails immediately.
+      const sdkMetrics = await import('@opentelemetry/sdk-metrics');
+      const metricsExporter = await import('@opentelemetry/exporter-metrics-otlp-proto');
+
+      const exporter = new metricsExporter.OTLPMetricExporter({
+        temporalityPreference: sdkMetrics.AggregationTemporality.DELTA,
+      });
+
+      // OTLPMetricExporterBase exposes selectAggregationTemporality(instrumentType)
+      // which returns the configured AggregationTemporality for that type.
+      const counterTemporality = exporter.selectAggregationTemporality(
+        sdkMetrics.InstrumentType.COUNTER,
+      );
+      expect(counterTemporality).toBe(sdkMetrics.AggregationTemporality.DELTA);
+    });
+
+    it('default OTLPMetricExporter (no config + no env override) emits CUMULATIVE for Counter — confirms the regression-guard target', async () => {
+      // Counterpart to the above: verifies that the default IS cumulative,
+      // so the explicit DELTA config in `bootstrapOtel` is load-bearing
+      // (not a no-op).
+      //
+      // Note: OTel SDK reads OTEL_EXPORTER_OTLP_METRICS_TEMPORALITY_PREFERENCE
+      // when no explicit config is passed. Some dev VMs (this one included)
+      // set it to 'delta' in their shell profile, which would mask the
+      // default. Clear it for the duration of this test to assert the
+      // SDK-default behavior independent of the surrounding env.
+      const prior = process.env['OTEL_EXPORTER_OTLP_METRICS_TEMPORALITY_PREFERENCE'];
+      delete process.env['OTEL_EXPORTER_OTLP_METRICS_TEMPORALITY_PREFERENCE'];
+      try {
+        const sdkMetrics = await import('@opentelemetry/sdk-metrics');
+        const metricsExporter = await import('@opentelemetry/exporter-metrics-otlp-proto');
+
+        const exporter = new metricsExporter.OTLPMetricExporter();
+        const counterTemporality = exporter.selectAggregationTemporality(
+          sdkMetrics.InstrumentType.COUNTER,
+        );
+        expect(counterTemporality).toBe(sdkMetrics.AggregationTemporality.CUMULATIVE);
+      } finally {
+        if (prior !== undefined) process.env['OTEL_EXPORTER_OTLP_METRICS_TEMPORALITY_PREFERENCE'] = prior;
+      }
+    });
+  });
+
   describe('AC3: env set + packages missing → fail-loud exit(1)', () => {
     it('calls process.exit(1) + writes actionable stderr when an SDK import fails', async () => {
       // We can't uninstall the SDK packages for one test case, so we

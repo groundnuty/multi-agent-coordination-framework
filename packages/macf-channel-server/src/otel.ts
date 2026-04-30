@@ -129,11 +129,40 @@ export async function bootstrapOtel(): Promise<void> {
   // cadence (default 60s). For the test scenarios + paper-evidence
   // sweeps that complete in ~5min, the default cadence delivers data
   // within the run window; no need to tune it.
+  //
+  // Aggregation temporality: DELTA (per macf#281 Phase 2 fix). With
+  // the default cumulative temporality, each MeterProvider lifecycle
+  // emits its own restart-from-zero counter — the Prometheus storage
+  // sees these as discrete "drops" in the cumulative trajectory and
+  // `rate()` / `increase()` over a range can return wrong totals (the
+  // empirical surfacing: scenario-08 N=5 sweeps on v0.2.5 produced
+  // counter values 1/5 of expected because process restarts between
+  // export cycles broke the cumulative chain).
+  //
+  // DELTA temporality: each export interval emits the increments-this-
+  // interval rather than running totals. Process restarts produce
+  // independent delta points (not zero-resets); the collector
+  // aggregates by series identity to reconstruct cumulative — robust
+  // to N-process / restart topologies. Required reading:
+  // silent-fallback-hazards.md Instance 7 framing.
+  //
+  // Type compatibility: `temporalityPreference` accepts
+  // `AggregationTemporality | AggregationTemporalityPreference`. We
+  // pass `AggregationTemporality.DELTA` (= 0) from `sdk-metrics` since
+  // it's already imported. The semantic difference vs
+  // `AggregationTemporalityPreference.DELTA` (also = 0) only matters
+  // for non-deltable instruments (UpDownCounter / asynchronous);
+  // we currently emit only Counter (delta-able), so the choice is
+  // equivalent. If a future change adds an UpDownCounter, switch to
+  // `AggregationTemporalityPreference.DELTA` from the http exporter
+  // package — that selector keeps cumulative for non-deltable types.
   const meterProvider = new sdkMetrics.MeterProvider({
     resource,
     readers: [
       new sdkMetrics.PeriodicExportingMetricReader({
-        exporter: new metricsExporter.OTLPMetricExporter(),
+        exporter: new metricsExporter.OTLPMetricExporter({
+          temporalityPreference: sdkMetrics.AggregationTemporality.DELTA,
+        }),
       }),
     ],
   });
