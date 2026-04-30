@@ -58,7 +58,9 @@ If a comment contains both describing and addressing references to the same agen
 
 For any comment or PR body that contains agent handles, grep the draft:
 
-    grep -nE '@macf-[a-z-]+-agent\[bot\]' <draft-file>
+    grep -nE '@[a-zA-Z][a-zA-Z0-9_-]*\[bot\]' <draft-file>
+
+(This pattern matches the broadened `HANDLE_PATTERN` documented in §7 — covers macf-* fleet, future CV fleet, and third-party bots like `dependabot[bot]` / `github-actions[bot]`.)
 
 For each line returned: is this line an action ask (raw stays) or a content reference (backticks wrap)?
 
@@ -117,6 +119,21 @@ The hook is the same shape as `check-gh-token.sh` (#140 attribution-trap defense
 - Already wrapped in backticks (`` `@<bot>[bot]` ``) → allowed (canonical describing form §5)
 - At line-start (after optional whitespace, blockquote `>`, or list-item markers `* ` / `- ` / `1. `) → allowed (canonical addressing form §3)
 - Otherwise → BLOCK with stderr citing this rule + the offending line + the `MACF_SKIP_MENTION_CHECK=1` operator override
+
+**Pattern scope (broadened per macf#276):** the hook's `HANDLE_PATTERN` matches ANY `@<handle>[bot]` shape — not just `@macf-*-agent[bot]`. Specifically:
+
+```
+HANDLE_PATTERN='@[a-zA-Z][a-zA-Z0-9_-]*[[]bot[]]'
+```
+
+Coverage:
+
+- **macf-* fleet** (`macf-code-agent`, `macf-science-agent`, `macf-tester-N-agent`, `macf-devops-agent`) — original target.
+- **Future CV fleet** (`cv-architect`, `academic-resume-author`, similar shapes) — naming convention may not follow `<prefix>-*-agent`; the broadened pattern accommodates whatever shapes consumer projects choose.
+- **Future MACF-consumer fleets** — same logic; durable across naming conventions.
+- **Third-party bots** (`dependabot`, `github-actions`) — these don't fire MACF routing (not in the agent registry, so the routing-Action workflow drops them silently), but blocking their describing-context use is consistent style. Operators can use `MACF_SKIP_MENTION_CHECK=1` for the rare legitimate describing-context use of a third-party bot handle.
+
+The first-character-must-be-letter constraint excludes `@1bot[bot]` / `@_bot[bot]` / `@-bot[bot]` / `@[bot]` (no handle body) — none of which are valid GitHub handles anyway.
 
 **Note on code blocks (clarification per macf#277):** The hook does NOT parse Markdown structure. Triple-backtick fences and 4-space-indent code blocks are both currently passed by the hook, but the *mechanism* differs:
 

@@ -85,9 +85,25 @@ fi
 # inside prose, not at line-start. Operator discipline catches the residual.
 # awk regex: `[[]` and `[]]` express literal `[` and `]` in a char class
 # context (awk's `\[` escape would either warn-and-strip or be ambiguous
-# across awk variants). Char body is `[a-zA-Z0-9_-]+` so digit-suffixed
-# names like `macf-tester-1-agent` match alongside pure-letter forms.
-HANDLE_PATTERN='@macf-[a-zA-Z0-9_-]+-agent[[]bot[]]'
+# across awk variants).
+#
+# Pattern scope (broadened per macf#276): matches ANY `@<handle>[bot]`
+# rather than only `@macf-*-agent[bot]`. First char must be a letter
+# (excludes leading digit/underscore/hyphen forms which aren't valid
+# GitHub handles anyway); body accepts alphanumeric / underscore /
+# hyphen so digit-suffixed and multi-segment handles match.
+#
+# Covers: macf-* fleet (`macf-code-agent`, `macf-science-agent`,
+# `macf-tester-N-agent`, `macf-devops-agent`); future CV fleet
+# (`cv-architect`, `academic-resume-author`, similar shapes); future
+# MACF-consumer fleets that may not follow the `macf-*-agent` naming
+# convention; AND third-party bots (`dependabot`, `github-actions`).
+# Third-party bots don't fire MACF routing (not in agent registry),
+# but blocking their describing-context use is consistent style — and
+# operators can use `MACF_SKIP_MENTION_CHECK=1` for the rare legitimate
+# describing reference. The cost of generalization is small; the
+# benefit (fleet-agnostic protection) is durable.
+HANDLE_PATTERN='@[a-zA-Z][a-zA-Z0-9_-]*[[]bot[]]'
 
 OFFENDING="$(awk -v pat="$HANDLE_PATTERN" '
   {
