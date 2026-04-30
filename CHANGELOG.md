@@ -9,6 +9,47 @@ Plugin + routing-workflow changes ship from separate repos
 [`groundnuty/macf-actions`](https://github.com/groundnuty/macf-actions))
 and are not included here — pin them explicitly in each workspace.
 
+## [0.2.7] — 2026-04-30
+
+### Added
+- **`pr_review_state` `NotifyType` variant ([#293], part of [macf-actions#39] PR A)** —
+  Receiver-side schema + handler chain for the `pr_review_state` notification that
+  `@groundnuty/macf-actions` v3.3.0's `route-by-pr-review-state` job will produce.
+  `NotifyTypeSchema` adds `'pr_review_state'`; `NotifyPayloadSchema` gains optional
+  `review_state` / `reviewer_login` / `review_url` (`pr_number` + `pr_url` reused
+  from the `ci_completion` variant). New `PrReviewStatePayloadSchema` for
+  producer-side strict validation; `review_state` enum constrained to
+  `{approved, changes_requested}` (`commented` + `dismissed` out-of-scope at
+  v3.3.0). `notify-formatter.ts` renders `<reviewer> approved PR #N: <url>` /
+  `<reviewer> requested changes on PR #N: <url>` with graceful degradation on
+  partial fields. `tracing.ts` `operationNameForNotifyType` maps the new type to
+  `'handoff'` (PR work-unit state-change routing — sister to `issue_routed`;
+  distinct from `invoke_agent` reserved for addressed `@mentions` and
+  `peer_notify` for framework-induced peer traffic). `onNotify` triggers
+  tmux-wake (Pattern E observational-only applies only to `peer_notification`;
+  PR-author SHOULD wake to merge or fix). Closes the LGTM→merge handoff gap
+  that was the final cv-e2e-test cascade cause (test #9 + #10 evidence).
+
+### Documentation
+- **`macf update` flag semantics clarification ([#292], closes [#291])** —
+  CLI `--description` + `update()` JSDoc + `update --help` extended block now
+  document that `claude.sh` regeneration is unconditional (independent of
+  `--cli` / `--plugin` / `--actions` flag selection); flags only gate
+  version-pin bumps + plugin-dir re-fetch. The unconditional regeneration
+  is correct + intentional per [#63] (template-evolution sync — landed
+  specifically so workspaces pick up changes like [#60]'s `--plugin-dir`
+  or [#283]'s `:4318` → `:14318` OTLP endpoint without re-running
+  `macf init` from scratch). Pre-fix the docs implied flag-gated
+  regeneration, causing devops-agent's diagnostic chain on `macf-devops-toolkit#62`
+  to misread the v0.2.4 binary's behavior. Doc-only; no behavior change.
+
+[#291]: https://github.com/groundnuty/macf/issues/291
+[#292]: https://github.com/groundnuty/macf/pull/292
+[#293]: https://github.com/groundnuty/macf/pull/293
+[#60]: https://github.com/groundnuty/macf/issues/60
+[#63]: https://github.com/groundnuty/macf/issues/63
+[macf-actions#39]: https://github.com/groundnuty/macf-actions/issues/39
+
 ## [0.2.6] — 2026-04-29
 
 ### Fixed
