@@ -31,6 +31,18 @@ describe('operationNameForNotifyType', () => {
     expect(operationNameForNotifyType('ci_completion')).toBe('notify');
   });
 
+  it('maps peer_notification → peer_notify (macf#256)', () => {
+    expect(operationNameForNotifyType('peer_notification')).toBe('peer_notify');
+  });
+
+  it('maps pr_review_state → handoff (macf-actions#39)', () => {
+    // PR review-state-driven routing is structural state-change
+    // routing of a work unit (sister to issue_routed). Distinct from
+    // `invoke_agent` (reserved for addressed @mentions) and
+    // `peer_notify` (framework-induced peer traffic).
+    expect(operationNameForNotifyType('pr_review_state')).toBe('handoff');
+  });
+
   it('is exhaustive over NotifyPayload.type', () => {
     // Type-level check: operationNameForNotifyType should accept
     // every variant of NotifyPayload['type']. If a new variant is
@@ -42,6 +54,8 @@ describe('operationNameForNotifyType', () => {
       'issue_routed',
       'startup_check',
       'ci_completion',
+      'peer_notification',
+      'pr_review_state',
     ];
     for (const t of types) {
       const op = operationNameForNotifyType(t);

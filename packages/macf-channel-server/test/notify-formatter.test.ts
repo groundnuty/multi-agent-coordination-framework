@@ -161,4 +161,93 @@ describe('formatNotifyContent', () => {
         .toBe('Pending issues found at startup');
     });
   });
+
+  describe('pr_review_state (macf-actions#39, v3.3.0)', () => {
+    it('renders approved with reviewer + PR number + URL', () => {
+      const result = formatNotifyContent({
+        type: 'pr_review_state',
+        review_state: 'approved',
+        reviewer_login: 'cv-architect[bot]',
+        pr_number: 42,
+        pr_url: 'https://github.com/groundnuty/academic-resume/pull/42',
+      });
+      expect(result.content).toBe(
+        'cv-architect[bot] approved PR #42: https://github.com/groundnuty/academic-resume/pull/42',
+      );
+    });
+
+    it('renders changes_requested with descriptive verb phrase', () => {
+      const result = formatNotifyContent({
+        type: 'pr_review_state',
+        review_state: 'changes_requested',
+        reviewer_login: 'cv-architect[bot]',
+        pr_number: 42,
+        pr_url: 'https://github.com/groundnuty/academic-resume/pull/42',
+      });
+      expect(result.content).toBe(
+        'cv-architect[bot] requested changes on PR #42: https://github.com/groundnuty/academic-resume/pull/42',
+      );
+    });
+
+    it('falls back gracefully when reviewer_login is absent', () => {
+      // Defense-in-depth: receivers parse via wider NotifyPayloadSchema
+      // where reviewer_login is optional. Older producers OR clients
+      // omitting it should still render readable text rather than
+      // "undefined approved PR #N".
+      const result = formatNotifyContent({
+        type: 'pr_review_state',
+        review_state: 'approved',
+        pr_number: 42,
+        pr_url: 'https://github.com/groundnuty/academic-resume/pull/42',
+      });
+      expect(result.content).toBe(
+        'A reviewer approved PR #42: https://github.com/groundnuty/academic-resume/pull/42',
+      );
+    });
+
+    it('handles missing pr_url (no link suffix)', () => {
+      const result = formatNotifyContent({
+        type: 'pr_review_state',
+        review_state: 'approved',
+        reviewer_login: 'cv-architect[bot]',
+        pr_number: 42,
+      });
+      expect(result.content).toBe('cv-architect[bot] approved PR #42');
+    });
+
+    it('handles missing pr_number (URL-only path)', () => {
+      const result = formatNotifyContent({
+        type: 'pr_review_state',
+        review_state: 'approved',
+        reviewer_login: 'cv-architect[bot]',
+        pr_url: 'https://github.com/groundnuty/academic-resume/pull/42',
+      });
+      expect(result.content).toBe(
+        'cv-architect[bot] approved PR: https://github.com/groundnuty/academic-resume/pull/42',
+      );
+    });
+
+    it('handles minimal payload (review_state only)', () => {
+      const result = formatNotifyContent({
+        type: 'pr_review_state',
+        review_state: 'approved',
+      });
+      expect(result.content).toBe('A reviewer approved a PR');
+    });
+
+    it('does NOT render review_url in the surface text (kept on payload only)', () => {
+      // review_url is for programmatic deep-linking (receivers fetch
+      // the review body if they want); the rendered surface stays
+      // terse with just the PR URL.
+      const result = formatNotifyContent({
+        type: 'pr_review_state',
+        review_state: 'approved',
+        reviewer_login: 'cv-architect[bot]',
+        pr_number: 42,
+        pr_url: 'https://github.com/groundnuty/academic-resume/pull/42',
+        review_url: 'https://github.com/groundnuty/academic-resume/pull/42#pullrequestreview-12345',
+      });
+      expect(result.content).not.toContain('pullrequestreview');
+    });
+  });
 });
