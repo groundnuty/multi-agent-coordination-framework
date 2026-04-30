@@ -110,15 +110,19 @@ The rule is cheap to apply, symmetric across the fleet, and eliminates a class o
 
 ## 7. Structural enforcement — `check-mention-routing.sh` PreToolUse hook
 
-Per `groundnuty/macf#244` + `#272` (closed via shared PR), this rule is also enforced by a Claude Code PreToolUse hook on `Bash` tool calls. The hook intercepts `gh issue comment` / `gh pr comment` / `gh issue close --comment` / `gh pr close --comment` invocations, parses the `--body` content, and blocks (`exit 2` with a stderr explanation) when raw `@<bot>[bot]` patterns appear in describing-context positions (mid-line, not backticked, not at line-start).
+Per `groundnuty/macf#244` + `#272`, this rule is enforced by a Claude Code PreToolUse hook on `Bash` tool calls. The hook intercepts `gh issue comment` / `gh pr comment` / `gh issue close --comment` / `gh pr close --comment` invocations, parses the `--body` content, and runs **two checks** that BLOCK (`exit 2` with stderr explanation):
+
+- **Check B — must-not-leak (macf#272, shipped PR #275):** raw `@<bot>[bot]` patterns in describing-context positions (mid-line, not backticked, not at line-start) would fire false-positive routing per §5. Applies to all comment-emit subcommands including `gh (issue|pr) close --comment` (leak prevention is independent of recipient semantics).
+- **Check A — must-have-mention (macf#244):** comment bodies with zero routing-active `@<bot>[bot]` mentions silently fail to reach the recipient peer agent per §Communication 2 ("a comment without @mention is invisible to the recipient agent"). Routing-active = NOT wrapped in backticks; both line-start addressing AND mid-line describing-leaks count toward the active total. Applies only to `gh (issue|pr) comment` — close subcommands are bypassed because self-close verification comments are canonically reporter-internal (no recipient).
 
 The hook is the same shape as `check-gh-token.sh` (#140 attribution-trap defense) — bash command-type hook distributed via `macf init` / `macf update` / `macf rules refresh` to every workspace's `.claude/scripts/check-mention-routing.sh` with the entry registered in `.claude/settings.json` `hooks.PreToolUse`. Substrate workspaces, tester agents, CV consumers, and future MACF-consumer projects all get the protection uniformly.
 
 **Heuristic** (subject to refinement; documented for transparency):
 
-- Already wrapped in backticks (`` `@<bot>[bot]` ``) → allowed (canonical describing form §5)
-- At line-start (after optional whitespace, blockquote `>`, or list-item markers `* ` / `- ` / `1. `) → allowed (canonical addressing form §3)
-- Otherwise → BLOCK with stderr citing this rule + the offending line + the `MACF_SKIP_MENTION_CHECK=1` operator override
+- Already wrapped in backticks (`` `@<bot>[bot]` ``) → routing-suppressed; allowed (canonical describing form §5); does NOT count toward Check A
+- At line-start (after optional whitespace, blockquote `>`, or list-item markers `* ` / `- ` / `1. `) → routing-active; allowed by Check B (canonical addressing form §3); counts toward Check A
+- Mid-line raw mention → routing-active; Check B BLOCK with stderr citing this rule + the offending line + the `MACF_SKIP_MENTION_CHECK=1` operator override
+- Zero routing-active mentions in body (Check A) → BLOCK; only fires when neither line-start addressing nor (any other) routing-active mention is present
 
 **Pattern scope (broadened per macf#276):** the hook's `HANDLE_PATTERN` matches ANY `@<handle>[bot]` shape — not just `@macf-*-agent[bot]`. Specifically:
 

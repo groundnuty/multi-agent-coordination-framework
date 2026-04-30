@@ -57,6 +57,20 @@ if [[ "$COMMAND" =~ gh[[:space:]]+(issue|pr)[[:space:]]+close ]] && [[ ! "$COMMA
   exit 0
 fi
 
+# Track whether this is a `close` subcommand. Check A
+# (must-have-mention; macf#244) does NOT apply to close subcommands —
+# self-close verification comments are canonically no-recipient
+# (reporter-internal verification per coordination.md §Issue Lifecycle 1
+# case 2 self-close pattern: "Verified on main after PR #M merged.
+# Closing as reporter."). The close action itself is the routing-end
+# signal, not a routing-active comment requiring an addressed @mention.
+# Check B (must-not-leak; describing-context) still applies on close
+# subcommands — leak prevention is independent of recipient semantics.
+IS_CLOSE_SUBCOMMAND=false
+if [[ "$COMMAND" =~ gh[[:space:]]+(issue|pr)[[:space:]]+close ]]; then
+  IS_CLOSE_SUBCOMMAND=true
+fi
+
 # `--body-file` reads content from a file path; we don't lint file
 # contents (the file may not exist at hook-fire time, or may be
 # regenerated). Accept the trade-off and allow. The canonical rule
@@ -105,8 +119,23 @@ fi
 # benefit (fleet-agnostic protection) is durable.
 HANDLE_PATTERN='@[a-zA-Z][a-zA-Z0-9_-]*[[]bot[]]'
 
-OFFENDING="$(awk -v pat="$HANDLE_PATTERN" '
+# Single AWK pass produces TWO outputs (line-prefix-discriminated):
+#   - `LEAK:<line_no>: <line>` — describing-context leaks (Check B,
+#     groundnuty/macf#272). Reported once per offending line.
+#   - `ACTIVE_COUNT:<n>` — total routing-active @mentions across the
+#     entire body (Check A, groundnuty/macf#244). Routing-active =
+#     NOT wrapped in backticks. Both line-start addressing AND mid-line
+#     describing-leaks are routing-active; only the backticked form is
+#     routing-suppressed. If this count is 0, the comment has no
+#     recipient — Check A blocks.
+AWK_OUTPUT="$(awk -v pat="$HANDLE_PATTERN" '
+  BEGIN { active_count = 0 }
   {
+    # Track which lines we have already reported a leak for, so a line
+    # with multiple offenders surfaces once (existing Check B behavior
+    # — preserved verbatim across the Check A extension).
+    line_already_reported = 0
+
     # Process every match on this line. After each match, advance the
     # search-substring past it (RSTART+RLENGTH from the original line $0
     # tracked via abs_offset).
@@ -120,15 +149,22 @@ OFFENDING="$(awk -v pat="$HANDLE_PATTERN" '
       char_before = (abs_start - 1 >= 1) ? substr($0, abs_start - 1, 1) : ""
       char_after = substr($0, abs_end, 1)
 
-      # Already-backticked? Allowed describing form (§5).
+      # Already-backticked? Allowed describing form (§5). Routing-suppressed
+      # — does NOT count toward Check A active-mention total.
       if (char_before == "`" && char_after == "`") {
         line = substr(line, RSTART + RLENGTH)
         abs_offset = abs_start + RLENGTH - 1
         continue
       }
 
+      # Routing-active (NOT backticked). Counts toward Check A regardless
+      # of position (line-start addressing AND mid-line describing both
+      # fire routing — the backtick suppression is the only routing-mute).
+      active_count++
+
       # Line-start (after optional whitespace, blockquote, or list-item
-      # markers)? Allowed addressing form (§3).
+      # markers)? Allowed addressing form (§3) — Check B passes; Check A
+      # already incremented above.
       prefix = substr($0, 1, abs_start - 1)
       if (prefix ~ /^[[:space:]>]*([0-9]+\.[[:space:]]+|[-*][[:space:]]+)?$/) {
         line = substr(line, RSTART + RLENGTH)
@@ -136,12 +172,26 @@ OFFENDING="$(awk -v pat="$HANDLE_PATTERN" '
         continue
       }
 
-      # Mid-line raw mention — describing-context leak.
-      print NR ": " $0
-      next  # skip remaining matches on this line; one report per line
+      # Mid-line raw mention — describing-context leak (Check B BLOCK).
+      # Report once per line; counter still increments for additional
+      # matches on the same line so Check A sees the complete picture.
+      if (!line_already_reported) {
+        print "LEAK:" NR ": " $0
+        line_already_reported = 1
+      }
+      line = substr(line, RSTART + RLENGTH)
+      abs_offset = abs_start + RLENGTH - 1
     }
   }
+  END { print "ACTIVE_COUNT:" active_count }
 ' <<<"$COMMAND")"
+
+# `grep` returns 1 when no matches; under `set -euo pipefail` that
+# propagates as the script's exit code without `|| true`. The Check A
+# happy-path (no leaks) needs OFFENDING to be empty without the hook
+# itself dying — the explicit fall-through is required.
+OFFENDING="$(grep '^LEAK:' <<<"$AWK_OUTPUT" | sed 's/^LEAK://' || true)"
+ACTIVE_COUNT="$(grep '^ACTIVE_COUNT:' <<<"$AWK_OUTPUT" | sed 's/^ACTIVE_COUNT://' || true)"
 
 if [[ -n "$OFFENDING" ]]; then
   cat >&2 <<ERR
@@ -168,6 +218,43 @@ Override (ONLY for legitimate raw-mention cases the heuristic catches):
   export MACF_SKIP_MENTION_CHECK=1
 
 Refs: groundnuty/macf#244, #272 (this hook); mention-routing-hygiene.md
+(canonical rule, distributed via \`macf rules refresh\`).
+ERR
+  exit 2
+fi
+
+# Check A (groundnuty/macf#244): must-have-mention. Comment-emit commands
+# must contain at least one routing-active @<bot>[bot] mention. Without
+# one, the comment is "invisible" to other agents — coordination.md
+# §Communication 2 names this as the silent-failure mode.
+#
+# Bypassed for `gh (issue|pr) close --comment` — self-close verification
+# comments are canonically no-recipient (reporter-internal). The close
+# action itself signals routing-end; no addressed mention required.
+if [[ "$IS_CLOSE_SUBCOMMAND" == "false" ]] && [[ "$ACTIVE_COUNT" == "0" ]]; then
+  cat >&2 <<ERR
+BLOCKED by MACF mention-routing-hygiene hook: this comment has zero
+routing-active @<bot>[bot] mentions. Per coordination.md §Communication 2:
+
+  "@mention in EVERY comment. Routing depends on it. A comment without
+  @mention is invisible to the recipient agent."
+
+Without a routing-active mention, the comment is silently invisible to
+peer agents — they have no notification that you posted, even if the
+issue/PR is on their assigned-label queue.
+
+Fix: add an addressing mention naming the recipient:
+  @<recipient-handle>[bot] <your message>
+
+Examples (where <recipient> is the issue reporter, PR reviewer, etc.):
+  @macf-science-agent[bot] PR #N ready for review.
+  @macf-code-agent[bot] LGTM, you can merge.
+
+Override (ONLY for legitimate no-recipient cases — rare; status posts
+on self-filed-self-closed issues, or test-orchestration scratch comments):
+  export MACF_SKIP_MENTION_CHECK=1
+
+Refs: groundnuty/macf#244 (this check); coordination.md §Communication 2
 (canonical rule, distributed via \`macf rules refresh\`).
 ERR
   exit 2
