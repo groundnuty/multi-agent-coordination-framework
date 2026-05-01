@@ -56,6 +56,21 @@ export const MACF_HOOK_COMMAND = '$CLAUDE_PROJECT_DIR/.claude/scripts/check-gh-t
 export const MACF_MENTION_HOOK_COMMAND = '$CLAUDE_PROJECT_DIR/.claude/scripts/check-mention-routing.sh';
 
 /**
+ * LGTM-gate hook command (groundnuty/macf#270 — DR-023 UC-2). Blocks
+ * `gh pr merge` invocations when the target PR has no non-author
+ * APPROVED review on record. Implements `pr-discipline.md` "no LGTM
+ * = no merge" structurally (rule codified via macf#262 / PR #263).
+ *
+ * Per the DR-023 amendment (PR #279), this is a bash command-type
+ * hook — NOT `type: "mcp_tool"`. PreToolUse-blocking semantics +
+ * mcp_tool's non-blocking-on-disconnect failure mode are structurally
+ * incompatible; bash form fires uniformly across substrate (no
+ * macf-agent MCP server) AND consumer workspaces. UC-4 (PR #275)
+ * demonstrated the bash-form path empirically; UC-2 mirrors it.
+ */
+export const MACF_LGTM_HOOK_COMMAND = '$CLAUDE_PROJECT_DIR/.claude/scripts/check-lgtm-gate.sh';
+
+/**
  * The hook filenames used to identify MACF-managed entries on refresh.
  * Matched by path-end equality (see isMacfManagedCommand) so operator
  * files with a similar-but-distinct basename are not misclassified.
@@ -63,6 +78,7 @@ export const MACF_MENTION_HOOK_COMMAND = '$CLAUDE_PROJECT_DIR/.claude/scripts/ch
 const MACF_HOOK_FILENAMES: readonly string[] = [
   'check-gh-token.sh',
   'check-mention-routing.sh',
+  'check-lgtm-gate.sh',
 ];
 
 /**
@@ -554,15 +570,18 @@ export function installPluginSkillPermissions(workspaceDir: string): void {
  *   - `check-gh-token.sh` (groundnuty/macf#140 — attribution-trap defense)
  *   - `check-mention-routing.sh` (groundnuty/macf#244 + #272 — routing
  *     leak detector for raw `@<bot>[bot]` in describing-context)
+ *   - `check-lgtm-gate.sh` (groundnuty/macf#270 — DR-023 UC-2; blocks
+ *     `gh pr merge` when no non-author APPROVED review exists)
  *
  * Creates the `.claude/` directory and the file if either is missing.
  * Idempotent: repeated calls don't duplicate entries.
  *
- * Both hooks share `matcher: "Bash"` because Claude Code's matcher field
+ * All hooks share `matcher: "Bash"` because Claude Code's matcher field
  * gates which tool fires the hook; the wrapped-command detection (gh vs
- * git-push for token, gh issue/pr comment for routing) happens INSIDE
- * each script. Distinct entries per script keep them independently
- * upgradeable + diagnosable in `gh issue list` style settings audits.
+ * git-push for token, gh issue/pr comment for routing, gh pr merge for
+ * LGTM) happens INSIDE each script. Distinct entries per script keep
+ * them independently upgradeable + diagnosable in `gh issue list` style
+ * settings audits.
  */
 export function installGhTokenHook(workspaceDir: string): void {
   const absDir = resolve(workspaceDir);
@@ -594,6 +613,10 @@ export function installGhTokenHook(workspaceDir: string): void {
     {
       matcher: 'Bash',
       hooks: [{ type: 'command', command: MACF_MENTION_HOOK_COMMAND }],
+    },
+    {
+      matcher: 'Bash',
+      hooks: [{ type: 'command', command: MACF_LGTM_HOOK_COMMAND }],
     },
   ];
 
