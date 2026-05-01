@@ -227,13 +227,105 @@ server.registerTool(
 
 **Risk surface:** auto-merge bots (Renovate-style) trigger this; bypass via `MACF_SKIP_LGTM=1` env var or scope the `if` filter to agent-initiated merges only.
 
-### UC-3: Auto-checkpoint to memory (`Stop` → `checkpoint`)
+### UC-3: Auto-checkpoint to memory (`PreCompact` → `checkpoint_to_memory`)
 
-**Hook event:** `Stop`.
+> **REFRAMED + SHIPPED 2026-05-01 — see Amendment §UC-3 reframe below.** Hook event is **`PreCompact`** (not `Stop` as originally drafted) and tool lives in the existing `@groundnuty/macf-channel-server` package (no separate memory MCP server). Tracker: macf#271 (this PR). The deferred-status framing in the prior draft is superseded.
 
-**MCP tool:** `macf-memory:checkpoint` (hypothetical — requires a separate memory MCP server; deferred).
+**Hook event:** `PreCompact` — fires before context compaction, both `/compact` (manual) and auto-compaction (token threshold).
 
-**Status:** **deferred.** Requires architecture decision on memory-MCP-server existence (does the channel-server expose memory tools, or does memory get its own MCP server?). Defer to a follow-up DR when the codification-gap pattern motivates building the memory tool.
+**MCP tool:** `checkpoint_to_memory` on `@groundnuty/macf-channel-server` (same MCP surface as `notify_peer`; UC-1 architecture mirror).
+
+**Tool surface (Zod-validated per `/modelcontextprotocol/typescript-sdk` v1.x):**
+
+```typescript
+server.registerTool(
+  'checkpoint_to_memory',
+  {
+    description: 'Write a session-handoff checkpoint to per-project memory directory ' +
+      'before context compaction. Best-effort + non-blocking on failure.',
+    inputSchema: z.object({
+      session_id: z.string().min(1),
+      transcript_path: z.string().optional(),
+      cwd: z.string().min(1),
+      trigger: z.enum(['manual', 'auto']).optional(),
+      summary: z.string().optional(),
+    }),
+    outputSchema: z.object({
+      written: z.boolean(),
+      path: z.string().optional(),
+      deduplicated: z.boolean(),
+      reason: z.string().optional(),
+    }),
+  },
+  async ({ session_id, transcript_path, cwd, trigger, summary }) => {
+    // Resolve memory dir as ~/.claude/projects/<encoded-cwd>/memory/
+    // Encoding: every `/` replaced with `-` (matches Claude Code convention).
+    // Find existing entry by `originSessionId: <session_id>` in frontmatter
+    // (dedup); update in place if found, allocate new path otherwise.
+    // Naming: project_session_handoff_YYYY_MM_DD.md; suffix with first-8
+    // of session-id when a different session has already claimed today's
+    // canonical name.
+    // Returns {written, path?, deduplicated, reason?} — never throws.
+  }
+);
+```
+
+**Hook entry (`packages/macf/plugin/hooks/hooks.json`):**
+
+```json
+{
+  "PreCompact": [{
+    "hooks": [{
+      "type": "mcp_tool",
+      "server": "plugin:macf-agent:macf-agent",
+      "tool": "checkpoint_to_memory",
+      "input": {
+        "session_id": "${session_id}",
+        "transcript_path": "${transcript_path}",
+        "cwd": "${cwd}"
+      },
+      "timeout": 30,
+      "statusMessage": "Writing session checkpoint to memory..."
+    }]
+  }]
+}
+```
+
+**Failure profile:** observational + non-blocking, even though `PreCompact` *can* block (top-level `decision: "block"` per [code.claude.com/docs/en/hooks](https://code.claude.com/docs/en/hooks) Decision-control table). Design choice: a failed checkpoint is recoverable (operator can manually author a handoff entry post-compaction), but blocking compaction would harm the operator. Tool always returns `isError: false` to the wrapper; the `written: false` + `reason` fields surface diagnostics for LLM self-correction.
+
+**`isError` semantic:** always `false`. Even on write-failure, the tool returns success-shape with `written: false` + `reason`. This differs from UC-1 (`isError: true` when peers attempted but none delivered) — UC-1 signals to the LLM for next-turn fallback; UC-3's failure mode is "synthesize manually" which is operator-discipline, not in-context LLM action.
+
+**Memory directory resolution:**
+
+```
+${HOME}/.claude/projects/<encoded-cwd>/memory/project_session_handoff_<YYYY_MM_DD>.md
+```
+
+Where `<encoded-cwd>` replaces every `/` in the absolute cwd with `-` (e.g., `/Users/x/repos/y` → `-Users-x-repos-y`). Verified against existing project dirs in the operational env. Frontmatter follows the canonical convention captured by existing handoff entries:
+
+```yaml
+---
+name: <YYYY-MM-DD> session checkpoint (PreCompact auto-write)
+description: Auto-checkpoint written by <agent> on <date> via PreCompact hook (trigger=manual|auto).
+type: project
+originSessionId: <session_id>
+---
+```
+
+**Deduplication rule:** `originSessionId` is the dedup key. PreCompact may fire multiple times in a single session for sequential auto-compactions; the second-and-later invocations OVERWRITE the existing entry (rather than create N files for one session). Different sessions sharing a calendar date land at suffixed paths (`project_session_handoff_<date>_<short-sid>.md`).
+
+**Limitations (codified, not bugs):**
+
+- `/exit` and Claude Code crashes do NOT fire `PreCompact` — operator-discipline territory (the existing `synthesize-before-compaction` rule still applies for those exit modes)
+- `PreCompact` fires before BOTH manual `/compact` AND auto-compaction; the `trigger` field disambiguates
+- Tool runs purely on local filesystem (no peer registry, no network); the MCP-server-not-connected mode of substrate workspaces still applies — substrate doesn't get this UC, by design (consistent with the substrate-permanent-off-limit directive captured in the §"Substrate-compatibility" amendment)
+- The `transcript_path` field is metadata only; the tool does not currently parse the transcript (future work could synthesize a body from recent turns)
+
+**OTel instrumentation:** `macf.tool.checkpoint_to_memory` INTERNAL-kind span (no outbound network). Attributes: `macf.checkpoint.trigger` (manual|auto|unknown), `macf.checkpoint.written` (bool), `macf.checkpoint.deduplicated` (bool). Span rolls under `macf.hook.latency_ms` histogram via the existing telemetry pattern.
+
+**Latency budget:** <100ms typical (single fs scan over memory dir + one writeFile). PreCompact's effective ceiling is `timeout: 30` per hook entry; comfortable margin.
+
+**Why ship it now (vs. continued defer):** the codification-gap firing pattern continued accumulating across multiple agents through 2026-04 sessions (`feedback_synthesize_before_compaction.md` + `feedback_codify-at-decision-time.md` updates). The original "defer pending memory-MCP-server architecture decision" framing was solved by recognizing the channel-server already owns the per-agent MCP surface; checkpoint is just another tool on it. No new package needed. UC-1 (`notify_peer`) shipped first per "lowest blast-radius" doctrine; UC-3 follows now that the architecture pattern is proven.
 
 ### UC-4: Routing-leak detector (`PreToolUse` → `check_routing_hygiene`)
 
@@ -383,7 +475,7 @@ The constraint is **broader than substrate-specific**: even on consumer workspac
 |---|---|---|---|---|
 | **UC-1** | Stop → notify_peer | mcp_tool | mcp_tool ✅ (unchanged) | **Shipped** v0.2.4 |
 | **UC-2** | PreToolUse → check_lgtm (blocking) | mcp_tool | **bash form** | macf#270 (issue body reframe pending) |
-| **UC-3** | Stop → checkpoint (best-effort) | mcp_tool | mcp_tool ✅ (unchanged) | macf#271 |
+| **UC-3** | PreCompact → checkpoint_to_memory (best-effort) | mcp_tool (Stop) | **mcp_tool (PreCompact)** — event reframe per macf#271 | **Shipped** macf#271 |
 | **UC-4** | PreToolUse → check_routing_hygiene (blocking) | mcp_tool | **bash form** | **Shipped** PR #275 (`9c5099d1`) as `check-mention-routing.sh` |
 
 **Distribution mechanics:** bash-form hooks ship via canonical `packages/macf/scripts/` directory, distributed to consumer workspaces by `macf init` / `macf update` / `macf rules refresh` (consumer-side; substrate excluded per directive). The `installGhTokenHook` function in `packages/macf/src/cli/settings-writer.ts` (kept-named for back-compat; now installs ALL canonical bash hooks) consumes the `MACF_HOOK_FILENAMES` array. Adding UC-2's eventual `check-lgtm-gate.sh` extends this array — no new framework plumbing required, mirrors PR #275's pattern.

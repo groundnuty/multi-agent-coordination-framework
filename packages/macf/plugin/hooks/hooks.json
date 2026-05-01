@@ -1,5 +1,5 @@
 {
-  "description": "MACF agent startup hooks: dependency installer, work check, and Stop-hook peer-notification (UC-1 per DR-023)",
+  "description": "MACF agent startup hooks: dependency installer, work check, Stop-hook peer-notification (UC-1 per DR-023), and PreCompact-hook session checkpoint (UC-3 per DR-023)",
   "hooks": {
     "SessionStart": [
       {
@@ -33,6 +33,24 @@
             },
             "timeout": 30,
             "statusMessage": "Notifying peers of session end..."
+          }
+        ]
+      }
+    ],
+    "PreCompact": [
+      {
+        "hooks": [
+          {
+            "type": "mcp_tool",
+            "server": "plugin:macf-agent:macf-agent",
+            "tool": "checkpoint_to_memory",
+            "input": {
+              "session_id": "${session_id}",
+              "transcript_path": "${transcript_path}",
+              "cwd": "${cwd}"
+            },
+            "timeout": 30,
+            "statusMessage": "Writing session checkpoint to memory..."
           }
         ]
       }

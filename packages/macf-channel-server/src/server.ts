@@ -295,6 +295,51 @@ async function main(): Promise<void> {
     },
   );
 
+  // macf#271 / DR-023 UC-3: register checkpoint_to_memory MCP tool on
+  // the same MCP channel. Hook event is PreCompact (NOT Stop, despite
+  // the issue's original framing — see DR-023 §UC-3 amendment + the
+  // checkpoint.ts file-header for the reframe rationale). Tool writes
+  // a session-handoff file to the agent's per-project memory directory
+  // under `~/.claude/projects/<encoded-cwd>/memory/`. Failure-mode is
+  // observational + non-blocking: any error path returns
+  // `{written: false, reason}` and `isError: false` so PreCompact
+  // proceeds (a missed checkpoint is recoverable; blocking compaction
+  // is not).
+  const {
+    checkpointToMemory,
+    CheckpointToMemoryInputSchema,
+    CheckpointToMemoryOutputSchema,
+  } = await import('./checkpoint.js');
+  const checkpointDeps = {
+    selfAgentName: config.agentName,
+    logger,
+  };
+  mcp.mcp.registerTool(
+    'checkpoint_to_memory',
+    {
+      description: 'Write a session-handoff checkpoint to the agent\'s per-project ' +
+        'memory directory. Invoked by the PreCompact hook (DR-023 UC-3) before context ' +
+        'compaction so the next session can read structured handoff state via the ' +
+        'MEMORY.md index pattern. Failure-mode is observational + non-blocking — write ' +
+        'failures log + return `{written: false, reason}` to the hook without raising; ' +
+        'compaction always proceeds.',
+      inputSchema: CheckpointToMemoryInputSchema,
+      outputSchema: CheckpointToMemoryOutputSchema,
+    },
+    async (input) => {
+      const result = await checkpointToMemory(checkpointDeps, input);
+      return {
+        content: [{ type: 'text' as const, text: JSON.stringify(result) }],
+        structuredContent: { ...result },
+        // Per DR-023 §UC-3: PreCompact is best-effort. Even on
+        // write-failure, surface isError:false so compaction proceeds.
+        // The `reason` field in structured output is sufficient signal
+        // for LLM self-correction in subsequent turns.
+        isError: false,
+      };
+    },
+  );
+
   // P1: Connect MCP channel
   await mcp.connect();
 
