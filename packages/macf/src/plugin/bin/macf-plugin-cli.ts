@@ -16,29 +16,13 @@ import { getOwnRegistration, listPeers } from '../lib/registry.js';
 import { pingAgent } from '../lib/health.js';
 import { probePeerHealth } from '../lib/probe-peer-health.js';
 import { buildDashboardHealth } from '../lib/build-dashboard-health.js';
+import { getRegistryConfig } from '../lib/registry-config.js';
 import { checkIssues } from '../lib/work.js';
 import { createRegistryFromConfig } from '@groundnuty/macf-core';
 import { generateToken } from '@groundnuty/macf-core';
 import { toVariableSegment } from '@groundnuty/macf-core';
-import type { RegistryConfig } from '@groundnuty/macf-core';
 
 const command = process.argv[2];
-
-function getRegistryConfig(): RegistryConfig {
-  const repoEnv = process.env['MACF_REGISTRY_REPO'];
-  if (repoEnv) {
-    const parts = repoEnv.split('/');
-    if (parts.length === 2 && parts[0] && parts[1]) {
-      return { type: 'repo', owner: parts[0], repo: parts[1] };
-    }
-  }
-  const orgEnv = process.env['MACF_REGISTRY_ORG'];
-  if (orgEnv) return { type: 'org', org: orgEnv };
-  const userEnv = process.env['MACF_REGISTRY_USER'];
-  if (userEnv) return { type: 'profile', user: userEnv };
-  // Default fallback
-  return { type: 'repo', owner: 'groundnuty', repo: 'macf' };
-}
 
 async function main(): Promise<void> {
   const agentName = process.env['MACF_AGENT_NAME'] ?? 'unknown';
@@ -47,7 +31,11 @@ async function main(): Promise<void> {
 
   switch (command) {
     case 'status': {
-      const token = await generateToken();
+      // Local-mode skip-token: LocalRegistryClient ignores the token argument
+      // (no GitHub backend); generateToken() requires APP_ID/INSTALL_ID/KEY_PATH
+      // env vars which claude.sh intentionally doesn't export in local mode
+      // per DR-024 / PR #329. Mirrors `channel-server/src/server.ts` line 210.
+      const token = registryConfig.type === 'local' ? '' : await generateToken();
       const registry = createRegistryFromConfig(registryConfig, project, token);
       // Fetch own registration from the registry so the dashboard header
       // reflects whether THIS agent is actually registered (see #84 —
@@ -66,7 +54,8 @@ async function main(): Promise<void> {
     }
 
     case 'peers': {
-      const token = await generateToken();
+      // Local-mode skip-token (see status case for rationale).
+      const token = registryConfig.type === 'local' ? '' : await generateToken();
       const registry = createRegistryFromConfig(registryConfig, project, token);
       const peers = await listPeers(registry);
       const peersWithHealth = await Promise.all(
@@ -97,7 +86,8 @@ async function main(): Promise<void> {
         return;
       }
 
-      const token = await generateToken();
+      // Local-mode skip-token (see status case for rationale).
+      const token = registryConfig.type === 'local' ? '' : await generateToken();
       const registry = createRegistryFromConfig(registryConfig, project, token);
       // Look up the target in the registry. Names in the registry are
       // sanitized (uppercase, underscores), so match in that space.
