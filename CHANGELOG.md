@@ -9,6 +9,53 @@ Plugin + routing-workflow changes ship from separate repos
 [`groundnuty/macf-actions`](https://github.com/groundnuty/macf-actions))
 and are not included here — pin them explicitly in each workspace.
 
+## [0.2.13] — 2026-05-01
+
+Single hotfix release: critical regression fix for v0.2.12 local-mode
+consumers. Operator hit it on the macbook PPAM 2026 deployment
+immediately after v0.2.12 release-cut — `/macf-peers` /
+`/macf-status` / `/macf-ping` failed in local-registry mode with
+`No GH_TOKEN, no TokenSource provided, and missing APP_ID/INSTALL_ID/KEY_PATH`.
+
+### Fixed
+- **macf-peers / macf-status / macf-ping in local-registry mode ([#333],
+  closes [#332])** — two coupled bugs in `packages/macf/src/plugin/bin/macf-plugin-cli.ts`:
+  1. `getRegistryConfig()` ignored `MACF_REGISTRY_TYPE=local` and fell
+     through to the `groundnuty/macf` default fallback. claude.sh
+     correctly exports `MACF_REGISTRY_TYPE="local"` +
+     `MACF_REGISTRY_PATH=<abs-path>` per PR #329, but the plugin's
+     dispatch couldn't read those. Fix extracts `getRegistryConfig` to
+     `plugin/lib/registry-config.ts` (testable; env-injectable
+     signature) and adds the `MACF_REGISTRY_TYPE === 'local'` branch
+     with fail-loud-on-missing-PATH diagnostic citing
+     `macf init --local`. Local mode wins over GitHub-backed variants.
+  2. `generateToken()` was called unconditionally before factory
+     dispatch in 3 cases (status/peers/ping). Local mode has no GitHub
+     App env (claude.sh `githubAppEnvLines` returns `[]` per DR-024),
+     so `generateToken()` threw the operator-witnessed error. Fix
+     applies the ternary gate `registryConfig.type === 'local' ? '' :
+     await generateToken()` in each case — mirrors
+     `channel-server/src/server.ts` line 210 pattern from PR #329.
+
+  `issues` case left in scope as-is per AC (`/macf-issues` is
+  GitHub-only by design; queries `gh api repos/...`; not coordination-
+  shaped). 11 unit tests for `getRegistryConfig` covering all 4
+  RegistryConfig variants + error paths + precedence ordering. 3
+  integration-style tests at `local-mode-dispatch.test.ts` exercising
+  the full env → config → factory → LocalRegistryClient → formatPeerTable
+  path against a real tmp registry file with PPAM-shaped peer fixture.
+  1102 → 1118 tests (+16).
+
+  Test-coverage gap closed: pre-fix, `probe-peer-health.test.ts` and
+  `build-dashboard-health.test.ts` (PR #326 + #328) tested helpers in
+  isolation with mocked probes, and `init-local.test.ts` (PR #329)
+  tested workspace bootstrap. Neither covered the runtime
+  `macf-plugin-cli peers/status/ping` dispatch path in local mode —
+  this PR's tests close that.
+
+[#332]: https://github.com/groundnuty/macf/issues/332
+[#333]: https://github.com/groundnuty/macf/pull/333
+
 ## [0.2.12] — 2026-05-01
 
 Bundles 5 changes accumulated since v0.2.11. **Headline: DR-024
