@@ -195,7 +195,33 @@ describe('loadConfig', () => {
     process.env['MACF_REGISTRY_TYPE'] = 'invalid';
 
     expect(() => loadConfig()).toThrow(ConfigError);
-    expect(() => loadConfig()).toThrow('"org", "profile", or "repo"');
+    expect(() => loadConfig()).toThrow('"org", "profile", "repo", or "local"');
+  });
+
+  // DR-024 / macf#322: MACF_REGISTRY_TYPE=local
+  it('parses local registry config from env', () => {
+    setMinimalEnv();
+    process.env['MACF_REGISTRY_TYPE'] = 'local';
+    process.env['MACF_REGISTRY_PATH'] = '/abs/path/registry.json';
+
+    const config = loadConfig();
+    expect(config.registry).toEqual({ type: 'local', path: '/abs/path/registry.json' });
+  });
+
+  it('throws when local registry missing MACF_REGISTRY_PATH', () => {
+    setMinimalEnv();
+    process.env['MACF_REGISTRY_TYPE'] = 'local';
+
+    expect(() => loadConfig()).toThrow(ConfigError);
+    expect(() => loadConfig()).toThrow('MACF_REGISTRY_PATH');
+  });
+
+  it('throws when local registry has empty MACF_REGISTRY_PATH', () => {
+    setMinimalEnv();
+    process.env['MACF_REGISTRY_TYPE'] = 'local';
+    process.env['MACF_REGISTRY_PATH'] = '';
+
+    expect(() => loadConfig()).toThrow(ConfigError);
   });
 
   it('reads custom project prefix', () => {

@@ -71,6 +71,19 @@ describe('RegistryConfigSchema', () => {
     expect(result).toEqual({ type: 'repo', owner: 'groundnuty', repo: 'macf' });
   });
 
+  it('accepts local config (DR-024)', () => {
+    const result = RegistryConfigSchema.parse({ type: 'local', path: '/abs/path.json' });
+    expect(result).toEqual({ type: 'local', path: '/abs/path.json' });
+  });
+
+  it('rejects local config with empty path', () => {
+    expect(() => RegistryConfigSchema.parse({ type: 'local', path: '' })).toThrow();
+  });
+
+  it('rejects local config without path', () => {
+    expect(() => RegistryConfigSchema.parse({ type: 'local' })).toThrow();
+  });
+
   it('rejects unknown type', () => {
     expect(() => RegistryConfigSchema.parse({ type: 'unknown' })).toThrow();
   });

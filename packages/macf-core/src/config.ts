@@ -141,9 +141,25 @@ function parseRegistryConfig(registryType: string): RegistryConfig {
       }
       return { type: 'repo', owner: parts[0], repo: parts[1] };
     }
+    case 'local': {
+      // DR-024 ships local-registry mode. The path is resolved at
+      // `macf init --local` time (default: `~/.macf/registry/<project>.json`)
+      // and exported into the channel-server env so this layer never
+      // needs to expand `~` or guess the project. Fail-loud if absent —
+      // DR-024 §"Decision rule for future PRs" 3 explicitly forbids
+      // silent fallback to GitHub mode when local is requested.
+      const filePath = process.env['MACF_REGISTRY_PATH'];
+      if (!filePath) {
+        throw new ConfigError(
+          'MACF_REGISTRY_PATH is required when MACF_REGISTRY_TYPE=local. ' +
+            'Run `macf init --local` to bootstrap, or set the env var explicitly.',
+        );
+      }
+      return { type: 'local', path: filePath };
+    }
     default:
       throw new ConfigError(
-        `MACF_REGISTRY_TYPE must be "org", "profile", or "repo", got "${registryType}"`,
+        `MACF_REGISTRY_TYPE must be "org", "profile", "repo", or "local", got "${registryType}"`,
       );
   }
 }
