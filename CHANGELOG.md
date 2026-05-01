@@ -9,6 +9,97 @@ Plugin + routing-workflow changes ship from separate repos
 [`groundnuty/macf-actions`](https://github.com/groundnuty/macf-actions))
 and are not included here — pin them explicitly in each workspace.
 
+## [0.2.10] — 2026-05-01
+
+Bundles 5 changes accumulated since v0.2.9: 2 Path-2 promotions
+(must-have-mention check + claude-sh tmux self-wrap), 1 silent-fallback
+hazard closure (OTel DELTA temporality, Phase 2 of Instance 7), and 2
+docs (consumer-onboarding reshape + 7-doc first-user `docs/` directory).
+
+### Added
+- **`docs/` first-user directory ([#312], closes [#311])** —
+  7 cohesive docs covering quickstart + concepts + features + use-cases +
+  troubleshooting + faq + glossary, plus a `docs/README.md` entry-point
+  with Diátaxis-organized table + suggested reading order. Tone target:
+  research-grade, citation-backed, honest about limitations; no marketing
+  language. 1,736 insertions; 147 canonical-artifact references across the
+  bundle. Distributes via repo-level `docs/` for first-user reading
+  (not part of plugin distribution).
+- **`check-mention-routing.sh` Check A — must-have-mention ([#309], closes [#244])** —
+  Path-2 promotion of `coordination.md §Communication 2` ("@mention in EVERY
+  comment. Routing depends on it. A comment without @mention is invisible
+  to the recipient agent."). Single AWK pass extended to track BOTH
+  per-line describing-leak (Check B; macf#272 unchanged) AND total
+  routing-active mention count (new). If body has zero routing-active
+  mentions, BLOCK with stderr explanation. Bypassed for `gh (issue|pr)
+  close --comment` (self-close verification comments are reporter-internal,
+  no recipient required). Same `MACF_SKIP_MENTION_CHECK=1` override
+  covers both checks.
+- **`claude.sh` self-wrap in tmux + settings-driven identity ([#314], closes [#313])** —
+  Path-2 promotion of `coordination.md §Canonical tmux launch pattern`.
+  Pre-#313, the canonical session-name rule existed as text-only doc that
+  operators had to manually wrap `tmux new-session -d -s "<project>@<agent>"
+  "./claude.sh"`. Post-#313, bare `./claude.sh` produces the same canonical
+  session structurally — the launcher self-wraps in tmux when launched
+  outside one (re-attach if exists, create if not). Three components:
+  `macf_settings_get` bash helper (reusable JSON-reader for
+  `.claude/settings.local.json`); 3-layer settings-driven identity
+  (`MACF_AGENT_NAME` / `MACF_AGENT_ROLE` / `MACF_OTEL_ENDPOINT` —
+  env > settings.local.json > baked default); tmux self-wrap with `$TMUX`
+  + `MACF_NO_TMUX_WRAP=1` two-condition bypass. OTel endpoint extended to
+  4-layer chain (settings.local.json layer added between template-time
+  bake and runtime override).
+
+### Fixed
+- **OTel DELTA temporality ([#308], closes [#281] Phase 2)** —
+  `OTLPMetricExporter` now constructed with
+  `temporalityPreference: AggregationTemporality.DELTA`. Pre-fix, the SDK
+  defaulted to CUMULATIVE temporality; process restarts between export
+  cycles produced zero-resets in the cumulative trajectory in Prometheus
+  storage. Empirical surfacing: scenario-08 N=5 sweeps produced counter
+  values 1/5 of expected because process restarts broke the cumulative
+  chain. Post-fix: each export interval emits increments-this-interval;
+  process restarts produce independent delta points; OTel Collector
+  aggregates by series identity to reconstruct cumulative — robust to
+  N-process / restart topologies. Closes silent-fallback-hazards.md
+  Instance 7 end-to-end.
+
+### Documentation
+- **Reshape stage2-to-stage3-migration → macf-consumer-onboarding ([#310], closes [#273])** —
+  `git mv design/stage2-to-stage3-migration.md design/macf-consumer-onboarding.md`
+  (history preserved). Audience explicitly stated: NEW MACF-consumer
+  projects (CV agents, future macf-init'd workspaces); substrate workspaces
+  out of scope per operator directive 2026-04-27. Section reframes:
+  Pre-conditions → Requirements; Per-agent migration steps → Bootstrap
+  steps; Rollback → Decommission + Rollback (separated); added Worked
+  Example with cv-e2e-test rehearsal #11b/#12b/#13b citations; added
+  cross-reference back-link from quickstart.md to consumer-onboarding.md.
+- **`coordination.md §Canonical tmux launch pattern` updated ([#314])** —
+  Notes the post-v0.2.10 self-wrap structural enforcement; pre-v0.2.10
+  manual wrap form preserved as compat note for mixed-version fleets;
+  `MACF_NO_TMUX_WRAP=1` opt-out documented alongside sister conventions
+  (`MACF_OTEL_DISABLED=1`, `MACF_SKIP_TOKEN_CHECK=1`,
+  `MACF_SKIP_MENTION_CHECK=1`).
+- **`mention-routing-hygiene.md` §7 reshaped ([#309])** — enumerates both
+  Check A (must-have-mention) and Check B (must-not-leak) with their
+  subcommand-applicability + heuristic-bullet inclusion.
+- **First-user docs entry section in root README ([#312])** —
+  Cross-link to `docs/` directory + 7-doc index. Plus stale-content
+  corrections: "Latest CLI release v0.1.1" → "v0.2.9"; "Design Decisions
+  (19)" → "Design Decisions (23)"; coordination.md path corrected
+  (post-monorepo).
+
+[#244]: https://github.com/groundnuty/macf/issues/244
+[#273]: https://github.com/groundnuty/macf/issues/273
+[#281]: https://github.com/groundnuty/macf/issues/281
+[#308]: https://github.com/groundnuty/macf/pull/308
+[#309]: https://github.com/groundnuty/macf/pull/309
+[#310]: https://github.com/groundnuty/macf/pull/310
+[#311]: https://github.com/groundnuty/macf/issues/311
+[#312]: https://github.com/groundnuty/macf/pull/312
+[#313]: https://github.com/groundnuty/macf/issues/313
+[#314]: https://github.com/groundnuty/macf/pull/314
+
 ## [0.2.9] — 2026-04-30
 
 Bundles 6 changes accumulated since v0.2.8: 2 doctor enhancements, 1 hook
