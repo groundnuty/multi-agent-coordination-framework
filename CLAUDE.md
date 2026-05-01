@@ -52,29 +52,58 @@ test/             ← unit tests (default vitest run) + test/e2e/ (excluded)
 ## Implementation Status
 
 P1–P7 all implemented. Post-P7 work is bug-fix + security + hardening driven
-by issue queue and periodic audits. Currently at **v0.1.1** (see `CHANGELOG.md`).
-Recent security-critical landings:
+by issue queue and periodic audits. Currently at **v0.2.10** (see
+`CHANGELOG.md`). 23 DRs, 7 phase specs, 13 canonical rules, 16 research notes.
 
-- **#140 / attribution-trap PreToolUse hook** — structural block of `gh` /
-  `git push` invocations when `GH_TOKEN` isn't a `ghs_` bot token.
-  Catches `sudo gh`, `bash -c "gh ..."`, `bash -xc`, `GH_TOKEN=x gh`,
-  and other wrapped forms. Moved the attribution trap from behavioral
-  (5 recurrences in one day) to structural.
-- **#161 / cross-repo token paths** — `claude.sh` exports
-  `MACF_WORKSPACE_DIR` and absolutizes `KEY_PATH` so the token helper
-  resolves from any cwd. Closes the cross-repo cwd variant of the
-  attribution trap (6th recurrence).
-- **#87 / DR-010 fix** — `/sign` challenge-response now actually verifies
-  (was tautological; any mTLS cert holder could obtain certs for arbitrary
-  agent names before fix). In-memory challenge store with 5-min TTL.
+**Architecture in canonical state** (post-v0.2.10):
+- Stage 3 routing — mTLS HTTPS POST `/notify` via `macf-actions@v3.3.0`. SSH-based
+  routing was Stage 2 (legacy; gone from active code in `macf-actions@v3+`).
+  Substrate workspaces still pin `@v1.3.1` for permanent Stage-2 routing per
+  operator directive 2026-04-27 — all NEW consumer projects use Stage 3.
+- Per-agent channel server — HTTPS+mTLS, spawned as MCP stdio child. Endpoints:
+  `/notify` (inbound coordination), `/sign` (cert signing), `/health` (peer ping).
+- `claude.sh` self-wraps in canonical `<project>@<agent>` tmux session as of
+  v0.2.10 (`MACF_NO_TMUX_WRAP=1` opt-out). Settings-driven identity via
+  `.claude/settings.local.json` `env` block (3-layer priority: env > settings >
+  baked default).
+
+**Recent Path-2 promotions (structural enforcement of canonical rules):**
+- **#140 / attribution-trap PreToolUse hook** — `check-gh-token.sh` blocks `gh`
+  / `git push` when `GH_TOKEN` isn't a `ghs_` bot token. Catches wrapped forms.
+- **#244 + #272 / mention-routing-hygiene hooks** — `check-mention-routing.sh`
+  Check A (must-have-mention) + Check B (must-not-leak describing-context).
+  Path-2 promotion of `coordination.md §Communication 2` +
+  `mention-routing-hygiene.md §5`. v0.2.10 + v0.2.9.
+- **#313 / claude-sh tmux self-wrap** — Path-2 promotion of `coordination.md
+  §Canonical tmux launch pattern`. v0.2.10.
+- **macf-actions#39 / route-by-pr-review-state** — Path-2 promotion of
+  `pr-discipline.md §formal-review-submission`. Fires on
+  `pull_request_review.submitted`. v3.3.0.
+
+**Recent security-critical landings:**
+- **#161 / cross-repo token paths** — `claude.sh` exports `MACF_WORKSPACE_DIR`
+  and absolutizes `KEY_PATH` so the token helper resolves from any cwd.
+- **#87 / DR-010 fix** — `/sign` challenge-response now actually verifies (was
+  tautological). In-memory challenge store with 5-min TTL.
 - **#98 / #89** — `extractCN` rejects multi-CN + non-CN-prefix subjects.
-- **#99 / #94** — `decryptCAKey` semantic-checks PEM shape of output
-  (catches ~6% of wrong-passphrase attempts that previously returned garbage).
+- **#99 / #94** — `decryptCAKey` semantic-checks PEM shape of output.
 
-Other recent doctrine: **DR-019** codifies the 7 required App permissions
-(`metadata`, `contents`, `issues`, `pull_requests`, `actions_variables`,
-`workflows`, `actions`). Coordinator agents especially need `actions: read`.
-`macf doctor` verifies a workspace's token against DR-019.
+**Recent reliability landings:**
+- **#281 Phase 2 / OTel DELTA temporality** (v0.2.9) — `OTLPMetricExporter` now
+  uses DELTA temporality. Process restarts produce independent delta points;
+  collector aggregates by series identity. Closes silent-fallback Instance 7.
+- **#296 + #305 / `macf doctor` workspace permissions check** — surfaces
+  `permissions.allow` Write/Edit absence + reads merged view of
+  `settings.json` + `settings.local.json` per Claude Code's canonical merge
+  semantics. v0.2.9.
+
+**Doctrine reference:**
+- **DR-019** — 7 required App permissions (`metadata`, `contents`, `issues`,
+  `pull_requests`, `actions_variables`, `workflows`, `actions`). `macf doctor`
+  verifies a workspace's token against DR-019.
+- **DR-022** — channel-server-npm-npx (CLI distribution).
+- **DR-023** — Stage-3-hook-mcp-tool-architecture (`peer_notification`
+  Pattern E observational-only delivery; bash-form vs mcp_tool decision rule).
 
 ## Tech Stack
 
@@ -98,8 +127,8 @@ Other recent doctrine: **DR-019** codifies the 7 required App permissions
   first-order workflows; `make -f dev.mk check` is the canonical gate
 
 Key targets:
-- `make -f dev.mk check` — full CI: install + typecheck + lint + test (671/671 tests
-  as of 2026-04-21)
+- `make -f dev.mk check` — full CI: install + typecheck + lint + test (942/942 tests
+  as of 2026-05-01 — 575 macf + 125 macf-channel-server + 242 macf-core)
 - `make -f dev.mk typecheck` — type check only (`tsc --noEmit`; formerly `build`, renamed per #127)
 - `make -f dev.mk build` — real compile, emits `dist/` (matches `npm run build`)
 - `make -f dev.mk lint` — ESLint
@@ -157,22 +186,44 @@ One-off test: `devbox run -- npx vitest run test/path/to/file.test.ts`
   `--plugin-dir` per DR-013
 - Routing workflow ships via `groundnuty/macf-actions@v<version>` — consumers
   reference it from their `.github/workflows/agent-router.yml` via
-  `uses: groundnuty/macf-actions/.github/workflows/agent-router.yml@v1`
+  `uses: groundnuty/macf-actions/.github/workflows/agent-router.yml@v3`
+  (current; v3.3.0 latest tag)
 - Canonical helpers (coordination.md, tmux-send-to-claude.sh,
-  macf-gh-token.sh, macf-whoami.sh, check-gh-token.sh) ship IN the
-  CLI package and are distributed to workspaces at `macf init` /
-  `macf update` / `macf rules refresh`
+  macf-gh-token.sh, macf-whoami.sh, check-gh-token.sh,
+  check-mention-routing.sh) ship IN the CLI package and are
+  distributed to workspaces at `macf init` / `macf update` /
+  `macf rules refresh`
+
+## Observability (optional, opt-in)
+
+Channel server emits OpenTelemetry traces + metrics + logs when
+`OTEL_EXPORTER_OTLP_ENDPOINT` is set. The canonical observability stack
+(k3d cluster + Tempo + Prometheus/Mimir + Loki + Grafana + central OTel
+Collector) lives in [`groundnuty/macf-devops-toolkit`](https://github.com/groundnuty/macf-devops-toolkit).
+See `groundnuty/macf-devops-toolkit:CLAUDE.md` for the canonical endpoint
+reference (`http://127.0.0.1:14318` host-port-mapped via k3d serverlb)
+and `docs/observability-bundle-setup.md` for the operator runbook.
+
+DELTA temporality on counters per macf#281 Phase 2 (v0.2.9+) — robust to
+N-process / restart topologies. 4-layer endpoint resolution chain in
+`claude.sh` (env > settings.local.json > template-time bake > hardcoded
+default) per macf#313 v0.2.10.
 
 ## Where to Start When Debugging
 
 | Symptom                                      | Likely location                          |
 |----------------------------------------------|------------------------------------------|
-| `gh` operations attributed to user not bot   | `scripts/macf-gh-token.sh` + coordination.md Token & Git Hygiene |
+| `gh` operations attributed to user not bot   | `packages/macf/scripts/macf-gh-token.sh` + coordination.md Token & Git Hygiene |
 | `macf doctor` reports missing permission     | DR-019 — update the App on GitHub        |
-| Routing not delivering to tmux               | `groundnuty/macf-actions` workflow + target agent's `agent-config.json` workspace_dir |
-| `/sign` unexpected behavior                  | `src/certs/challenge.ts` + `challenge-store.ts` + DR-010 |
-| Version pins weirdness                       | `src/cli/version-resolver.ts` + `macf-agent.json.versions` |
-| Agent template out of sync across workspaces | `plugin/rules/coordination.md` (canonical); re-run `macf rules refresh` |
-| PreToolUse hook blocks legitimate `gh` call  | `GH_TOKEN` not `ghs_`-prefixed; refresh via `macf-gh-token.sh`; see `scripts/check-gh-token.sh` + #140 |
+| Routing not delivering to recipient channel  | `groundnuty/macf-actions@v3` workflow + recipient agent's registry variable (`MACF_<PROJECT>_AGENT_<NAME>`) |
+| `/sign` unexpected behavior                  | `packages/macf-channel-server/src/certs/challenge.ts` + DR-010 |
+| Version pins weirdness                       | `packages/macf/src/cli/version-resolver.ts` + `macf-agent.json.versions` |
+| Agent template out of sync across workspaces | `packages/macf/plugin/rules/coordination.md` (canonical); re-run `macf rules refresh` |
+| PreToolUse hook blocks legitimate `gh` call  | `GH_TOKEN` not `ghs_`-prefixed; refresh via `macf-gh-token.sh`; see `packages/macf/scripts/check-gh-token.sh` + #140 |
+| PreToolUse hook blocks `gh issue/pr comment` | `check-mention-routing.sh` Check A (no @mention) or Check B (describing-leak); override `MACF_SKIP_MENTION_CHECK=1`; see #244 + #272 |
+| `claude.sh` re-execs in tmux unexpectedly    | v0.2.10+ self-wrap; if launching outside tmux is intentional, use `MACF_NO_TMUX_WRAP=1`; see #313 |
+| Telemetry not landing in Tempo/Prometheus    | `OTEL_EXPORTER_OTLP_ENDPOINT` unset OR pointing at retired `:4318` (use `:14318` per macf-devops-toolkit canonical k3d topology); see #282 + #283 |
+| Auto-close fired on someone else's issue     | PR body had `Closes/Fixes/Resolves #N`; use `Refs #N` for peer-filed issues per coordination.md §Issue Lifecycle 1 |
+| Doctor false-positive on Write/Edit absence  | `permissions.allow` check reads merged settings.json + settings.local.json post-v0.2.9 (#305); operator entries in either file count |
 | E2E suite failing silently / fixture drift   | `.github/workflows/e2e.yml` + auto-opened `code-agent/blocked` issue on main |
 | Linked CLI behavior doesn't match main       | Stale `dist/`; run `macf self-update` (or `make -f dev.mk build`); see #144 |
