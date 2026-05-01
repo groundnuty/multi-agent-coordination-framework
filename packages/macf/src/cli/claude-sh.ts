@@ -45,6 +45,83 @@ function registryEnvLines(cfg: MacfAgentConfig): string[] {
 }
 
 /**
+ * Emit the `macf_settings_get` shell function (macf#313).
+ *
+ * Reads `.env.<name>` from `<workspace>/.claude/settings.local.json`
+ * via `jq`. Returns empty string if the file/key is missing or `jq`
+ * isn't installed. Used by the settings-driven identity overrides
+ * (see `generateClaudeSh`'s identity block) and the OTel endpoint
+ * settings layer.
+ *
+ * Defined before any caller in the generated script. Idempotent —
+ * calling it with no settings.local.json present is safe (just returns
+ * empty).
+ */
+function settingsGetHelperLines(): string[] {
+  return [
+    '',
+    '# Settings-driven identity helper (macf#313). Reads `.env.<NAME>` from',
+    '# .claude/settings.local.json via jq; returns empty string if file/key',
+    '# missing or jq absent. Used by the identity-override block below + the',
+    '# OTel endpoint settings layer to prefer operator-edited settings.local.json',
+    '# over baked defaults, without forcing operators to edit this launcher.',
+    'macf_settings_get() {',
+    '  local var_name="$1"',
+    '  if [ -f "$SCRIPT_DIR/.claude/settings.local.json" ] && command -v jq >/dev/null 2>&1; then',
+    '    jq -r ".env.${var_name} // empty" "$SCRIPT_DIR/.claude/settings.local.json" 2>/dev/null',
+    '  fi',
+    '}',
+  ];
+}
+
+/**
+ * Emit the tmux self-wrap block (macf#313).
+ *
+ * If `$TMUX` is unset (operator launched outside tmux) AND
+ * `MACF_NO_TMUX_WRAP` isn't `1`, the script `exec`s itself inside a
+ * tmux session named `<MACF_PROJECT>@<MACF_AGENT_NAME>`. Re-attach if
+ * the session already exists; otherwise create a new session and exec
+ * into it. Eliminates operator-discipline dependency for canonical
+ * session naming (coordination.md §Canonical tmux launch pattern).
+ *
+ * Path-2 promotion of the canonical-session-name rule: pre-#313, the
+ * rule existed as text-only doc that operators had to manually wrap
+ * `tmux new-session -d -s "<project>@<agent>" "./claude.sh"`. Post-#313,
+ * bare `./claude.sh` produces the same canonical session structurally.
+ *
+ * Order requirement: `MACF_PROJECT` and `MACF_AGENT_NAME` must be
+ * exported before this block (so `$SESSION_NAME` resolves correctly).
+ * `generateClaudeSh` orders accordingly.
+ *
+ * Opt-out: `MACF_NO_TMUX_WRAP=1 ./claude.sh` for operator-driven manual
+ * launches outside tmux (e.g., debug sessions, single-shot CLI use, CI).
+ * Sister convention to `MACF_OTEL_DISABLED=1`, `MACF_SKIP_TOKEN_CHECK=1`.
+ */
+function tmuxSelfWrapLines(): string[] {
+  return [
+    '',
+    '# Tmux self-wrap (macf#313 Path-2 promotion of coordination.md',
+    '# §Canonical tmux launch pattern). If launched outside tmux and the',
+    '# operator hasn\'t opted out, re-exec inside a tmux session named',
+    '# <MACF_PROJECT>@<MACF_AGENT_NAME>. Attach if the session exists;',
+    '# otherwise create a new one. The second invocation (inside tmux)',
+    '# has $TMUX set and skips the wrap.',
+    '#',
+    '# Opt-out: MACF_NO_TMUX_WRAP=1 ./claude.sh',
+    '#   For operator-driven manual launches outside tmux, debug sessions,',
+    '#   single-shot CLI use, CI environments.',
+    'if [ -z "${TMUX:-}" ] && [ "${MACF_NO_TMUX_WRAP:-}" != "1" ]; then',
+    '  SESSION_NAME="${MACF_PROJECT}@${MACF_AGENT_NAME}"',
+    '  if tmux has-session -t "$SESSION_NAME" 2>/dev/null; then',
+    '    exec tmux attach -t "$SESSION_NAME"',
+    '  else',
+    '    exec tmux new-session -s "$SESSION_NAME" -c "$SCRIPT_DIR" "$0" "$@"',
+    '  fi',
+    'fi',
+  ];
+}
+
+/**
  * Emit the Claude Code native OTEL telemetry env block into the
  * generated `claude.sh`. Three mandatory gates per Claude Code docs
  * — missing any one of them → zero traces emit:
@@ -137,7 +214,20 @@ export function otelTelemetryLines(
     'export OTEL_TRACES_EXPORTER=otlp',
     'export OTEL_METRICS_EXPORTER=otlp',
     'export OTEL_LOGS_EXPORTER=otlp',
-    `export OTEL_EXPORTER_OTLP_ENDPOINT="\${OTEL_EXPORTER_OTLP_ENDPOINT:-${endpoint}}"`,
+    // 4-layer endpoint resolution chain (macf#313):
+    //   1. OTEL_EXPORTER_OTLP_ENDPOINT (runtime env, canonical OTel name) — wins
+    //   2. MACF_OTEL_ENDPOINT (runtime env)
+    //   3. settings.local.json `.env.MACF_OTEL_ENDPOINT` (operator-edited)
+    //   4. Baked default from macf init/update (template-time MACF_OTEL_ENDPOINT)
+    // The MACF_OTEL_ENDPOINT runtime+settings layer was added in #313 to
+    // close the gap between the existing template-time MACF_OTEL_ENDPOINT
+    // (bakes into this script at macf init/update) and the canonical
+    // runtime override (OTEL_EXPORTER_OTLP_ENDPOINT). Operators who want
+    // per-launch endpoint changes without re-running macf update now have
+    // settings.local.json `.env.MACF_OTEL_ENDPOINT` as the ergonomic path.
+    `MACF_OTEL_ENDPOINT="\${MACF_OTEL_ENDPOINT:-$(macf_settings_get MACF_OTEL_ENDPOINT)}"`,
+    `MACF_OTEL_ENDPOINT="\${MACF_OTEL_ENDPOINT:-${endpoint}}"`,
+    'export OTEL_EXPORTER_OTLP_ENDPOINT="${OTEL_EXPORTER_OTLP_ENDPOINT:-$MACF_OTEL_ENDPOINT}"',
     'export OTEL_EXPORTER_OTLP_PROTOCOL=http/protobuf',
     `export OTEL_SERVICE_NAME="macf-agent-${config.agent_name}"`,
     `export OTEL_RESOURCE_ATTRIBUTES="gen_ai.agent.name=${config.agent_name},gen_ai.agent.role=${config.agent_role},service.namespace=macf"`,
@@ -193,10 +283,24 @@ export function generateClaudeSh(config: MacfAgentConfig): string {
     // cross-repo work — attribution trap fires. See #140 + the
     // cross-repo cwd trap note in coordination.md Token & Git Hygiene.
     'export MACF_WORKSPACE_DIR="$SCRIPT_DIR"',
-    `export MACF_AGENT_NAME="${config.agent_name}"`,
     `export MACF_PROJECT="${config.project}"`,
     `export MACF_AGENT_TYPE="${config.agent_type}"`,
-    `export MACF_AGENT_ROLE="${config.agent_role}"`,
+    ...settingsGetHelperLines(),
+    '',
+    '# Settings-driven identity overrides (macf#313). Three-layer priority:',
+    '#   1. Already-set env var (operator: `MACF_AGENT_NAME=foo ./claude.sh`)',
+    '#   2. .claude/settings.local.json `env` block (operator: edit JSON;',
+    '#      no script edit needed; persists across `macf update`)',
+    '#   3. Baked default from macf init/update (this template)',
+    '# Identity changes become JSON edits rather than script edits.',
+    `MACF_AGENT_NAME="\${MACF_AGENT_NAME:-$(macf_settings_get MACF_AGENT_NAME)}"`,
+    `MACF_AGENT_NAME="\${MACF_AGENT_NAME:-${config.agent_name}}"`,
+    'export MACF_AGENT_NAME',
+    `MACF_AGENT_ROLE="\${MACF_AGENT_ROLE:-$(macf_settings_get MACF_AGENT_ROLE)}"`,
+    `MACF_AGENT_ROLE="\${MACF_AGENT_ROLE:-${config.agent_role}}"`,
+    'export MACF_AGENT_ROLE',
+    ...tmuxSelfWrapLines(),
+    '',
     `export APP_ID="${config.github_app.app_id}"`,
     `export INSTALL_ID="${config.github_app.install_id}"`,
     `export KEY_PATH="${config.github_app.key_path}"`,
