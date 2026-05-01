@@ -58,7 +58,7 @@ Numbers you can verify yourself; cited across the 7 docs to ground claims in evi
 |---|---|
 | 1.18× multi-agent overhead | CPC 11-day production run; `groundnuty/claude-plan-composer` |
 | 22.7% asymmetric-context savings | Same |
-| 128 issues / 175 PRs / ~10.5T tokens | Same |
+| 128 issues / 175 PRs / 6.8M output + 10.26B cache reads (1,511:1 ratio) | Same |
 | ~80 PRs in 2026-04-15→04-30 sprint | MACF dogfooding; `gh pr list --state merged` on `groundnuty/macf` |
 | 8 npm releases in ~76 hours (v0.2.1 → v0.2.9) | `npm view @groundnuty/macf versions` + `gh release list` |
 | 10/11 PASS rehearsal #13b (21 notify_received events; 11 wake_delivered + 10 wake_skipped) | `groundnuty/macf-science-agent:insights/2026-04-30-rehearsal-13b-empirical-witnesses.md` |

@@ -358,7 +358,7 @@ Source: Zhang et al., "Exploring Collaboration Mechanisms for LLM Agents: A Soci
 ### What we could contribute to the field:
 
 Our system has **empirical data** that doesn't exist in the literature:
-- 39 sessions, 26,620 API calls, 10.5 trillion tokens — measured, not simulated
+- 39 sessions, 26,620 API calls, 10.47 billion cumulative tokens through the API (6.8M output + 10.26B cache reads + 208M cache creation + 440K uncached input) — measured, not simulated
 - Real context growth curves for specialized agents over multi-day sessions
 - Cache hit rates for focused vs hypothetical combined windows
 - Actual workflow learning observed (agents evolved beyond initial rules)
