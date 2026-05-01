@@ -143,6 +143,18 @@ When intentionally bypassing the hook for a knowingly user-attributed op (e.g., 
 
 ---
 
+## Structural backstop: in-runner token refresh in macf-channel-server (macf#317)
+
+The 6 failure modes above all describe **token-acquisition** (the new token coming back wrong); macf#317 surfaced a 7th class — **token-expiry** during long-running sessions. Bot installation tokens have a 1-hour TTL by design; `claude.sh` mints a fresh token at session start and exports `GH_TOKEN`, but **macf-channel-server inherits this fixed token via `process.env` and has no in-runner refresh** absent the macf#317 fix. After 1 hour, every gh-API-using handler (notify_peer's registry lookups, /sign's varsClient calls) 401s. Witnessed 2026-05-01: cv-architect Stop hook 401 at ~67min uptime.
+
+The expiry sub-case is **shape-distinct** from modes 1–6: the token is `ghs_*` (right prefix), it was generated correctly, the helper script is installed, the path resolves — it's just stale. Helper-prefix-checking + PreToolUse hooks don't catch it; the structural fix is in-process refresh.
+
+**v0.2.11+ defense:** macf-channel-server's `token-refresh.ts` + `refresh-aware-client.ts` modules. The token-refresher caches the current token in-process for ~50 minutes (10-min safety margin under 1hr TTL); on every gh-API call, the refresh-aware client gets a current token (cached or fresh); on 401, the wrapper force-refreshes + retries once. Refresh failures throw with diagnostic — channel-server fails loud rather than silently using a stale token. Implementation cites `silent-fallback-hazards.md Instance 1 (expiry sub-case)` in the diagnostic message so 401s in the field surface the canonical reference.
+
+**Operator note:** the structural defense is automatic for consumer-fleet workspaces (npm-installed `@groundnuty/macf-channel-server@0.2.11+`). Substrate workspaces / bash-terminal sessions still need the operator-discipline pattern in `gh-token-refresh.md` ("refresh before every `gh` or `git push`").
+
+---
+
 ## How this relates to other canonical rules
 
 - `coordination.md` § "Token & Git Hygiene" documents the canonical helper invocation; this rule provides the failure-mode catalog the helper is designed to defend against.

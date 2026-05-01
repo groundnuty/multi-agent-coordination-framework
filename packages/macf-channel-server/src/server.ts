@@ -14,10 +14,11 @@ import { createLogger } from '@groundnuty/macf-core';
 import { createMcpChannel } from './mcp.js';
 import { createHealthState } from './health.js';
 import { createHttpsServer } from './https.js';
-import { createRegistryFromConfig } from '@groundnuty/macf-core';
+import { createRegistry } from '@groundnuty/macf-core';
 import { checkCollision, CollisionError } from './collision.js';
 import { registerShutdownHandler } from './shutdown.js';
-import { generateToken } from '@groundnuty/macf-core';
+import { createTokenRefresher } from './token-refresh.js';
+import { createRefreshAwareClient } from './refresh-aware-client.js';
 import { createChallenge, verifyAndConsumeChallenge } from '@groundnuty/macf-core';
 import { createChallengeStore } from '@groundnuty/macf-core';
 import { signCSR } from '@groundnuty/macf-core';
@@ -165,19 +166,50 @@ async function main(): Promise<void> {
     }
   };
 
-  // P2: Generate token early — needed for /sign endpoint and registry
-  const token = await generateToken();
-  const registry = createRegistryFromConfig(config.registry, config.project, token);
-  const { createGitHubClient } = await import('@groundnuty/macf-core');
-
-  // Build the variables client for the /sign challenge flow
+  // P2: Resolve path prefix once — both the project registry client +
+  // the /sign varsClient share the same base URL prefix shape.
+  //
+  // Pre-macf#317 this section also called `await generateToken()` to
+  // mint a static token + pass it into `createRegistryFromConfig` +
+  // `createGitHubClient`. The token-refresh wrapper now handles minting
+  // lazily (first call to `tokenRefresher.getRefreshedToken()`) — we
+  // don't pre-mint here because the refresh-aware client mints on first
+  // use anyway, and pre-minting wouldn't improve startup signal.
   let signPathPrefix: string;
   switch (config.registry.type) {
     case 'org': signPathPrefix = `/orgs/${config.registry.org}`; break;
     case 'profile': signPathPrefix = `/repos/${config.registry.user}/${config.registry.user}`; break;
     case 'repo': signPathPrefix = `/repos/${config.registry.owner}/${config.registry.repo}`; break;
   }
-  const varsClient = createGitHubClient(signPathPrefix, token);
+
+  // macf#317: in-runner token refresh. The refresher caches the current
+  // token in-process; on each call it returns cached if age < 50min,
+  // else mints fresh via macf-gh-token.sh. On 401 from a downstream API
+  // call, the refresh-aware client retries once with forceRefresh: true.
+  // This closes the >1hr-session expiry gap (silent-fallback Instance 1
+  // expiry sub-case) — the cv-architect 401 at 67min uptime witnessed
+  // 2026-05-01 was the motivating incident.
+  const tokenRefresher = createTokenRefresher({ logger });
+
+  // Project-registry path prefix differs from /sign prefix only in the
+  // org case (registry uses /orgs/<org> too — same shape). Re-derive
+  // here for clarity even though it's identical to signPathPrefix.
+  const registryPathPrefix = signPathPrefix;
+  const registryClient = createRefreshAwareClient({
+    pathPrefix: registryPathPrefix,
+    tokenRefresher,
+    logger,
+  });
+  const registry = createRegistry(registryClient, config.project);
+
+  // Build the variables client for the /sign challenge flow with the
+  // same refresh-aware wrapping. Stop hook + /sign both 401 after the
+  // 1-hour token TTL absent this fix.
+  const varsClient = createRefreshAwareClient({
+    pathPrefix: signPathPrefix,
+    tokenRefresher,
+    logger,
+  });
 
   // In-memory challenge store (DR-010, #80). Process-local; server restart
   // between step 1 and step 2 of a flow invalidates outstanding challenges.
