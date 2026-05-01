@@ -9,6 +9,126 @@ Plugin + routing-workflow changes ship from separate repos
 [`groundnuty/macf-actions`](https://github.com/groundnuty/macf-actions))
 and are not included here — pin them explicitly in each workspace.
 
+## [0.2.11] — 2026-05-01
+
+Bundles 5 changes accumulated since v0.2.10: 1 Path-2 promotion (LGTM
+gate PreToolUse hook), 1 silent-fallback hazard closure (in-runner
+GH_TOKEN refresh — Instance 1 expiry sub-case), 1 reliability addition
+(PreCompact checkpoint MCP tool — DR-023 §UC-3), 1 design decision
+(DR-024 local-registry-mode), and 1 operations runbook.
+
+### Added
+- **`check-lgtm-gate.sh` PreToolUse hook ([#319], closes [#270])** —
+  Path-2 promotion of `pr-discipline.md` "no LGTM = no merge" canonical
+  rule. Bash-form PreToolUse hook intercepts `gh pr merge` invocations
+  (with wrapper-aware regex coverage) and blocks the merge if no
+  non-author APPROVED review exists on the PR. Mirrors PR #275's
+  `check-mention-routing.sh` pattern commit-by-commit. Identity
+  normalization handles `app/<bot>` vs `<bot>` vs `<bot>[bot]` API-shape
+  variations. Override via `MACF_SKIP_LGTM_CHECK=1` for legitimate
+  reporter-sanctioned exceptions per pr-discipline.md §"When the
+  reviewer is absent or unreachable". 35 unit tests + settings-writer
+  extension. Distributes via canonical scripts dir + extended
+  `MACF_HOOK_FILENAMES` array.
+- **PreCompact `checkpoint_to_memory` MCP tool + DR-023 §UC-3 amendment
+  ([#320], closes [#271])** — DR-023 use case 3 implementation. Stop hook
+  was wrong-cadence (fires per turn-end, not per session-exit/compaction);
+  amendment migrates UC-3 to PreCompact event which fires before manual
+  `/compact` AND auto-compaction. Tool writes structured session-summary
+  checkpoint to the agent's memory directory using `originSessionId`
+  frontmatter dedup (overwrite same-session, suffix on calendar-date
+  collision). Failure-mode contract: tool returns `isError: false`
+  always; soft-fail surfaces as `written: false` + `reason` structured
+  fields; checkpoint failure NEVER blocks compaction. Memory-server
+  framing in original spec was aspirational; actual impl is direct
+  filesystem-write via per-project memory dir. 20 channel-server tests.
+- **In-runner GH_TOKEN refresh in `macf-channel-server` ([#321], closes
+  [#317])** — addresses cv-architect 67min-uptime hazard from 2026-05-01
+  ~14:30Z (Stop hook 401 due to bot-installation-token 1hr TTL +
+  channel-server inheriting fixed token at startup). Two-layer additive
+  design: `createTokenRefresher` (50min cache, in-flight de-dup, ghs_
+  prefix validation, fail-loud on mint error) + `createRefreshAwareClient`
+  (decorates `GitHubVariablesClient` with pre-call refresh +
+  401-retry-once-with-force-refresh). Both registry-client + /sign
+  varsClient share one refresher instance. Tokens stay in-process;
+  never written to env or leaked to child processes. Doctrine updated:
+  `silent-fallback-hazards.md` Instance 1 expiry sub-case + new
+  "Structural backstop" section in `gh-token-attribution-traps.md`.
+  17 channel-server tests.
+
+### Documentation
+- **DR-024 local-registry-mode design decision ([#323], Refs [#322])** —
+  339-line design doc for `MACF_REGISTRY_TYPE=local` 4th registry variant.
+  Discriminated union extension + `LocalRegistryClient` + factory
+  dispatch + threat model (same-host / trusted-LAN; NOT defense against
+  external attackers; filesystem perms = trust boundary) + file format
+  with `schema_version` + pre-shared local-CA cert flow (sister-DR to
+  DR-010, NOT amendment) + routing trade-offs (no GitHub-driven routing;
+  3 operator-discipline paths) + bidirectional migration path with
+  bidirectional sync deferred + 5 use cases unlocked (laptop projects,
+  education/demos, framework dev, air-gapped, CI fixtures) + first-class
+  limitations section. Implementation deferred to follow-up PR sequence
+  per the design-decision-first sequencing pattern. Cross-references
+  DR-005, DR-010, DR-022, DR-023.
+- **Stage 3 operations runbook ([#318], closes [#274])** —
+  471-line living-doc at `design/operations-runbook.md` covering 7
+  operational concerns: cert lifecycle (rotation triggers + symptoms +
+  recovery via `macf certs rotate`/`recover`), port collisions
+  (DR-007 range + reassignment), registration drift (org var staleness +
+  reconciliation), missed notifications (Tempo trace inspection +
+  fragility detector), mTLS handshake failures (cert expiry / CN
+  mismatch / EKU rollout sequence), channel-server crash recovery
+  (DR-022 SLA + stateless-across-restarts), routing-Action workflow
+  debugging (silent-fallback Instance 3 family). Each section follows a
+  consistent shape — Failure-shape / Detection / Diagnostic flow /
+  Remediation / Known-gaps. Validity constants verified against source
+  (crypto-provider.ts CA 5y / agent 1y; https.ts port range 8800-9799 /
+  10 attempts). 14 DRs + silent-fallback-hazards Instances 3/6/7/8 +
+  coordination.md cross-referenced; observability specifics
+  cross-linked to `groundnuty/macf-devops-toolkit:CLAUDE.md` rather
+  than duplicated. 7 explicit TODO gaps marked instead of fabricated.
+- **Token-unit error reconciliation across docs/ + research/ ([#316],
+  Refs [#315])** — operator first-user-mode review surfaced "10.5T
+  tokens" as physically impossible on a Max x20 plan. Source unit error
+  in `research/2026-03-28-token-usage-empirical-analysis.md`
+  (`51d10bd`) corrected to "~10.5 billion cache reads" (off by 1000×
+  factor — actual 10.26B cumulative cache reads + 6.8M output tokens =
+  ~10.47B "effective input"); follow-up PR #316 propagated the
+  correction across 11 occurrences in `docs/` + `research/` with audit
+  trail.
+- **README mass-refresh per first-user-mode operator review** — diagram
+  redrawn for canonical-only state (no Stage 2 substrate caption);
+  `agent-config.json` example updated to v3 canonical (just `app_name`,
+  no SSH fields); Status section dropped Stage 2 substrate framing;
+  observability appendix added with cross-links to
+  `groundnuty/macf-devops-toolkit` (canonical k3d Tempo/Loki/Grafana
+  topology); SSH framing clarified (admin/debugging only — no longer
+  for routing); phone access corrected from "Tailscale" to "Claude
+  Remote"; sprint stat refreshed (`162 PRs in 2026-04-17→05-01`);
+  macf-actions tag bumped @v2 → @v3; DR count refreshed (19 → 23 incl.
+  DR-022/DR-023). Lands across `eee105f` / `49c7cef` / `dfb83a8`.
+- **CLAUDE.md refresh to v0.2.10 canonical state (`186309e`)** —
+  Implementation Status updated; Path-2 promotions subsection added
+  (#140 attribution-trap, #244+#272 mention-routing-hygiene, #313
+  claude-sh tmux self-wrap, macf-actions#39 route-by-pr-review-state);
+  observability section added (cross-link to
+  `groundnuty/macf-devops-toolkit`); Where to Start When Debugging
+  table extended with 4 new rows for current-state symptoms; test
+  count refreshed (671 → 942).
+
+[#270]: https://github.com/groundnuty/macf/issues/270
+[#271]: https://github.com/groundnuty/macf/issues/271
+[#274]: https://github.com/groundnuty/macf/issues/274
+[#315]: https://github.com/groundnuty/macf/issues/315
+[#316]: https://github.com/groundnuty/macf/pull/316
+[#317]: https://github.com/groundnuty/macf/issues/317
+[#318]: https://github.com/groundnuty/macf/pull/318
+[#319]: https://github.com/groundnuty/macf/pull/319
+[#320]: https://github.com/groundnuty/macf/pull/320
+[#321]: https://github.com/groundnuty/macf/pull/321
+[#322]: https://github.com/groundnuty/macf/issues/322
+[#323]: https://github.com/groundnuty/macf/pull/323
+
 ## [0.2.10] — 2026-05-01
 
 Bundles 5 changes accumulated since v0.2.9: 2 Path-2 promotions
