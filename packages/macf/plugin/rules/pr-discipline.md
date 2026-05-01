@@ -350,6 +350,38 @@ changed.
 
 ---
 
+## Structural enforcement — `check-lgtm-gate.sh` PreToolUse hook
+
+Per `groundnuty/macf#270` (DR-023 UC-2), the "no LGTM = no merge" rule (codified above in §"How to submit LGTM" + §"When the reviewer is absent or unreachable" + §"Merge-by-implementer") is enforced by a Claude Code PreToolUse hook on `Bash` tool calls. The hook intercepts `gh pr merge` invocations, queries the target PR's review state via `gh pr view --json author,reviews`, and BLOCKs (`exit 2` with stderr explanation) when no APPROVED review from a non-author exists.
+
+**Architectural shape (DR-023 amendment 2026-04-27):** this is a bash command-type hook, NOT `type: "mcp_tool"`. PreToolUse-blocking semantics + mcp_tool's non-blocking-on-disconnect failure mode are structurally incompatible — a missing or transiently-disconnected MCP server would silently allow the merge. Bash form fires uniformly across substrate workspaces (where the `macf-agent` MCP server is permanently off per operator directive 2026-04-27) AND consumer workspaces (startup window + transient disconnect periods produce silent-fail paths under mcp_tool). Same reasoning UC-4 (`check-mention-routing.sh`, PR #275) demonstrated empirically.
+
+**The hook is the same shape as `check-gh-token.sh` (#140) + `check-mention-routing.sh` (#244 + #272):** a bash script distributed via `macf init` / `macf update` / `macf rules refresh` to every workspace's `.claude/scripts/check-lgtm-gate.sh` with the entry registered in `.claude/settings.json` `hooks.PreToolUse`. Substrate workspaces, tester agents, CV consumers, and future MACF-consumer projects all get the protection uniformly.
+
+**Decision rule** (subject to refinement; documented for transparency):
+
+- Command does NOT match `gh pr merge` (exact subcommand, wrapper-aware) → allow (other gh subcommands pass through unchanged)
+- Command matches but no PR number can be extracted → allow (defense-in-depth; gh itself surfaces the usage error)
+- Command matches AND `gh pr view --json author,reviews` returns at least one APPROVED review where reviewer login != author login (after normalizing `app/` prefix + `[bot]` suffix) → allow
+- Command matches AND no non-author APPROVED review exists → BLOCK with stderr citing this rule + the missing-LGTM diagnosis + the `MACF_SKIP_LGTM_CHECK=1` operator override
+- Any infrastructure failure (gh missing, network 404/5xx, malformed JSON) → fail-open (allow). Same defense-in-depth posture as `check-gh-token.sh` and `check-mention-routing.sh` — the hook closes residual policy slips, not all merge paths
+
+**Wrapper coverage:** the regex matches `gh pr merge` preceded by `sudo`, `env VAR=...`, `watch`, `ionice`, `setsid`, `nice`, `time`, bare-`VAR=...` env-prefix forms, and shell wrappers (`bash -c "gh pr merge ..."`, `sh -c`, `zsh -c`, including flag-prefixed forms like `bash -lc`). Same wrapper allow-list as `check-gh-token.sh` + `check-mention-routing.sh`. Chained-form leadins `;` `|` `&&` covered.
+
+**False-positive trade-off:** the hook leans toward false-positive over false-negative on parse-failure paths. PR-number extraction tolerates URL form (`https://github.com/owner/repo/pull/N`), `owner/repo#N` shorthand, and quoted positionals. Bare `gh pr merge` (no positional, gh prompts interactively) passes through unblocked — the operator's discipline catches it because the prompt is visible.
+
+**Override (`MACF_SKIP_LGTM_CHECK=1`)** is the escape hatch for legitimate exceptions documented in §"When the reviewer is absent or unreachable":
+
+- Reporter-sanctioned self-merge after extended reviewer absence
+- The "PR author offline → reviewer merges with hand-off comment" exception
+- Urgent reverts where waiting for review is itself a hazard
+
+Per the `check-gh-token.sh` precedent, structural enforcement plus an escape hatch outperforms behavioral discipline alone.
+
+**Empirical motivation:** `groundnuty/macf-testbed#229` Phase C iter 4 sweep (2026-04-26) recorded a self-merge-without-LGTM incident — a tester self-merged when its harness driver (acting as the de-facto reviewer) was killed mid-poll. Codified in §"When the reviewer is absent or unreachable" same day. The hook closes the residual: rule-discipline catches most cases; structural enforcement catches the slips that remain.
+
+---
+
 ## When to modify this rule
 
 - **Read:** every session start.
