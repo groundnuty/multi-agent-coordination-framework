@@ -9,6 +9,85 @@ Plugin + routing-workflow changes ship from separate repos
 [`groundnuty/macf-actions`](https://github.com/groundnuty/macf-actions))
 and are not included here — pin them explicitly in each workspace.
 
+## [0.2.12] — 2026-05-01
+
+Bundles 5 changes accumulated since v0.2.11. **Headline: DR-024
+local-registry-mode delivered end-to-end** — laptop-local / education
+/ demo / framework-development / air-gapped / CI-fixture deployments
+now work without GitHub Apps. Sister-stub fixes for `macf-peers` +
+`macf-status` MCP tools complete the v0.2.11 fleet bug-fix arc.
+
+### Added
+- **DR-024 local-registry mode ([#322], [#324] PR-A + [#329] PR-B + [#330] PR-C)** —
+  4th `RegistryConfig` discriminated-union variant `{ type: 'local'; path: string }`.
+  Implementation lands across 3 PRs:
+  - **PR-A ([#324])**: `LocalRegistryClient` in `@groundnuty/macf-core` mirroring
+    `GitHubVariablesClient`'s `Registry` interface. File-locked JSON read/write
+    via `proper-lockfile` (parent-dir lock target — stable identity across
+    file-creation boundary). Atomic write via temp-file-then-rename. FS-perms
+    fail-loud at constructor (`0700` directory + `0600` ca-key). Schema
+    versioning (`schema_version: 1`) with unsupported-version throw. Factory
+    dispatch on `registry.type === 'local'`.
+  - **PR-B ([#329])**: `macf init --local` shorthand alias for `--registry-type
+    local`. App-cred flags (`--app-id` / `--install-id` / `--key-path`)
+    optional under `--local`. `MacfAgentConfig.github_app` made optional in
+    schema. Auto-CA generation on first invocation; CA co-located with
+    registry file at `<dir>/<project>.ca.{crt,key}` (registry-dir IS the
+    trust boundary per DR-024 — NOT under `~/.macf/certs/`). claude.sh
+    template factored helpers (`githubAppEnvLines`, `caPathLines`,
+    `githubTokenAndIdentityLines`) so each returns `[]` or local-mode-specific
+    lines. `/sign` returns 404 with diagnostic body in local mode
+    (discoverable-failure strategy from DR-024 §"Two viable disable
+    strategies"). One-shot migration via `macf init --migrate-from <path>`
+    (GitHub-direction-only; `--migrate-from + --local` rejected loudly).
+  - **PR-C ([#330])**: `docs/use-cases.md` "When MACF without GitHub makes
+    sense" subsection (5 use cases unlocked + honest limitations + verbatim
+    trust-boundary statement + side-by-side decision matrix vs GitHub mode);
+    `docs/quickstart.md` "Quickstart — local-registry mode" variant
+    (two-agent bootstrap + mutual `/notify` test + what-did-NOT-happen
+    differential + migration upgrade flow); `design/macf-consumer-onboarding.md`
+    "Local-registry-mode bootstrap (DR-024)" section (requirements subset,
+    bootstrap steps, channel-server local-mode behavior, verification gate,
+    migration helper specifics, rollback paths); `docs/README.md` extended
+    table-of-contents pointers.
+
+  PPAM 2026 paper-and-code use case driver (operator surfaced 2026-05-01:
+  "on my laptop I'm writing a paper and implementing code, too small project
+  for full github events, but sufficient for 2 claude code sessions that
+  could communicate directly").
+
+### Fixed
+- **`macf-peers` MCP tool self-probe ([#326], closes [#325])** — `peers` case in
+  `macf-plugin-cli.ts` was a stub that mapped every peer to `health: null`
+  without ever calling `pingAgent`. `formatPeerTable` renders `null` health as
+  "offline", so operators saw "everything offline" even when channel-servers
+  were running fine. CV-architect fleet hit this 2026-05-01 ~15:29Z (post
+  v0.2.11 update). Fix extracts `probePeerHealth` helper at
+  `lib/probe-peer-health.ts` mirroring the cert-path read + `pingAgent` call
+  pattern from the `ping` case. `peers` case now uses
+  `Promise.all(peers.map(probePeerHealth))` for parallel probing. Self-probe
+  is just one entry in the registry list — same path. 7 regression tests.
+- **`macf-status` MCP tool dashboard ([#328], closes [#327])** — sister-stub
+  fix to [#326]. `status` case mapped every peer to `health: null` AND
+  hardcoded `ownHealth: null` regardless of probe results, so `macf-status`
+  rendered "everything offline" identically to broken `macf-peers`. Fix
+  extracts `buildDashboardHealth` pure helper that takes injected probe
+  function + own-registration + peers and returns
+  `{ ownHealth, peersWithHealth }` for `formatDashboard`. Self-probe path
+  invokes probe on `ownRegistration`. Stale `// Live-health self-ping
+  tracked under #85` inline comment removed (#85 was specifically about the
+  `macf-ping` skill stub, closed when ping case was wired up). 6 regression
+  tests.
+
+[#322]: https://github.com/groundnuty/macf/issues/322
+[#324]: https://github.com/groundnuty/macf/pull/324
+[#325]: https://github.com/groundnuty/macf/issues/325
+[#326]: https://github.com/groundnuty/macf/pull/326
+[#327]: https://github.com/groundnuty/macf/issues/327
+[#328]: https://github.com/groundnuty/macf/pull/328
+[#329]: https://github.com/groundnuty/macf/pull/329
+[#330]: https://github.com/groundnuty/macf/pull/330
+
 ## [0.2.11] — 2026-05-01
 
 Bundles 5 changes accumulated since v0.2.10: 1 Path-2 promotion (LGTM
