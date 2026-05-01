@@ -79,14 +79,83 @@ Sister to "real-time interactive": MACF's GitHub-as-substrate design assumes tol
 
 ### When you don't have operator infrastructure
 
-MACF requires:
+MACF's full GitHub-coupled mode requires:
 
 - A VM or persistent host (laptops sleep; tmux sessions die on lid-close)
 - Tailscale or equivalent for cross-host network reachability (if multi-host)
 - GitHub Apps with permissions to grant
 - Token budget for ongoing agent sessions
 
-If any of these are blockers, the framework's value is gated. The CV-laptop-friendly path is open work; not currently supported.
+If any of these are blockers, the framework's full coordination value is gated. **For single-host scenarios where the GitHub coupling is the obstacle**, the local-registry mode (see next subsection) supports a subset of MACF without GitHub Apps. For cross-host or GitHub-driven-routing-required cases, the constraints above remain hard.
+
+## When MACF without GitHub makes sense (local-registry mode)
+
+[DR-024](../design/decisions/DR-024-local-registry-mode.md) ships a fourth registry variant — `local` — that runs the channel-server transport (mTLS HTTPS `POST /notify`, MCP push, tmux-send wake) end-to-end without GitHub Apps. Agents discover each other through `~/.macf/registry/<project>.json` instead of GitHub Actions Variables; certs are signed against a project-local CA written next to the registry file. This is **not a replacement** for GitHub mode; it serves a distinct set of cases where GitHub mode's bootstrap or substrate cost is the obstacle.
+
+The five use cases [DR-024](../design/decisions/DR-024-local-registry-mode.md) §"Five use cases unlocked" identifies:
+
+### 1. Solo small projects
+
+Single-operator workflow on one laptop where setting up a coordination repo + GitHub App + routing workflow is more bootstrap than the project warrants. The 2026-05-01 surfacing case — operator running a paper-writing session and a code-writing session on a laptop, wants them to coordinate via channel-server primitives without filing GitHub issues at each handoff. Empirical anchor: the PPAM 2026 paper-and-code use case driving this prioritization.
+
+### 2. Education / demos
+
+Workshops, talks, or tutorial sessions where attendees can't reasonably create GitHub Apps in the demo window. `macf init --local` works without an internet round-trip to GitHub; peers register themselves in the local registry file; mTLS-routed notifications work end-to-end without external dependencies.
+
+### 3. Framework development
+
+MACF maintainers spinning up a clean test workspace on every meaningful protocol change. Today this requires a real GitHub App + a coordination repo. Local-registry mode lets the framework be tested end-to-end without that bootstrap (separate from the unit/integration tests under `packages/*/test/`, which mock the GitHub layer).
+
+### 4. Air-gapped / offline environments
+
+Hosts where GitHub is not reachable. The transport layer (channel-server, mTLS, `/notify`) doesn't need GitHub at runtime; only the discovery + identity layer does, and local mode replaces both with filesystem state.
+
+### 5. CI sanity-check fixtures
+
+Integration tests that need 2+ channel-servers actually talking to each other (not mocked) currently require either a real GitHub fixture or a complex stub. Local mode gives a pure-localhost path with no external dependencies.
+
+### Honest limitations of local mode
+
+These constraints are load-bearing; misreading them produces a system that looks like it works but lacks load-bearing properties. From [DR-024](../design/decisions/DR-024-local-registry-mode.md) §Limitations:
+
+- **Single-host only.** No cross-host coordination. A laptop and a server are different hosts; agents on each cannot find each other through `local` mode. (Network-filesystem-shared registries are explicitly out of scope.)
+- **No multi-operator visibility.** No GitHub thread for a third party to read what's happening. Solo / education / demo / framework-dev / air-gapped / CI-fixture all have one operator (or one demo-presenter) by definition.
+- **No GitHub-driven routing.** The `macf-actions` workflow doesn't apply. Routing is direct peer-to-peer (`notify_peer` MCP tool per [DR-023](../design/decisions/DR-023-stage3-hook-mcp-tool-architecture.md)) or operator-driven (operator types into one tmux pane, agent calls `notify_peer`, peer wakes via `/notify`).
+- **No canonical audit trail outside the local file.** Issue threads, PR review history, label timestamps — none of these exist. The registry file mtime + the operator's tmux scrollback are the audit surface. Fine for solo/demo/CI-fixture; insufficient for compliance-grade settings.
+- **Identity attribution via local username.** Commits and tool calls don't have a bot-login backing them. Operators wanting commits to land as `app/<bot>[bot]` need GitHub mode.
+- **No `/sign` challenge-response.** The endpoint returns 404 with a diagnostic body in local mode. The CA private key sits on disk at `<registry-dir>/<project>.ca.key` with filesystem permissions as the only access control; anyone who can read that file can mint a cert and join the project.
+
+The trust boundary statement from DR-024 §"Trust boundary statement":
+
+> **Local registry mode assumes same-host or trusted-LAN cooperating processes under a single operator's control. It is not a defense against external attackers, multi-tenant adversaries, or compliance-grade audit requirements. Filesystem permissions on `~/.macf/registry/` are the project's trust boundary.**
+
+### Migration path — local → GitHub mode
+
+When an operator outgrows local mode (cross-machine collaboration emerges, audit trail becomes load-bearing, multi-operator visibility becomes necessary, GitHub-driven routing is wanted), [DR-024](../design/decisions/DR-024-local-registry-mode.md) §"Migration path" defines a one-shot, one-direction migration:
+
+```
+macf init --registry-type repo --owner X --repo Y --migrate-from ~/.macf/registry/<project>.json
+```
+
+Reads the local registry, writes each agent's record as a `<PROJECT>_AGENT_<NAME>` GitHub Actions variable. Mints fresh agent certs via the existing `/sign` challenge-response. The local CA carries forward as the project CA in GitHub mode.
+
+Bi-directional sync is explicitly out of scope. The migration tool is one-shot: read local, write GitHub, declare done.
+
+### Choosing between local mode and GitHub mode
+
+| Criterion | Local mode | GitHub mode |
+|---|---|---|
+| Cross-host coordination | Not supported | Supported |
+| Multi-operator visibility | Not supported | Supported |
+| GitHub-driven routing (issues / PRs / @mentions) | Not supported | Supported |
+| Bootstrap cost | Single command, no external deps | GitHub App + install + repo wiring (~30 min per [quickstart.md](quickstart.md)) |
+| Audit trail | Registry file mtime + tmux scrollback | Issue threads + PR history + workflow runs + OTel traces |
+| Identity attribution | Local username | `<app-prefix>-<role>[bot]` |
+| Internet dependency at runtime | None | GitHub webhook + Actions runtime |
+
+Decision: if any single criterion in column 1 reads "Not supported" and your use case requires it, you need GitHub mode. Otherwise local mode is appropriate and [`docs/quickstart.md`](quickstart.md#quickstart-local-registry-mode-no-github-apps-required) walks the bootstrap.
+
+For the full design rationale, threat model, and trade-off analysis, see [DR-024](../design/decisions/DR-024-local-registry-mode.md).
 
 ## Comparison to academic peers
 
