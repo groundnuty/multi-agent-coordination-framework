@@ -43,7 +43,7 @@ More: closed [issues](https://github.com/groundnuty/macf/issues?q=is%3Aissue+sta
 Before MACF, the same architecture ran as a 2-agent proof of concept called [Claude Plan Composer (CPC)](https://github.com/groundnuty/claude-plan-composer). 11 days in production on a scientific-workflow project:
 
 - 128 issues processed, 175 PRs merged
-- ~10.5T tokens consumed
+- 6.8M output tokens generated; 10.26B cache-read tokens (the **1,511:1 cache-read-to-output ratio** is the empirical signature of multi-agent context-re-reading — agents re-read ~1,500 tokens of context for every token they generate)
 - **1.18× multi-agent overhead** (cost of 2 agents vs 1 for the same work)
 - **22.7% token savings** vs running both agents at symmetric max context
 

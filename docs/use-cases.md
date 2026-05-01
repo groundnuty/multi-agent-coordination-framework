@@ -4,7 +4,7 @@ When MACF is worth the multi-agent overhead, when it isn't, and how it compares 
 
 ## Cost framing
 
-Multi-agent coordination is more expensive than single-agent for the same work. The CPC predecessor (2-agent proof of concept) measured **1.18× total token cost** vs single-agent for an 11-day production run on a scientific-workflow project (128 issues, 175 PRs, ~10.5T tokens consumed). MACF inherits this overhead; it's not a productivity multiplier in the headcount sense.
+Multi-agent coordination is more expensive than single-agent for the same work. The CPC predecessor (2-agent proof of concept) measured **1.18× total token cost** vs single-agent for an 11-day production run on a scientific-workflow project (128 issues, 175 PRs, 6.8M output tokens generated, 10.26B cache-read tokens — see `groundnuty/macf:research/2026-03-28-token-usage-empirical-analysis.md` for the full breakdown). MACF inherits this overhead; it's not a productivity multiplier in the headcount sense.
 
 The value MACF delivers is **qualitative** (cross-agent peer review surfaces issues a single agent misses) and **asymmetric** (orchestrator-worker token allocation saves cost on broad-context curation), not raw throughput.
 
