@@ -11,7 +11,7 @@ Purpose: Assess what's publishable from our multi-agent coordination work on cla
 
 - **Production system**: 2 Claude Code agents (science + code) collaborating via GitHub on a real TypeScript SDK + research paper project
 - **11 days of data**: 128 issues, 188 PRs, 175 merged, 348 commits, 39 sessions
-- **Token-level telemetry**: 26,620 API calls, 10.5 trillion effective input tokens, 6.8M output tokens, cache hit rates, context growth curves
+- **Token-level telemetry**: 26,620 API calls, 10.47 billion cumulative tokens through the API (6.8M output + 10.26B cache reads + 208M cache creation + 440K uncached input), cache hit rates, context growth curves
 - **Architecture**: GitHub Apps for identity, GitHub Actions for routing, Projects V2 for visibility, Tailscale for SSH, tmux for injection — all GitHub-native
 - **Design iteration history**: From initial PoC through 20+ bugs found and fixed, rules evolved, patterns emerged
 - **Agent memory evolution**: 33 memory files accumulated from user feedback across sessions
@@ -56,7 +56,7 @@ Nobody has used GitHub itself as the coordination medium. This matters because:
 
 ### Contribution 2: Empirical Token Analysis of Production Multi-Agent Coding
 
-**What**: First published empirical analysis of token consumption in a production multi-agent coding system, based on 39 sessions and 10.5 trillion effective input tokens.
+**What**: First published empirical analysis of token consumption in a production multi-agent coding system, based on 39 sessions and 10.47 billion cumulative tokens through the API (6.8M output + 10.26B cache reads).
 
 **Key findings**:
 - Inter-agent communication via GitHub artifacts: only 2.9% of output tokens
@@ -200,7 +200,7 @@ Clone, work, die             Continue working in rich context
 - GitHub Action POSTs to the channel endpoint instead of running `claude-code-action`
 
 **Why this matters**:
-1. **Persistent context**: Our agents have accumulated 10.5T tokens of context across 39 sessions. An ephemeral runner-based agent starts from zero every time.
+1. **Persistent context**: Our agents have accumulated 10.26B cache-read tokens (10.47B cumulative tokens through the API) across 39 sessions. An ephemeral runner-based agent starts from zero every time.
 2. **Accumulated learning**: The code-agent learned workflow patterns, build quirks, and test procedures over 11 days. A fresh agent would need to re-learn from rules alone (which we showed are followed only ~80% of the time).
 3. **Local environment**: Agents use `devbox`, local `gh-token` extension, project-specific MCP servers, and custom hooks. Runner-based agents can't access these.
 4. **Token efficiency**: Re-reading the codebase on every event wastes tokens. A persistent agent already has it cached (89.3% cache hit rate for science-agent).
@@ -244,7 +244,7 @@ Clone, work, die             Continue working in rich context
 
 **Contributions**:
 1. Architecture: GitHub Apps + Actions + Issues/PRs as coordination layer (contribution 1)
-2. Empirical: 10.5T tokens analyzed, 1.18x overhead finding (contributions 2, 3)
+2. Empirical: 10.47B cumulative tokens through the API analyzed (6.8M output + 10.26B cache reads), 1.18x overhead finding (contributions 2, 3)
 3. Design lessons: rules reliability, turn-based enforcement, asymmetric context (contributions 4, 6, 7)
 
 **Narrative**: "We present a multi-agent coordination system that uses GitHub's existing infrastructure as the communication medium. Through 11 days of production use (128 issues, 175 merged PRs), we find that GitHub-mediated communication incurs only 1.18x token overhead — dramatically lower than the 4-15x reported for chat-based multi-agent systems."
@@ -261,7 +261,7 @@ Clone, work, die             Continue working in rich context
 3. Asymmetric context strategy saving 22.7% (contribution 4)
 4. Within-session knowledge compilation evidence (contribution 5)
 
-**Narrative**: "Multi-agent LLM systems are widely believed to cost 4-15x more tokens than single-agent. We present the first empirical analysis of a production multi-agent coding system (39 sessions, 10.5T tokens) and find that structured communication via GitHub artifacts reduces this to 1.18x. We further show that role-based context window sizing can save 22.7% of system tokens."
+**Narrative**: "Multi-agent LLM systems are widely believed to cost 4-15x more tokens than single-agent. We present the first empirical analysis of a production multi-agent coding system (39 sessions, 10.47B cumulative tokens through the API — 6.8M output + 10.26B cache reads) and find that structured communication via GitHub artifacts reduces this to 1.18x. We further show that role-based context window sizing can save 22.7% of system tokens."
 
 **Venue fit**: ICLR/NeurIPS Agents Workshop, EMNLP Industry, ASE NIER
 

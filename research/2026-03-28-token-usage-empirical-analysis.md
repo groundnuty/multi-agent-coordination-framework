@@ -5,6 +5,8 @@ Repo: https://github.com/groundnuty/claude-plan-composer
 Period: 2026-03-17 to 2026-03-27 (11 days of agent coordination)
 Methodology: Session log analysis + GitHub API data
 
+> **Correction note 2026-05-01 (per [macf#315](https://github.com/groundnuty/macf/issues/315)):** §"The Full Picture: Output + Input" previously stated "10.5 trillion effective input" / "~32.5T effective input" — these were unit errors; the correct magnitude is **billions** (10^9), not trillions (10^12). The raw token counts immediately below those lines (10,472,639,836 = 10.47B; 32,500,000,000 = 32.5B) confirm. Fixed inline; "effective input" definition added explicitly to prevent future misreading. The misframing propagated to README.md + docs/use-cases.md as "~10.5T tokens consumed" — corrected separately on 2026-05-01 (commit `51d10bd`). Operator first-user discovery: the "10.5T" claim is physically impossible on Max x20 plan rate-limits, which surfaced the unit error.
+
 ---
 
 ## Data Sources
@@ -401,6 +403,18 @@ The science-agent's 4.25x average growth **already includes compaction events**.
 
 ### The Full Picture: Output + Input
 
+**Definition note (added per macf#315):** "effective input" in this section means the cumulative count of tokens passed through the API as input across all calls — i.e., `regular_input_tokens + cache_creation_tokens + cache_read_input_tokens`. This is a measure of *cumulative computational work*, NOT a measure of billable cost. Cache-read tokens are billed at ~10% of regular input tokens on API plans, and Max-plan flat-rate pricing decouples token counts from cost entirely (see § "Per-Session Token Patterns" line 443+ and § "Token-to-cost mapping depends on plan" line 453+ for the full breakdown).
+
+**Worked example** (verifies the magnitude — anchors the unit so future readers can self-check):
+
+```
+"Effective input" = uncached_input + cache_creation + cache_read
+                  = 440K + 208M + 10.26B
+                  = 10.47B   (= the raw value below: 10,472,639,836)
+```
+
+If a reader calculates a different magnitude than the raw line, the units are wrong somewhere. The original "10.5 trillion" framing failed this self-check (would require ~10× the cache reads + ~5× the cache creation seen in the data table) — caught by operator first-use 2026-05-01.
+
 ```
 OUTPUT TOKENS:
   Two-agent:   6,786,764 (1.18x vs single-agent estimate)
@@ -411,12 +425,12 @@ EFFECTIVE INPUT TOKENS (per session pair):
   Single-agent: ~1,016M tokens/session (3.1x more)
 
 TOTAL (output + input across all sessions):
-  Two-agent:   10.5 trillion effective input + 6.8M output
-  Single-agent: ~32.5T effective input + 5.8M output (estimated)
+  Two-agent:   ~10.5 billion effective input + 6.8M output
+  Single-agent: ~32.5 billion effective input + 5.8M output (estimated)
 
 COMBINED MULTIPLIER:
-  Multi-agent total:  10,472,639,836 tokens
-  Single-agent total: ~32,500,000,000 tokens (estimated)
+  Multi-agent total:  10,472,639,836 tokens   (~10.47B; matches "10.2B cache reads + 208M cache creation + 440K input" from §"Finding 4: Cache Dominates Everything")
+  Single-agent total: ~32,500,000,000 tokens (estimated; ~32.5B)
   Ratio: single is ~3.1x MORE expensive
 ```
 

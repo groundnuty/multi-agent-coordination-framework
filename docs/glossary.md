@@ -32,7 +32,7 @@ A project that uses MACF for coordination but doesn't develop the framework itse
 
 ## CPC (Claude Plan Composer)
 
-The 2-agent proof-of-concept that preceded MACF. 11 days production data on a scientific-workflow project: 128 issues, 175 PRs merged, ~10.5T tokens, 1.18× multi-agent overhead, 22.7% asymmetric-context savings vs symmetric-max-context configuration. Repo: [`groundnuty/claude-plan-composer`](https://github.com/groundnuty/claude-plan-composer). MACF generalizes the PoC into an N-agent framework.
+The 2-agent proof-of-concept that preceded MACF. 11 days production data on a scientific-workflow project: 128 issues, 175 PRs merged, 6.8M output tokens + 10.26B cache-read tokens (1,511:1 cache-read-to-output ratio), 1.18× multi-agent overhead, 22.7% asymmetric-context savings vs symmetric-max-context configuration. Repo: [`groundnuty/claude-plan-composer`](https://github.com/groundnuty/claude-plan-composer). MACF generalizes the PoC into an N-agent framework.
 
 ## DR (Decision Record)
 

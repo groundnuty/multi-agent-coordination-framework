@@ -391,7 +391,7 @@ That's also publishable! "Multi-agent overhead is justified for complex tasks bu
 
 | Data Source | Role in Paper |
 |---|---|
-| **CPC production data** (10.5T tokens) | Motivating observation: "we measured 1.18x in production" |
+| **CPC production data** (10.47B cumulative tokens through the API; 6.8M output) | Motivating observation: "we measured 1.18x in production" |
 | **DayTrader experiment** (this) | Controlled validation: "we confirmed with controlled experiment" |
 | **Combined** | "Observational data from production (N=128 issues) + controlled experiment (N=30 runs)" |
 

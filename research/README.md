@@ -6,7 +6,7 @@ Research conducted during the design of the Multi-Agent Coordination Framework, 
 
 | File | Topic | Key Finding |
 |---|---|---|
-| [token-usage-empirical-analysis](2026-03-28-token-usage-empirical-analysis.md) | Token consumption analysis of 39 sessions, 10.5T tokens | Multi-agent overhead is 1.18x not 4-15x. Communication via GitHub is only 2.9% of output. Cache dominates (1,511:1 read:output ratio). Asymmetric context saves 22.7%. |
+| [token-usage-empirical-analysis](2026-03-28-token-usage-empirical-analysis.md) | Token consumption analysis of 39 sessions; 6.8M output + 10.26B cache reads (10.47B cumulative) | Multi-agent overhead is 1.18x not 4-15x. Communication via GitHub is only 2.9% of output. Cache dominates (1,511:1 read:output ratio). Asymmetric context saves 22.7%. |
 | [cpc-agent-interaction-analysis](2026-03-28-cpc-agent-interaction-analysis.md) | Analysis of agent interactions on the CPC repo | 7.5x throughput increase (2→15 PRs/day). 51 experiments in 11 days. Science-agent caught real bugs (#244, #287). 80% rubber-stamp reviews. |
 
 ## Architecture & Design

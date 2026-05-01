@@ -4,13 +4,13 @@ Common questions with concrete, citation-backed answers. Where a question doesn'
 
 ## Cost: how much does running MACF cost?
 
-**Token-wise:** the CPC predecessor (2-agent proof of concept) measured **~10.5 trillion tokens** consumed across an 11-day production run (128 issues, 175 PRs merged). Average daily spend ~950B tokens; varies with workload depth + agent count. MACF inherits the same cost shape.
+**Token-wise:** the CPC predecessor (2-agent proof of concept) measured **~6.8M output tokens + ~10.26B cache-read tokens** (1,511:1 cache-read-to-output ratio — the empirical signature of multi-agent context-re-reading) over an 11-day production run (128 issues, 175 PRs merged). Cumulative tokens through the API: ~10.47B (output + uncached input + cache creation + cache reads). MACF inherits the same cost shape.
 
 **Multi-agent overhead:** **1.18× total token cost vs single-agent** for the same work, measured on the CPC run. The overhead pays for cross-agent peer review + audit trail; it's not free, and it's not free-rolling either (see [use-cases.md](use-cases.md) for when the qualitative benefits justify the cost).
 
 **Asymmetric-context savings:** **22.7% token savings** vs running everyone at symmetric max context. The MACF default (orchestrator at 1M tokens, workers at 200K) captures most of this saving for asymmetric-context workloads.
 
-**Dollar-wise:** depends on your model + provider pricing. At 2026-04 rates (Claude Sonnet 4.6 input ~$3/MTok, output ~$15/MTok), CPC's ~10.5T tokens / 11 days works out to ~$2-3K/day for the full run. Your mileage varies enormously based on context window utilization, work depth, and how often agents read large doc-sets vs short prompts.
+**Dollar-wise:** depends on your model + provider pricing. At 2026-04 Claude Sonnet API rates (input $3/MTok, output $15/MTok, cache creation $3.75/MTok, cache reads $0.30/MTok), CPC's 11-day run worked out to ~**$3-4K total billing** (~$300-400/day) — most of the spend (~78%) was cache reads at the $0.30/MTok rate, output was ~$100, uncached input was negligible. Max-plan flat-rate users pay the plan fee regardless of token volume (decouples token counts from cost). The CPC operator was on Max-plan flat-rate, so absolute dollar billing was the plan fee, not the API-rate computation above.
 
 **Verify yourself:** look at `groundnuty/claude-plan-composer` for the predecessor empirical baseline. For an MACF deployment, monitor token spend via your model provider's dashboard + correlate with `gh run list` activity.
 
@@ -92,7 +92,7 @@ For comparison to open-source alternatives (Aider, CrewAI, AutoGen, LangGraph): 
 
 ## How is MACF related to CPC (Claude Plan Composer)?
 
-**CPC is the predecessor; MACF generalizes it.** CPC was a 2-agent proof of concept (orchestrator + implementer) that ran for 11 days in production on a scientific-workflow project: 128 issues, 175 PRs merged, ~10.5T tokens, **1.18× multi-agent overhead** (cost vs single-agent for the same work), **22.7% token savings** vs running both agents at symmetric max context.
+**CPC is the predecessor; MACF generalizes it.** CPC was a 2-agent proof of concept (orchestrator + implementer) that ran for 11 days in production on a scientific-workflow project: 128 issues, 175 PRs merged, 6.8M output tokens + 10.26B cache-read tokens (10.47B cumulative through the API), **1.18× multi-agent overhead** (cost vs single-agent for the same work), **22.7% token savings** vs running both agents at symmetric max context.
 
 MACF generalizes CPC's architecture into:
 

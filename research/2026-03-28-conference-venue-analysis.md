@@ -17,7 +17,7 @@ Purpose: Identify the best publication venue for our multi-agent coordination wo
 - All publicly visible at https://github.com/groundnuty/claude-plan-composer
 
 ### Empirical Data (makes the paper strong)
-- 39 sessions, 26,620 API calls, 10.5 trillion effective input tokens
+- 39 sessions, 26,620 API calls, 10.47 billion cumulative effective input tokens (6.8M output + 10.26B cache reads + 208M cache creation + 440K uncached input)
 - "1.18x not 4-15x" overhead finding with component decomposition
 - Context growth curves: code-agent 1.48x, science-agent 4.25x
 - Cache hit rates: 67.4% (code), 89.3% (science)
@@ -52,13 +52,13 @@ Purpose: Identify the best publication venue for our multi-agent coordination wo
 
 **Scope match**: NIER wants "new ideas that may change the way we think about SE." The "1.18x not 4-15x" finding directly challenges a widely cited assumption in multi-agent literature.
 
-**With data**: Strong — counterintuitive finding backed by 10.5T tokens of evidence. Frame as "structured-artifact communication as a new paradigm for multi-agent SE overhead."
+**With data**: Strong — counterintuitive finding backed by 10.47B-token-cumulative evidence (6.8M output + 10.26B cache reads). Frame as "structured-artifact communication as a new paradigm for multi-agent SE overhead."
 
 **Without data**: Still viable — "GitHub as coordination layer" is a new paradigm proposal. But weaker — reviewers will ask "does it actually work?"
 
 **Risk**: Must frame as a VISION, not just a measurement. "Interesting number but what's the generalizable insight?" is the killer review.
 
-**Best framing**: "We propose that multi-agent overhead is a function of the communication medium, not the number of agents. Preliminary evidence from a production system (10.5T tokens) shows 1.18x overhead with GitHub-mediated communication vs 4-15x reported for chat-based systems."
+**Best framing**: "We propose that multi-agent overhead is a function of the communication medium, not the number of agents. Preliminary evidence from a production system (10.47B cumulative tokens through the API; 6.8M output) shows 1.18x overhead with GitHub-mediated communication vs 4-15x reported for chat-based systems."
 
 #### ESEM 2026 Technical Track
 - **Deadline**: Abstract May 11 (mandatory) / Paper May 18, 2026
@@ -125,7 +125,7 @@ Purpose: Identify the best publication venue for our multi-agent coordination wo
 
 **Scope match**: Industry track expects "industrial context" — companies deploying automated SE at scale. ASE 2024 industry papers come from Ericsson, Meta, etc. Our work is a solo researcher with two AI agents on a research project. NOT industrial context.
 
-**With data**: The data is impressive (10.5T tokens, 175 PRs) but from an academic project, not industry deployment. Reviewers may question whether this counts as "industry."
+**With data**: The data is impressive (10.47B cumulative tokens through the API, 6.8M output, 175 PRs) but from an academic project, not industry deployment. Reviewers may question whether this counts as "industry."
 
 **Without data**: Very weak. Industry track without deployment data is just a proposal.
 
