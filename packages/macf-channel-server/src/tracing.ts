@@ -42,6 +42,10 @@ export const SpanNames = {
   // parent-child relationship to receiver's NotifyReceived span via
   // W3C traceparent propagation.
   ToolNotifyPeer: 'macf.tool.notify_peer',
+  // macf#271: PreCompact-driven checkpoint_to_memory span. INTERNAL-kind
+  // (purely local filesystem write). Attributes: trigger (manual|auto),
+  // written (bool), deduplicated (bool). DR-023 §UC-3 telemetry pattern.
+  ToolCheckpointToMemory: 'macf.tool.checkpoint_to_memory',
 } as const;
 
 /** MACF-specific attribute keys (not covered by OTEL semconv). */
@@ -60,6 +64,12 @@ export const Attr = {
   NotifyEvent: 'macf.notify.event',
   PeersAttempted: 'macf.notify.peers_attempted',
   PeersDelivered: 'macf.notify.peers_delivered',
+  // macf#271: checkpoint_to_memory span attributes. Surface PreCompact
+  // trigger source (manual / auto) + outcome (written, deduplicated)
+  // for DR-023 UC-3 telemetry.
+  CheckpointTrigger: 'macf.checkpoint.trigger',
+  CheckpointWritten: 'macf.checkpoint.written',
+  CheckpointDeduplicated: 'macf.checkpoint.deduplicated',
 } as const;
 
 /** GenAI semconv keys (experimental in v1.36+). */
