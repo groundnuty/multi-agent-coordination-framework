@@ -189,6 +189,137 @@ For each consumer project bootstrap, the operator's role is:
 
 The operator does NOT post-bootstrap-edit the workspace state by default. The agent owns its own runtime; operator owns the project-wide pre-conditions and the verification telemetry.
 
+## Local-registry-mode bootstrap (DR-024)
+
+[DR-024](decisions/DR-024-local-registry-mode.md) ships a fourth registry variant — `local` — for single-host scenarios where the GitHub coupling is the obstacle (solo small projects, education / demos, framework development, air-gapped environments, CI sanity-check fixtures). This section documents the local-mode bootstrap path; the GitHub-mode sections above remain the canonical surface for production multi-operator deployments.
+
+**Read first:** [`docs/use-cases.md` §"When MACF without GitHub makes sense"](../docs/use-cases.md#when-macf-without-github-makes-sense-local-registry-mode) lays out the trust-boundary trade-offs. Local mode is **not** a replacement for GitHub mode — it's a distinct mode for cases where GitHub coupling is the bottleneck. The decision criteria (cross-host, multi-operator visibility, GitHub-driven routing, bot-attribution) all push toward GitHub mode whenever they apply.
+
+### Requirements (local-mode subset)
+
+Operator must verify before bootstrap:
+
+- [ ] **`@groundnuty/macf` CLI v0.2.10 or later** — `npm view @groundnuty/macf version` (the `--local` shorthand + `--migrate-from` flag landed via [PR #329](https://github.com/groundnuty/macf/pull/329))
+- [ ] **Single host.** Local mode does not coordinate across hosts. A laptop and a server are different hosts; agents on each cannot find each other through `local` mode.
+- [ ] **POSIX filesystem** for cert + registry-file permission enforcement (`0700` on the registry directory, `0600` on the CA key). Windows is best-effort per DR-024 §threat-model — operators on Windows should manually verify ACLs.
+
+You do **not** need: a GitHub App, a coordination repo, the `gh` CLI, the `macf certs init` step (CA auto-generates at `--local` time), or `macf repo-init` (no routing workflow applies).
+
+### Bootstrap steps (per agent)
+
+```bash
+macf init \
+  --project <project-name> \
+  --role <agent-role> \
+  --local \
+  --advertise-host 127.0.0.1 \
+  --tmux-session <session-name> \
+  --dir .
+```
+
+Optional flags:
+
+- **`--path <abs-path>`** — overrides the default `~/.macf/registry/<project>.json`. Must be absolute and free of shell-unsafe characters (`"`, `$`, backtick, backslash, newline) — validated at init time per DR-024 §File format.
+- **`--registry-type local`** — the long form (equivalent to `--local`); both are accepted per macf#322 thread option-2 alias decision.
+
+`--local` short-circuits App-cred validation entirely. The flags `--app-id`, `--install-id`, `--key-path` are skipped — the launcher doesn't mint a token in local mode.
+
+Effects of `macf init --local` (verified against [PR #329](https://github.com/groundnuty/macf/pull/329) diff):
+
+- Creates `~/.macf/registry/` if absent (`0700`)
+- On first invocation in a project: generates `<registry-dir>/<project>.ca.crt` (`0644`) + `<registry-dir>/<project>.ca.key` (`0600`)
+- On subsequent invocations: reuses the existing CA
+- Generates this agent's cert signed against the project CA
+- Writes `.macf/macf-agent.json` with `registry: { type: 'local', path: <abs> }`. The `github_app` field is **omitted** in local-mode configs (the schema marks it optional per DR-024)
+- Writes a no-GitHub-mode `claude.sh`:
+  - No `macf-gh-token.sh` invocation, no `GH_TOKEN` / `APP_ID` / `INSTALL_ID` / `KEY_PATH` exports
+  - No `GIT_AUTHOR_NAME` / `GIT_COMMITTER_NAME` (commits land as the local OS user)
+  - Exports `MACF_REGISTRY_TYPE="local"` + `MACF_REGISTRY_PATH=<abs>`
+  - `MACF_CA_CERT` / `MACF_CA_KEY` point at the registry-co-located CA at `<registry-dir>/<project>.ca.{crt,key}` — **not** under `~/.macf/certs/` (the canonical location for GitHub-mode CAs)
+  - A synthetic-identity comment block surfaces the trade-off explicitly
+
+### Channel-server behavior in local mode
+
+Per [PR #329](https://github.com/groundnuty/macf/pull/329) (`packages/macf-channel-server/src/server.ts`):
+
+- Registry dispatch routes through `createRegistryFromConfig`, which the factory routes to `LocalRegistryClient` (per PR-A `8644d75`)
+- `varsClient` (GitHub Actions Variables client) construction is skipped — local mode has no GitHub API client
+- `/sign` endpoint returns `404` with a diagnostic body pointing at the local-mode trust model (DR-024 §"/sign endpoint disabled in local mode" — discoverable-failure strategy preferred over endpoint-not-registered)
+- `/notify` and `/health` are unchanged across all four registry variants — same mTLS handshake, same payload validation, same wake mechanism
+
+### Verification gate (local mode)
+
+Bootstrap is complete for a local-mode consumer when:
+
+- [ ] `~/.macf/registry/<project>.json` (or operator-specified `--path`) contains a `schema_version: 1` envelope and an `agents` map with this agent's `host`/`port`/`instance_id`/`started`
+- [ ] `~/.macf/registry/<project>.ca.crt` + `.ca.key` exist with the documented permissions
+- [ ] `.macf/logs/channel.log` shows `server_started` event for current session
+- [ ] If two or more agents are operational: a peer-to-peer `notify_peer` MCP-tool call from agent A reaches agent B's TUI (mutual `/notify` confirmed)
+
+`macf doctor` is GitHub-mode-only and does not apply in local mode (its DR-019 permission check has nothing to verify).
+
+### Migration: local → GitHub mode
+
+When local mode's limitations become binding (cross-host collaboration, audit trail requirements, GitHub-driven routing, multi-operator visibility), DR-024 §"Migration path" defines a one-shot, one-direction upgrade:
+
+```bash
+macf init \
+  --project <project-name> \
+  --role <agent-role> \
+  --registry-type repo \
+  --registry-repo <owner>/<repo> \
+  --app-id $APP_ID --install-id $INSTALL_ID --key-path .github-app-key.pem \
+  --migrate-from ~/.macf/registry/<project>.json
+```
+
+Per [PR #329](https://github.com/groundnuty/macf/pull/329) (`packages/macf/src/cli/commands/migrate.ts`):
+
+- `readLocalRegistryFile` validates the source file against `schema_version=1` + `AgentInfoSchema`
+- `migrateLocalToGitHub` mints a token from the new agent config, writes each record via `createRegistryFromConfig` against the GitHub-backed registry
+- The local CA carries forward as the project CA — operators using the migrated workspace re-prove identity via `/sign` challenge-response in GitHub mode against the same CA
+
+**Combinations rejected:**
+
+- `--migrate-from` + `--local` — local→local is a no-op; rejected with a loud error per DR-024 §"Migration path"
+- `MACF_REGISTRY_TYPE=repo` while reading a local-registry file — cross-mode behavior is undefined per DR-024 §"Decision rule for future PRs" 5; CLI fails loudly
+
+Bi-directional sync is explicitly out of scope — operators wanting to switch back to local mode after going GitHub re-init manually with `--registry-type local`.
+
+### Rollback (local mode)
+
+If `macf init --local` aborts mid-flow or the channel-server fails to register:
+
+```bash
+# Remove .macf/ to clean up partial state
+rm -rf .macf/ claude.sh
+
+# If the CA was generated but the workspace is broken, removing the registry file
+# (NOT the CA — other agents in the same project may depend on it) clears the
+# agent's record. Re-running `macf init --local` will re-register.
+# To remove a stale agent entry without touching peers, edit the JSON directly
+# (atomic writers tolerate concurrent edits per DR-024 §"Atomic writes").
+```
+
+If the project itself is being decommissioned:
+
+```bash
+# Stop all agent sessions
+# Then remove the entire registry directory (CA + JSON + per-agent state)
+rm -rf ~/.macf/registry/<project>.{json,ca.crt,ca.key}
+rm -rf ~/my-project/<agent>/.macf/ ~/my-project/<agent>/claude.sh  # per agent
+```
+
+The decommission is reversible — re-running `macf init --local` regenerates everything.
+
+### Cross-references (local mode)
+
+- [DR-024](decisions/DR-024-local-registry-mode.md) — full design, threat model, file format, cert flow, migration, alternatives considered
+- [PR #324](https://github.com/groundnuty/macf/pull/324) — PR-A: `LocalRegistryClient` + factory dispatch + types extension
+- [PR #329](https://github.com/groundnuty/macf/pull/329) — PR-B: `macf init --local` UX + `claude.sh` no-GitHub-mode template + channel-server local-mode dispatch + migration helper
+- [`docs/quickstart.md` §"Quickstart — local-registry mode"](../docs/quickstart.md#quickstart--local-registry-mode-no-github-apps-required) — hands-on tutorial for the bootstrap path
+- [`docs/use-cases.md` §"When MACF without GitHub makes sense"](../docs/use-cases.md#when-macf-without-github-makes-sense-local-registry-mode) — when to use local mode vs GitHub mode
+- macf#322 — issue tracking the design + implementation work
+
 ## Worked example — CV-fleet onboarding (2026-04 timeline)
 
 Empirical reference for the bootstrap path:

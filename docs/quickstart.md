@@ -353,3 +353,157 @@ Each row maps to a section in [troubleshooting.md](troubleshooting.md) with the 
 - **Cost not measured.** A typical agent session consumes 200K-1M tokens depending on context window + work depth. CPC predecessor measured 1.18× total cost vs single-agent for the same work; expect similar overhead in MACF until your workload benefits from asymmetric-context savings.
 
 For when MACF is and isn't worth the overhead: [use-cases.md](use-cases.md).
+
+---
+
+# Quickstart — local-registry mode (no GitHub Apps required)
+
+This is a separate bootstrap path for the local-registry mode introduced in [DR-024](../design/decisions/DR-024-local-registry-mode.md). It supports a single-host subset of MACF — channel-server transport (mTLS HTTPS `POST /notify`, MCP push, tmux-send wake) without GitHub Apps, GitHub-driven routing, or cross-host coordination.
+
+**Read [use-cases.md §"When MACF without GitHub makes sense"](use-cases.md#when-macf-without-github-makes-sense-local-registry-mode) first** to confirm local mode is the right fit. Common cases: solo small projects, education / demos, framework development, air-gapped environments, CI sanity-check fixtures.
+
+If your use case requires cross-host coordination, GitHub-driven routing (issues / PRs / @mentions waking agents), multi-operator visibility, or `app/<bot>[bot]` commit attribution — use the GitHub-mode quickstart above instead.
+
+## What you'll build (local-mode variant)
+
+By the end:
+
+- Two agent workspaces (e.g., `paper-agent` and `code-agent`) bootstrapped on the same host
+- One project-local CA at `~/.macf/registry/<project>.ca.{crt,key}` (auto-generated on first `macf init --local`)
+- One registry file at `~/.macf/registry/<project>.json` listing both agents
+- One end-to-end mutual `/notify` test confirming both channel-servers route to each other
+
+This exercises the no-GitHub coordination path. The full PR-review-cycle exercise from the GitHub-mode quickstart does not apply — there are no PRs in local mode (no GitHub repo to PR against).
+
+## Pre-requisites (local-mode subset)
+
+You need:
+
+- An Ubuntu / Linux / macOS host (single-host only — local mode does not coordinate across hosts)
+- **Node.js 22+** (`node --version` to verify)
+- **devbox** (recommended for managed Node + tooling) — `curl -fsSL https://get.jetify.com/devbox | bash`
+- **`@groundnuty/macf` CLI** — `npm install -g @groundnuty/macf` (verify: `macf --version` reports 0.2.10 or later)
+
+You do **not** need: a GitHub App, a coordination repo, the `gh` CLI, the `macf certs init` step, or `macf repo-init`. Local mode auto-generates the CA at `--local` time.
+
+## Step 1 — Initialize the first agent workspace (1-2 min)
+
+```bash
+mkdir -p ~/my-paper-project/paper-agent
+cd ~/my-paper-project/paper-agent
+
+macf init \
+  --project my-paper-project \
+  --role paper-agent \
+  --local \
+  --advertise-host 127.0.0.1 \
+  --tmux-session my-paper-project
+```
+
+`--local` is a discoverable shorthand for `--registry-type local` (per [PR #329](https://github.com/groundnuty/macf/pull/329) — both forms accepted). On first invocation in a project, this:
+
+- Creates `~/.macf/registry/` if absent (mode `0700`; operator-only)
+- Generates `~/.macf/registry/my-paper-project.ca.crt` (`0644`) + `.ca.key` (`0600`)
+- Generates this agent's cert signed against the project CA
+- Generates this agent's private key
+- Writes `.macf/macf-agent.json` with `registry: { type: 'local', path: '~/.macf/registry/my-paper-project.json' }`
+- Writes `claude.sh` with no-GitHub-mode env exports — no `GH_TOKEN`, no `APP_ID`, no `INSTALL_ID`, no `KEY_PATH`. Identity is the local OS user; commits land as that user, not as a bot.
+
+The App-cred flags (`--app-id`, `--install-id`, `--key-path`) are skipped — `--local` short-circuits them entirely.
+
+Override the default registry path with `--path /custom/abs/path.json` if you need to. The path must be absolute and free of shell-unsafe characters (`"`, `$`, backtick, backslash, newline) — validated at init time per DR-024.
+
+## Step 2 — Initialize the second agent workspace (1-2 min)
+
+```bash
+mkdir -p ~/my-paper-project/code-agent
+cd ~/my-paper-project/code-agent
+
+macf init \
+  --project my-paper-project \
+  --role code-agent \
+  --local \
+  --advertise-host 127.0.0.1 \
+  --tmux-session my-paper-project
+```
+
+The second `--local` invocation in the same project reuses the existing CA at `~/.macf/registry/my-paper-project.ca.{crt,key}` (no regeneration). It generates this agent's cert signed against the same CA. The two agents now share a trust root.
+
+## Step 3 — Launch both agents (2 min)
+
+```bash
+# Start each agent in a tmux session/window
+tmux new-session -d -s my-paper-project -n paper-agent \
+  -e MACF_AGENT_NAME=paper-agent \
+  -e MACF_PROJECT=my-paper-project \
+  "cd ~/my-paper-project/paper-agent && ./claude.sh"
+
+tmux new-window -t my-paper-project -n code-agent \
+  -e MACF_AGENT_NAME=code-agent \
+  -e MACF_PROJECT=my-paper-project \
+  "cd ~/my-paper-project/code-agent && ./claude.sh"
+```
+
+Each `claude.sh` exports `MACF_REGISTRY_TYPE=local` + `MACF_REGISTRY_PATH=~/.macf/registry/my-paper-project.json` + `MACF_CA_CERT` + `MACF_CA_KEY` pointing at the registry-co-located CA. The channel-server bootstraps mTLS, atomically appends its `<host:port>` record to the registry JSON (temp-file-then-rename per DR-024 §"Atomic writes"), and starts listening.
+
+Verify both registered:
+
+```bash
+cat ~/.macf/registry/my-paper-project.json
+```
+
+Expected: a JSON object with `schema_version: 1`, `project: "my-paper-project"`, and an `agents` map containing both `paper-agent` and `code-agent` with their `host`/`port`/`instance_id`/`started`.
+
+## Step 4 — Test mutual `/notify` (1-2 min)
+
+Attach to one agent's pane (`tmux attach -t my-paper-project`; switch to `paper-agent` window with `Ctrl+b 0`). In the Claude Code TUI, prompt:
+
+> Use the `notify_peer` MCP tool to send a test notification to `code-agent` saying "hello from paper-agent".
+
+The `notify_peer` MCP tool ([DR-023](../design/decisions/DR-023-stage3-hook-mcp-tool-architecture.md) UC-1) looks up `code-agent` in the local registry, opens an mTLS connection, and posts the notification. The receiver wakes via the existing tmux-send-keys wake path (Pattern E observational-only delivery on `peer_notification` types).
+
+Switch to the `code-agent` window (`Ctrl+b 1`); the notification should arrive. Reverse the direction to confirm both routes work.
+
+You've completed an end-to-end local-mode coordination cycle: agent A → channel-server transport → agent B, with no GitHub round-trip.
+
+## What did NOT happen (and why)
+
+Compared to the GitHub-mode quickstart:
+
+- **No GitHub App provisioning.** Identity is the local OS user.
+- **No `macf certs init`.** The CA is auto-generated by `macf init --local` and lives next to the registry file at `<registry-dir>/<project>.ca.{crt,key}` — not under `~/.macf/certs/`.
+- **No `macf repo-init`.** No coordination repo, no routing workflow, no labels. The `macf-actions` workflow doesn't apply.
+- **No `macf doctor`.** The doctor verifies GitHub-App permissions per [DR-019](../design/decisions/DR-019-app-permissions.md); inapplicable in local mode.
+- **No issue-thread coordination.** Discussion happens in tmux pane stdin/stdout. This costs the auditability + replayability of GitHub-mode issue threads.
+- **No `/sign` round-trip.** The endpoint returns 404 with a diagnostic body in local mode (DR-024 §"/sign endpoint disabled in local mode"). Cert provisioning happens at `macf init --local` time via direct CA-key access.
+
+These differences map directly to the trade-offs documented in [use-cases.md §"Honest limitations of local mode"](use-cases.md#honest-limitations-of-local-mode) and [DR-024](../design/decisions/DR-024-local-registry-mode.md) §Limitations.
+
+## Adding more agents (local mode)
+
+Repeat Steps 1 (or 2) and 3 for each additional agent. The CA is one-time per project; subsequent `macf init --local` invocations in the same project reuse it.
+
+## Migrating to GitHub mode later
+
+When local mode's limitations become binding (cross-host collaboration, audit trail requirements, GitHub-driven routing, multi-operator visibility), DR-024 §"Migration path" defines a one-shot upgrade:
+
+```bash
+macf init \
+  --project my-paper-project \
+  --role paper-agent \
+  --registry-type repo \
+  --registry-repo <owner>/<repo> \
+  --app-id <APP_ID> --install-id <INSTALL_ID> --key-path .github-app-key.pem \
+  --migrate-from ~/.macf/registry/my-paper-project.json
+```
+
+Reads the local registry, writes each agent's record as a GitHub Actions variable. The local CA carries forward as the project CA in GitHub mode. Bi-directional sync is not in scope — migration is one-shot.
+
+`--migrate-from` combined with `--local` is rejected (loud error per DR-024 §"Migration path"; local→local is a no-op).
+
+## Where to go next (local-mode)
+
+- **Read [use-cases.md §"When MACF without GitHub makes sense"](use-cases.md#when-macf-without-github-makes-sense-local-registry-mode)** — confirm local mode fits, with the limitations laid out side-by-side
+- **Read [DR-024](../design/decisions/DR-024-local-registry-mode.md)** — full design, threat model, file format, atomic-write semantics, alternatives considered
+- **Read [`design/macf-consumer-onboarding.md` §"Local-registry-mode bootstrap"](../design/macf-consumer-onboarding.md#local-registry-mode-bootstrap-dr-024)** — reference runbook (deeper than this tutorial)
+- **Read [troubleshooting.md](troubleshooting.md)** — when something doesn't work (most issues are filesystem-permission or registry-path related in local mode)
