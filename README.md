@@ -20,7 +20,7 @@ Design note: agents have **asymmetric contexts**. The orchestrator (typically a 
 
 ### Evidence 1: the framework dogfoods itself
 
-MACF's own development happens through MACF. The maintainers open issues, agents pick them up, write PRs, review each other's work, merge after LGTM. Over the 2026-04-15 through 2026-04-17 development sprint, agents merged **~60 PRs** developing the framework — including a full security-audit-and-fix cycle where the `code-agent` audited its own codebase, filed issues for the bugs it found, and shipped fixes.
+MACF's own development happens through MACF. The maintainers open issues, agents pick them up, write PRs, review each other's work, merge after LGTM. Over the 2026-04-17 through 2026-05-01 development period, agents merged **162 PRs** developing the framework — including a full security-audit-and-fix cycle where the `code-agent` audited its own codebase, filed issues for the bugs it found, and shipped fixes.
 
 If the framework works for the agents building the framework, it works for real project work.
 
@@ -52,48 +52,63 @@ MACF generalizes that PoC into an N-agent framework with typed roles, cross-repo
 ## Architecture at a glance
 
 ```
-┌─────────────────────────────────────────────────────────────────┐
-│   Operator                                                      │
-│   (terminal / phone via Tailscale / GitHub web UI)              │
-└────────────────────┬────────────────────────────────────────────┘
-                     │
-                     │ SSH + tmux attach  │  Comments + issue labels
-                     │                    │
-         ┌───────────▼───────┐   ┌────────▼────────────────────┐
-         │   Agent VM        │   │   GitHub                    │
-         │  (Tailscale net)  │   │                             │
-         │                   │   │  ┌───────────────────────┐  │
-         │  tmux session     │   │  │  Issues / PRs         │  │
-         │  ┌──────────────┐ │   │  │  (coordination)       │  │
-         │  │ science-     │ │   │  └──────────┬────────────┘  │
-         │  │ agent        │◄├───┼─────────────┘               │
-         │  │ (Claude Code)│ │   │                             │
-         │  └──────────────┘ │   │  ┌───────────────────────┐  │
-         │  ┌──────────────┐ │   │  │  Repo variables       │  │
-         │  │ code-agent   │◄├───┼──┤  (agent registry)     │  │
-         │  │ (Claude Code)│ │   │  └───────────────────────┘  │
-         │  └──────────────┘ │   │                             │
-         │        ...        │   │  ┌───────────────────────┐  │
-         │                   │   │  │  Reusable workflow    │  │
-         │  mTLS peer auth   │   │  │  (event routing)      │  │
-         │  (optional v2)    │   │  │  groundnuty/          │  │
-         │                   │   │  │    macf-actions       │  │
-         └───────────────────┘   │  └───────────────────────┘  │
-                                 │                             │
-                                 │  ┌───────────────────────┐  │
-                                 │  │  GitHub Apps          │  │
-                                 │  │  (per-agent identity) │  │
-                                 │  └───────────────────────┘  │
-                                 └─────────────────────────────┘
+┌─────────────────────────────────────────────────────────────────────┐
+│  Operator                                                           │
+│  (terminal, phone via Tailscale, GitHub web UI, gh CLI)             │
+└────────┬─────────────────────────────────────────────┬──────────────┘
+         │ Tailscale SSH                               │ Web UI / gh CLI
+         │ (VM admin: tmux attach / inspect logs;      │ (issues, comments,
+         │  not part of MACF routing)                  │  labels, reviews, PRs)
+         ▼                                             ▼
+┌──────────────────────────────────┐   ┌──────────────────────────────────┐
+│  Agent host                      │   │  GitHub                          │
+│                                  │   │                                  │
+│  tmux session: <project>@<agent> │   │  ┌────────────────────────────┐  │
+│  (canonical naming, structural   │   │  │ Issues / PRs / threads     │  │
+│   from claude.sh self-wrap;      │   │  │ (coordination surface)     │  │
+│   v0.2.10+)                      │   │  └─────────────┬──────────────┘  │
+│                                  │   │                │ webhook         │
+│  ┌────────────────────────────┐  │   │                ▼                 │
+│  │ Agent (Claude Code session)│  │   │  ┌────────────────────────────┐  │
+│  │   + macf-agent plugin      │  │   │  │ groundnuty/macf-actions    │  │
+│  │   + channel server (mTLS): │  │   │  │ Reusable routing workflow  │  │
+│  │     POST /notify  ◄────────┼──┼───┼──┤  route-by-config           │  │
+│  │     POST /sign             │  │   │  │  route-by-label            │  │
+│  │     GET  /health           │  │   │  │  route-by-mention          │  │
+│  │   + PreToolUse hooks:      │  │   │  │  route-by-ci-completion    │  │
+│  │     check-gh-token.sh      │  │   │  │  route-by-pr-review-state  │  │
+│  │     check-mention-routing  │  │   │  └─────────────┬──────────────┘  │
+│  │       (Check A + Check B)  │  │   │                │ resolves        │
+│  └────────────────────────────┘  │   │                │ recipient via   │
+│  ┌────────────────────────────┐  │   │                ▼                 │
+│  │ Agent (Claude Code session)│  │   │  ┌────────────────────────────┐  │
+│  │   + plugin + channel server│  │   │  │ Repo Variables             │  │
+│  │   + hooks (same as above)  │  │   │  │ (agent registry:           │  │
+│  └────────────────────────────┘  │   │  │  host/port/instance_id)    │  │
+│            ...                   │   │  └────────────────────────────┘  │
+│                                  │   │                                  │
+│  Per-project CA                  │   │  ┌────────────────────────────┐  │
+│    (~/.macf/certs/<project>/)    │   │  │ GitHub Apps                │  │
+│  Per-agent cert + key            │   │  │ (per-agent identity, 7     │  │
+│    (.macf/certs/) signed by CA   │   │  │  perms per DR-019)         │  │
+│                                  │   │  └────────────────────────────┘  │
+└──────────────────────────────────┘   └──────────────────────────────────┘
 ```
+
+**Routing transport:** the routing-Action workflow (running on a GitHub Actions runner) makes a `curl --cert ... --key ... --cacert ...` POST against the recipient agent's channel server `/notify` endpoint. **mTLS-only — no SSH for routing in canonical MACF** (`macf-actions@v3+`). The channel server rejects any client cert not signed by the project CA.
+
+**On SSH:** Tailscale SSH is for the operator's standard VM admin (attach to a tmux pane, inspect a log, intervene mid-prompt) — NOT MACF coordination infrastructure. Routing fires structurally via the workflow + mTLS regardless of whether any operator is SSH'd in.
 
 Key primitives:
 
-- **`macf` CLI** — workspace setup, cert management, agent registration, permission doctor
-- **`macf-agent` plugin** (distributed via [`groundnuty/macf-marketplace`](https://github.com/groundnuty/macf-marketplace)) — in-session skills (`/macf-status`, `/macf-peers`, `/macf-ping`, `/macf-issues`)
-- **`groundnuty/macf-actions`** — reusable routing workflow, consumed by every coordination repo via `uses:`
-- **GitHub Apps** — per-agent identity, permissions-scoped per [DR-019](design/decisions/DR-019-app-permissions.md)
-- **Shared CA + per-agent certs** — mTLS between agents, with a PreToolUse hook that structurally prevents attribution mistakes
+- **`macf` CLI** — workspace setup, cert management, agent registration, permission doctor (`macf init` / `update` / `doctor`)
+- **`macf-agent` plugin** (distributed via [`groundnuty/macf-marketplace`](https://github.com/groundnuty/macf-marketplace)) — in-session skills (`/macf-status`, `/macf-peers`, `/macf-ping`, `/macf-issues`), agent identity templates, SessionStart + Stop hooks
+- **Channel server** ([`@groundnuty/macf-channel-server`](https://www.npmjs.com/package/@groundnuty/macf-channel-server)) — per-agent HTTPS server with mTLS. Spawned as MCP stdio child by the plugin on session start. Endpoints: `POST /notify` (inbound coordination), `GET /health` (peer ping), `POST /sign` (cert signing per [DR-010](design/decisions/DR-010-cert-signing.md))
+- **`groundnuty/macf-actions`** — reusable routing workflow with 5 route-by-* jobs, consumed by every coordination repo via `uses:`. Latest `v3.3.0` ships `route-by-pr-review-state` (Path-2 LGTM-routing defense per [#39](https://github.com/groundnuty/macf-actions/issues/39))
+- **GitHub Apps** — per-agent identity, permissions-scoped per [DR-019](design/decisions/DR-019-app-permissions.md) (7 required permissions enforced via `macf doctor`)
+- **Shared CA + per-agent certs** — mTLS between agents (Stage 3 transport)
+- **PreToolUse hooks** (Path-2 structural enforcement): attribution-trap defense ([#140](https://github.com/groundnuty/macf/issues/140) — `check-gh-token.sh`), mention-routing-hygiene Check A + Check B ([#244](https://github.com/groundnuty/macf/issues/244) + [#272](https://github.com/groundnuty/macf/issues/272) — `check-mention-routing.sh`)
+- **Canonical tmux session naming** — `<project>@<agent>`, enforced structurally by `claude.sh` self-wrap as of v0.2.10 ([#313](https://github.com/groundnuty/macf/issues/313))
 
 ## Setup
 
@@ -205,7 +220,7 @@ The [`docs/`](docs/) directory is the first-user surface — 7 docs covering qui
 - **[`docs/quickstart.md`](docs/quickstart.md)** — bootstrap your first agent in ~30 minutes (hands-on tutorial)
 - **[`docs/concepts.md`](docs/concepts.md)** — what MACF is + how it works + why the design is shaped this way (with DR citations)
 - **[`docs/use-cases.md`](docs/use-cases.md)** — when to use, when not to, comparison to academic + open-source peers
-- **[`docs/features.md`](docs/features.md)** — concrete v0.2.9 inventory (CLI, hooks, routing jobs, channel-server endpoints)
+- **[`docs/features.md`](docs/features.md)** — concrete v0.2.10 inventory (CLI, hooks, routing jobs, channel-server endpoints)
 - **[`docs/troubleshooting.md`](docs/troubleshooting.md)** — failure modes catalogued
 - **[`docs/faq.md`](docs/faq.md)** — common questions with concrete answers
 - **[`docs/glossary.md`](docs/glossary.md)** — term lookup with canonical-artifact pointers
@@ -224,21 +239,20 @@ The [`docs/`](docs/) directory is the first-user surface — 7 docs covering qui
 MACF spans three repos, each with a distinct lifecycle:
 
 - **[`groundnuty/macf`](https://github.com/groundnuty/macf)** (this repo) — CLI, design decisions, phase specs, research, plugin source, and the `coordination.md` rule-set. Ships the `macf` command.
-- **[`groundnuty/macf-actions`](https://github.com/groundnuty/macf-actions)** — reusable GitHub Actions workflow that routes issue / comment / PR / check-suite events to agents' tmux sessions (Stage 2) or to their channel endpoints (Stage 3, mTLS). Consumed via `uses: groundnuty/macf-actions/.github/workflows/agent-router.yml@v2` in coordination repos.
+- **[`groundnuty/macf-actions`](https://github.com/groundnuty/macf-actions)** — reusable GitHub Actions workflow that routes issue / comment / PR / check-suite / pull_request_review events to agents' tmux sessions (Stage 2) or to their channel endpoints (Stage 3, mTLS). Consumed via `uses: groundnuty/macf-actions/.github/workflows/agent-router.yml@v3` in coordination repos. Latest tag `v3.3.0` ships `route-by-pr-review-state` (LGTM-routing structural defense).
 - **[`groundnuty/macf-marketplace`](https://github.com/groundnuty/macf-marketplace)** — Claude Code plugin marketplace hosting the `macf-agent` plugin (skills: `/macf-status`, `/macf-peers`, `/macf-ping`, `/macf-issues`; agent identity templates; hooks). `macf init` / `macf update` fetch the plugin at a pinned tag into `<workspace>/.macf/plugin/`; `claude.sh` loads it via `--plugin-dir`.
 
-Releases are tag-versioned per repo; consumers pin to major tags (`@v1`, `@v2`) for routing and to exact versions (`0.1.0`) for the plugin. Design rationale in [DR-013](design/decisions/DR-013-plugin-versioning.md).
+Releases are tag-versioned per repo; consumers pin to major tags (`@v3` for routing, currently at `v3.3.0`) and to exact versions for the plugin (currently `0.2.10`). Design rationale in [DR-013](design/decisions/DR-013-plugin-versioning.md).
 
 ## Status
 
-- **Latest CLI release**: [`v0.2.9`](CHANGELOG.md#029--2026-04-30) (2026-04-30)
+- **Latest CLI release**: [`v0.2.10`](CHANGELOG.md#0210--2026-05-01) (2026-05-01)
 - **Phases P1–P7**: shipped and on main
-- **Stage 2 routing** (SSH + tmux): permanent for substrate workspaces per operator directive 2026-04-27
-- **Stage 3 routing** (mTLS HTTPS POST): shipped in `macf-actions@v3.3.0`, primary path for consumer-fleet projects
-- **Security hardening**: PBKDF2 at OWASP 2023 levels, clientAuth EKU enforcement, attribution-trap PreToolUse hook (structural, not behavioral), `/sign` challenge verification, schema-validated payloads
-- **Operator reliability**: stale-dist detection + `macf self-update`, E2E suite running post-merge + daily cron on the CLI repo, auto-opened issues on drift
-- **CV deployment** (first external project using MACF): Phase 6 launch pending
-- **Research paper**: drafting; target venues ASE NIER / ESEM 2026
+- **Routing transport**: mTLS HTTPS POST `/notify` via `macf-actions@v3.3.0`. Includes `route-by-pr-review-state` Path-2 LGTM-handoff defense. SSH-based routing was an earlier generation (Stage 2; gone from active code in `macf-actions@v3+`)
+- **Security hardening**: PBKDF2 at OWASP 2023 levels, clientAuth EKU enforcement, attribution-trap PreToolUse hook (structural, not behavioral), `/sign` challenge verification, schema-validated payloads. Plus `check-mention-routing.sh` Check A (must-have-mention) + Check B (must-not-leak) hooks structurally enforcing `coordination.md §Communication 2` + `mention-routing-hygiene.md §5`
+- **Operator reliability**: stale-dist detection + `macf self-update`, E2E suite running post-merge + daily cron on the CLI repo, auto-opened issues on drift, `claude.sh` self-wraps in canonical tmux session per v0.2.10 (`MACF_NO_TMUX_WRAP=1` opt-out)
+- **CV deployment** (first external project using MACF): operational. cv-architect + cv-project-archaeologist on `groundnuty/academic-resume` + `groundnuty/cv-project-archaeologist`. Latest cv-e2e-test rehearsal #13b (2026-04-30) reached 10/11 PASS empirically validating the LGTM-routing structural defense
+- **Research paper**: drafting; target venues ASE NIER / ESEM 2026. ACMM (Anderson, IBM Research, 2026-04-10, arXiv:2604.09388) is the first published peer in MACF's adjacent space, on an orthogonal axis (feedback-loop topology vs silent-fallback hazard class)
 
 ## Contributing
 
@@ -246,7 +260,7 @@ Contributions welcome. File an issue first to discuss scope for anything beyond 
 
 - Run `make -f dev.mk check` before opening a PR (install + typecheck + lint + test)
 - Follow commit-type conventions in [`commitlint.config.mjs`](commitlint.config.mjs) (`feat`, `fix`, `security`, `reliability`, `refactor`, `perf`, `docs`, `test`, `chore`, `ci`, `revert`, `build`, `style`)
-- Reference the issue in the PR body as `Refs #N` (not `Closes #N` — see [coordination.md Issue Lifecycle](plugin/rules/coordination.md))
+- Reference the issue in the PR body as `Refs #N` (not `Closes #N` — see [coordination.md Issue Lifecycle](packages/macf/plugin/rules/coordination.md))
 - One agent per issue; don't work on issues labeled for another agent
 
 ## License
