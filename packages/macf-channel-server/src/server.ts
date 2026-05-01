@@ -14,7 +14,7 @@ import { createLogger } from '@groundnuty/macf-core';
 import { createMcpChannel } from './mcp.js';
 import { createHealthState } from './health.js';
 import { createHttpsServer } from './https.js';
-import { createRegistry } from '@groundnuty/macf-core';
+import { createRegistry, createRegistryFromConfig } from '@groundnuty/macf-core';
 import { checkCollision, CollisionError } from './collision.js';
 import { registerShutdownHandler } from './shutdown.js';
 import { createTokenRefresher } from './token-refresh.js';
@@ -166,8 +166,7 @@ async function main(): Promise<void> {
     }
   };
 
-  // P2: Resolve path prefix once — both the project registry client +
-  // the /sign varsClient share the same base URL prefix shape.
+  // P2: Build the project registry + (GitHub-mode only) /sign varsClient.
   //
   // Pre-macf#317 this section also called `await generateToken()` to
   // mint a static token + pass it into `createRegistryFromConfig` +
@@ -175,26 +174,18 @@ async function main(): Promise<void> {
   // lazily (first call to `tokenRefresher.getRefreshedToken()`) — we
   // don't pre-mint here because the refresh-aware client mints on first
   // use anyway, and pre-minting wouldn't improve startup signal.
-  let signPathPrefix: string;
-  switch (config.registry.type) {
-    case 'org': signPathPrefix = `/orgs/${config.registry.org}`; break;
-    case 'profile': signPathPrefix = `/repos/${config.registry.user}/${config.registry.user}`; break;
-    case 'repo': signPathPrefix = `/repos/${config.registry.owner}/${config.registry.repo}`; break;
-    case 'local':
-      // DR-024 / macf#322: local mode has no /sign challenge-response
-      // and no GitHub Variables API. Channel-server local-mode wiring
-      // (skipping /sign, dispatching createRegistryFromConfig directly
-      // on the local variant, etc.) ships in PR-B. Until then, this arm
-      // keeps the exhaustive switch valid so the PR-A types extension
-      // compiles. Throwing here is observational — claude.sh in PR-A
-      // never sets MACF_REGISTRY_TYPE=local, so this code path is
-      // unreachable until PR-B completes the wiring.
-      throw new Error(
-        'channel-server does not yet support MACF_REGISTRY_TYPE=local. ' +
-          'See macf#322 PR-B for the no-GitHub-mode wiring (skip /sign, ' +
-          'dispatch createRegistryFromConfig directly).',
-      );
-  }
+  //
+  // DR-024 / macf#322: local-registry mode dispatches via
+  // `createRegistryFromConfig` (which routes 'local' to LocalRegistryClient)
+  // instead of building a refresh-aware GitHub Variables client. The
+  // `/sign` challenge-response endpoint is structurally inactive in
+  // local mode — operators pre-share the CA via filesystem perms, so
+  // there is no challenge to verify. `onSign` returns a 503 with a
+  // diagnostic body pointing at the local-mode trust model (DR-024
+  // §"/sign endpoint disabled in local mode" — Return 404 with diagnostic
+  // body strategy chosen so peers that mistakenly try challenge-response
+  // get a clear error rather than a connection-refused).
+  const isLocalRegistry = config.registry.type === 'local';
 
   // macf#317: in-runner token refresh. The refresher caches the current
   // token in-process; on each call it returns cached if age < 50min,
@@ -203,27 +194,59 @@ async function main(): Promise<void> {
   // This closes the >1hr-session expiry gap (silent-fallback Instance 1
   // expiry sub-case) — the cv-architect 401 at 67min uptime witnessed
   // 2026-05-01 was the motivating incident.
+  // No-op in local mode (no token to mint) — but constructed unconditionally
+  // because subsequent code paths take the refresher reference; the
+  // refresher itself only fires on first `getRefreshedToken()` call.
   const tokenRefresher = createTokenRefresher({ logger });
 
-  // Project-registry path prefix differs from /sign prefix only in the
-  // org case (registry uses /orgs/<org> too — same shape). Re-derive
-  // here for clarity even though it's identical to signPathPrefix.
-  const registryPathPrefix = signPathPrefix;
-  const registryClient = createRefreshAwareClient({
-    pathPrefix: registryPathPrefix,
-    tokenRefresher,
-    logger,
-  });
-  const registry = createRegistry(registryClient, config.project);
+  let registry;
+  let varsClient: ReturnType<typeof createRefreshAwareClient> | undefined;
 
-  // Build the variables client for the /sign challenge flow with the
-  // same refresh-aware wrapping. Stop hook + /sign both 401 after the
-  // 1-hour token TTL absent this fix.
-  const varsClient = createRefreshAwareClient({
-    pathPrefix: signPathPrefix,
-    tokenRefresher,
-    logger,
-  });
+  if (isLocalRegistry) {
+    // DR-024 §"Decision rule for future PRs" 2: factory dispatch on
+    // `registry.type`. The empty token argument is unused for local
+    // (LocalRegistryClient ignores it) — kept positional for call-surface
+    // symmetry across all four variants.
+    registry = createRegistryFromConfig(config.registry, config.project, '');
+    // varsClient stays undefined; /sign is structurally inactive.
+  } else {
+    // TypeScript narrowed `config.registry.type` to `repo|org|profile`
+    // by virtue of the `isLocalRegistry` check above. The exhaustive
+    // switch over the narrowed union still fails the build if a fifth
+    // GitHub-backed variant is ever added — same coverage as the
+    // pre-DR-024 form.
+    let signPathPrefix: string;
+    switch (config.registry.type) {
+      case 'org':
+        signPathPrefix = `/orgs/${config.registry.org}`;
+        break;
+      case 'profile':
+        signPathPrefix = `/repos/${config.registry.user}/${config.registry.user}`;
+        break;
+      case 'repo':
+        signPathPrefix = `/repos/${config.registry.owner}/${config.registry.repo}`;
+        break;
+    }
+
+    // Project-registry path prefix differs from /sign prefix only in the
+    // org case (registry uses /orgs/<org> too — same shape). Re-derive
+    // here for clarity even though it's identical to signPathPrefix.
+    const registryClient = createRefreshAwareClient({
+      pathPrefix: signPathPrefix,
+      tokenRefresher,
+      logger,
+    });
+    registry = createRegistry(registryClient, config.project);
+
+    // Build the variables client for the /sign challenge flow with the
+    // same refresh-aware wrapping. Stop hook + /sign both 401 after the
+    // 1-hour token TTL absent this fix.
+    varsClient = createRefreshAwareClient({
+      pathPrefix: signPathPrefix,
+      tokenRefresher,
+      logger,
+    });
+  }
 
   // In-memory challenge store (DR-010, #80). Process-local; server restart
   // between step 1 and step 2 of a flow invalidates outstanding challenges.
@@ -233,6 +256,19 @@ async function main(): Promise<void> {
   // Step 1: allocate challenge, return id + instruction (no registry write).
   // Step 2: verify challenge_id + registry-observed value, sign CSR.
   const onSign = async (request: SignRequest): Promise<Record<string, unknown>> => {
+    // DR-024 §"/sign endpoint disabled in local mode": local-registry
+    // mode has no GitHub-mediated identity proof. Reject with a clear
+    // 404 + diagnostic body so peers that mistakenly hit /sign see why
+    // it's not part of the trust path here.
+    if (varsClient === undefined) {
+      throw new HttpError(
+        404,
+        '/sign is disabled in local-registry mode (DR-024). ' +
+          'Local mode uses pre-shared CA via filesystem permissions; ' +
+          'there is no challenge-response trust path.',
+      );
+    }
+    const sharedVarsClient = varsClient;
     // Try to load CA key — if not available, this agent can't sign.
     let ca: { certPem: string; keyPem: string };
     try {
@@ -265,7 +301,7 @@ async function main(): Promise<void> {
       agentName: request.agent_name,
       challengeId: request.challenge_id!,
       store: challengeStore,
-      client: varsClient,
+      client: sharedVarsClient,
     });
 
     if (result === 'mismatch') {

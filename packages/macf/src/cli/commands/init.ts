@@ -1,13 +1,14 @@
 import { execFileSync } from 'node:child_process';
-import { mkdirSync, writeFileSync, readFileSync, existsSync, appendFileSync } from 'node:fs';
-import { join, resolve } from 'node:path';
+import { mkdirSync, writeFileSync, readFileSync, existsSync, appendFileSync, chmodSync } from 'node:fs';
+import { homedir } from 'node:os';
+import { dirname, isAbsolute, join, resolve } from 'node:path';
 import {
   projectMacfDir, writeAgentConfig, addToAgentsIndex,
   agentCertPath, agentKeyPath,
   caCertPath as caCertPathFor, caKeyPath as caKeyPathFor,
   isValidProjectName,
 } from '../config.js';
-import { loadCA } from '@groundnuty/macf-core';
+import { createCA, loadCA } from '@groundnuty/macf-core';
 import { generateAgentCert } from '@groundnuty/macf-core';
 import { copyCanonicalRules, copyCanonicalScripts } from '../rules.js';
 import { installGhTokenHook, installPluginSkillPermissions, installSandboxFdAllowRead, installSandboxExcludedCommands } from '../settings-writer.js';
@@ -18,19 +19,43 @@ import {
   FALLBACK_VERSIONS, statusMessage,
 } from '../version-resolver.js';
 import type { MacfAgentConfig, VersionPins } from '../config.js';
+import { migrateLocalToGitHub } from './migrate.js';
 
 export interface InitOptions {
   readonly project: string;
   readonly role: string;
   readonly name?: string;
   readonly type?: string;
-  readonly appId: string;
-  readonly installId: string;
-  readonly keyPath: string;
+  /**
+   * GitHub App credentials. Required for `repo` / `org` / `profile`
+   * registries; not used in `local` registry mode (DR-024 / macf#322).
+   * Marked optional so `--local` callers don't have to fabricate
+   * placeholder values.
+   */
+  readonly appId?: string;
+  readonly installId?: string;
+  readonly keyPath?: string;
   readonly registryType?: string;
   readonly registryOrg?: string;
   readonly registryUser?: string;
   readonly registryRepo?: string;
+  /**
+   * Absolute path to the local-registry JSON file. Only honored when
+   * `registryType === 'local'`. Defaults to
+   * `~/.macf/registry/<project>.json` when unset; the operator can
+   * override for non-default placement (separate disk, encrypted home,
+   * etc.). DR-024 §"Default `path`".
+   */
+  readonly registryPath?: string;
+  /**
+   * One-shot migration source: read agent records from this local-registry
+   * JSON file and write each into the new GitHub-backed registry. Only
+   * honored when `registryType` is `repo`/`org`/`profile`. Rejected
+   * combined with `--local` — local→local migration is a no-op (the
+   * operator can copy/rename the file directly). DR-024 §"Migration
+   * path — local → GitHub mode".
+   */
+  readonly migrateFrom?: string;
   /**
    * Host the channel server advertises to the registry + includes in
    * its mTLS cert SAN. When unset, launcher falls back to 127.0.0.1
@@ -118,6 +143,11 @@ async function resolveVersions(opts: InitOptions): Promise<VersionPins> {
  * etc.). Reject inputs containing characters that would break quoting
  * or trigger shell expansion. Runs before any workspace state is
  * written so bad inputs fail early, not after partial init. (#105)
+ *
+ * For `--local` (DR-024 / macf#322) the App-cred checks are skipped —
+ * the launcher does not export APP_ID / INSTALL_ID / KEY_PATH in local
+ * mode, so the values are unused. The project / role / name allowlist
+ * still applies.
  */
 function validateInitOpts(opts: InitOptions): void {
   if (!isValidProjectName(opts.project)) {
@@ -139,6 +169,40 @@ function validateInitOpts(opts: InitOptions): void {
       `name "${opts.name}" must match [a-zA-Z0-9_-]+`,
     );
   }
+
+  if (opts.registryType === 'local') {
+    // Local mode: App-cred fields are not used. Validate `registryPath`
+    // if set (must be absolute, no shell-special chars — it ends up in
+    // claude.sh's MACF_REGISTRY_PATH export and DR-024 specifies
+    // absolute paths).
+    if (opts.registryPath !== undefined) {
+      if (!isAbsolute(opts.registryPath)) {
+        throw new Error(
+          `--path "${opts.registryPath}" must be an absolute path (DR-024 §File format)`,
+        );
+      }
+      if (/["$`\\\n\r]/.test(opts.registryPath)) {
+        throw new Error(
+          `--path "${opts.registryPath}" contains a shell-unsafe character (", $, backtick, backslash, or newline)`,
+        );
+      }
+    }
+    return;
+  }
+
+  // GitHub-mode App credentials are required + must be safely-shaped
+  // for shell-double-quoted template embedding. Error messages name
+  // the field literally so the existing test-suite regex matches
+  // (init.test.ts line 184: empty appId → /appId/).
+  if (opts.appId === undefined || opts.appId === '') {
+    throw new Error('appId is required (--app-id; omit only when using --local)');
+  }
+  if (opts.installId === undefined || opts.installId === '') {
+    throw new Error('installId is required (--install-id; omit only when using --local)');
+  }
+  if (opts.keyPath === undefined || opts.keyPath === '') {
+    throw new Error('keyPath is required (--key-path; omit only when using --local)');
+  }
   if (!/^\d+$/.test(opts.appId)) {
     throw new Error(
       `appId "${opts.appId}" must be numeric (GitHub App IDs are digits only)`,
@@ -156,6 +220,47 @@ function validateInitOpts(opts: InitOptions): void {
       `keyPath "${opts.keyPath}" contains a shell-unsafe character (", $, backtick, backslash, or newline)`,
     );
   }
+}
+
+/**
+ * Default local-registry file path per DR-024:
+ * `~/.macf/registry/<project>.json` (operator-overridable via `--path`).
+ *
+ * Resolves `~` at init time so the on-disk config + claude.sh both carry
+ * absolute paths — the launcher can't re-expand `~` after the operator
+ * cd's into another repo (cross-repo cwd trap, see coordination.md
+ * Token & Git Hygiene §1).
+ */
+export function defaultLocalRegistryPath(project: string): string {
+  return join(homedir(), '.macf', 'registry', `${project}.json`);
+}
+
+/**
+ * Local-registry directory perms enforcement per DR-024 §"Filesystem-permission
+ * discipline": parent dir is `0700`, CA-key is `0600`. Creates the dir
+ * if absent (with `0700` from the start so umask can't widen it). Idempotent —
+ * the second agent in the same project finds the dir + chmods it again.
+ */
+function ensureLocalRegistryDir(registryPath: string): void {
+  const dir = dirname(registryPath);
+  if (!existsSync(dir)) {
+    mkdirSync(dir, { recursive: true, mode: 0o700 });
+  }
+  // mkdir's mode is ANDed with umask, so chmod after to guarantee 0700
+  // regardless of umask. Same pattern as macf-core's CA dir creation.
+  chmodSync(dir, 0o700);
+}
+
+/**
+ * Local-mode CA file paths (DR-024 §"Cert flow"): co-located with the
+ * registry file at `<dir>/<project>.ca.{crt,key}`.
+ */
+function localCaCertPath(registryPath: string, project: string): string {
+  return join(dirname(registryPath), `${project}.ca.crt`);
+}
+
+function localCaKeyPath(registryPath: string, project: string): string {
+  return join(dirname(registryPath), `${project}.ca.key`);
 }
 
 /**
@@ -177,6 +282,17 @@ export async function initAgent(projectDir: string, opts: InitOptions): Promise<
   let registry: MacfAgentConfig['registry'];
   const regType = opts.registryType ?? 'repo';
 
+  // DR-024 §"Migration path": `--migrate-from local-to-local` is a no-op
+  // (rename/copy the file directly). Reject loud rather than silently
+  // ignore; the operator-error case where someone is targeting `--local`
+  // and reaching for migration tooling deserves a clear message.
+  if (regType === 'local' && opts.migrateFrom !== undefined) {
+    throw new Error(
+      '--migrate-from cannot be combined with --local; migration only ' +
+        'applies when moving INTO a GitHub-backed registry (DR-024 §Migration path).',
+    );
+  }
+
   switch (regType) {
     case 'org':
       if (!opts.registryOrg) throw new Error('--registry-org required for org registry');
@@ -196,6 +312,16 @@ export async function initAgent(projectDir: string, opts: InitOptions): Promise<
       registry = { type: 'repo', owner: parts[0], repo: parts[1] };
       break;
     }
+    case 'local': {
+      const path = opts.registryPath ?? defaultLocalRegistryPath(opts.project);
+      if (!isAbsolute(path)) {
+        // Defense in depth — `validateInitOpts` already caught this case
+        // for explicit --path. The default path is always absolute.
+        throw new Error(`local registry path must be absolute (got "${path}")`);
+      }
+      registry = { type: 'local', path };
+      break;
+    }
     default:
       throw new Error(`Unknown registry type: "${regType}"`);
   }
@@ -203,18 +329,24 @@ export async function initAgent(projectDir: string, opts: InitOptions): Promise<
   // Resolve version pins (explicit flags > network-fetched latest > fallback)
   const versions = await resolveVersions(opts);
 
-  // Write agent config
+  // Write agent config. `github_app` is omitted in local-registry mode
+  // (DR-024) — the launcher does not mint a token, and the schema marks
+  // the field optional to encode that conditional shape.
   const config: MacfAgentConfig = {
     project: opts.project,
     agent_name: agentName,
     agent_role: opts.role,
     agent_type: (opts.type ?? 'permanent') as 'permanent' | 'worker',
     registry,
-    github_app: {
-      app_id: opts.appId,
-      install_id: opts.installId,
-      key_path: opts.keyPath,
-    },
+    ...(regType === 'local'
+      ? {}
+      : {
+          github_app: {
+            app_id: opts.appId!,
+            install_id: opts.installId!,
+            key_path: opts.keyPath!,
+          },
+        }),
     ...(opts.advertiseHost !== undefined ? { advertise_host: opts.advertiseHost } : {}),
     ...(opts.tmuxSession !== undefined ? { tmux_session: opts.tmuxSession } : {}),
     ...(opts.tmuxWindow !== undefined ? { tmux_window: opts.tmuxWindow } : {}),
@@ -293,7 +425,21 @@ export async function initAgent(projectDir: string, opts: InitOptions): Promise<
     console.warn(`  You can retry later with \`macf update\` once the issue is resolved.`);
   }
 
-  // Generate agent cert if CA key is available locally (per-project)
+  // Generate agent cert. Local-registry mode (DR-024) auto-generates a
+  // CA on first invocation; subsequent agents in the same project read
+  // the existing CA. GitHub mode reads the per-project CA generated by
+  // `macf certs init`.
+  if (regType === 'local' && registry.type === 'local') {
+    await initLocalModeCertsAndRegistry(absDir, registry.path, opts, agentName);
+    console.log(`Agent "${agentName}" initialized in ${absDir} (local-registry mode)`);
+    console.log(`  Config: ${join(macfDir, 'macf-agent.json')}`);
+    console.log(`  Cert:   ${agentCertPath(absDir)}`);
+    console.log(`  Launcher: ${claudeShPath}`);
+    console.log(`  Registry: ${registry.path}`);
+    return;
+  }
+
+  // GitHub-mode cert flow (unchanged).
   const caCertFile = caCertPathFor(opts.project);
   const caKeyFile = caKeyPathFor(opts.project);
   if (existsSync(caCertFile) && existsSync(caKeyFile)) {
@@ -323,6 +469,91 @@ export async function initAgent(projectDir: string, opts: InitOptions): Promise<
     console.log(`    macf certs init     (if first agent — creates CA)`);
     console.log(`    macf certs rotate   (if CA already exists)`);
   }
+
+  // GitHub-mode migration: read agent records from a local-registry
+  // JSON file and write each into the new GitHub-backed registry.
+  // Runs AFTER agent cert is in place so the new agent can authenticate
+  // immediately. Failure is non-fatal — operator can re-run `migrateFrom`
+  // on a working install (init bootstrapping their own agent must
+  // succeed regardless). DR-024 §"Migration path".
+  if (opts.migrateFrom !== undefined) {
+    try {
+      await migrateLocalToGitHub(absDir, opts.migrateFrom, registry, opts.project);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.warn(`  Warning: migration from "${opts.migrateFrom}" failed: ${msg}`);
+      console.warn(`  Re-run with \`macf init --migrate-from <path>\` after fixing the source.`);
+    }
+  }
+}
+
+/**
+ * Local-registry mode (DR-024) cert + registry-dir bootstrap. Idempotent —
+ * a second agent in the same project finds the existing CA and signs
+ * its cert against it; no re-initialization or re-prompting.
+ *
+ * The CA lives next to the registry file at
+ * `<registry-dir>/<project>.ca.{crt,key}` per DR-024 §"Cert flow":
+ * the operator's filesystem ownership of the registry directory IS the
+ * trust proof. No `/sign` round-trip; no GitHub-mediated identity.
+ */
+async function initLocalModeCertsAndRegistry(
+  workspaceDir: string,
+  registryPath: string,
+  opts: InitOptions,
+  agentName: string,
+): Promise<void> {
+  ensureLocalRegistryDir(registryPath);
+
+  const caCertFile = localCaCertPath(registryPath, opts.project);
+  const caKeyFile = localCaKeyPath(registryPath, opts.project);
+
+  let caCertPem: string;
+  let caKeyPem: string;
+
+  if (existsSync(caCertFile) && existsSync(caKeyFile)) {
+    // Second-or-later agent in this project — read the shared CA. The
+    // diagnostic is on stderr (matches CA-key-fallback diagnostics in
+    // macf-core/config.ts) so operators see which path was taken
+    // without parsing structured output.
+    process.stderr.write(
+      `  Local registry: reusing existing CA at ${caCertFile}\n`,
+    );
+    const ca = loadCA(caCertFile, caKeyFile);
+    caCertPem = ca.certPem;
+    caKeyPem = ca.keyPem;
+  } else {
+    // First agent in this project — generate CA. Skip `client` (no
+    // GitHub variables backend in local mode); CA cert lives only on
+    // disk. DR-024 §"Cert flow" first-agent flow.
+    process.stderr.write(
+      `  Local registry: generating new CA at ${caCertFile}\n`,
+    );
+    const created = await createCA({
+      project: opts.project,
+      certPath: caCertFile,
+      keyPath: caKeyFile,
+    });
+    caCertPem = created.certPem;
+    caKeyPem = created.keyPem;
+  }
+
+  // Lock down the CA-key file mode regardless of which path was taken.
+  // `createCA` already writes 0600 but a second-agent path through
+  // `loadCA` doesn't re-chmod; chmoding here is idempotent + cheap.
+  if (process.platform !== 'win32') {
+    chmodSync(caKeyFile, 0o600);
+  }
+
+  // Generate this agent's cert against the (new or existing) CA.
+  await generateAgentCert({
+    agentName,
+    caCertPem,
+    caKeyPem,
+    ...(opts.advertiseHost !== undefined ? { advertiseHost: opts.advertiseHost } : {}),
+    certPath: agentCertPath(workspaceDir),
+    keyPath: agentKeyPath(workspaceDir),
+  });
 }
 
 function updateGitignore(projectDir: string): void {

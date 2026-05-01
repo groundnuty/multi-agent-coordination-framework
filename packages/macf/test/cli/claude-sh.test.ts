@@ -562,4 +562,99 @@ describe('claude-sh.ts tmux self-wrap + settings-driven identity (macf#313)', ()
       expect(output).toContain('# This file is managed by `macf`. Do not edit directly');
     });
   });
+
+  describe('local-registry mode (DR-024 / macf#322 PR-B)', () => {
+    // Local-mode launcher contract:
+    //   - No GH_TOKEN mint (no macf-gh-token.sh helper invocation)
+    //   - No GH_TOKEN export
+    //   - No APP_ID / INSTALL_ID / KEY_PATH exports
+    //   - MACF_REGISTRY_TYPE="local" + MACF_REGISTRY_PATH=<absolute path>
+    //   - CA paths point at the registry-co-located CA (not ~/.macf/certs/)
+    //   - Synthetic-identity comment block in place of the bot identity
+    //
+    // The `github_app` config field is undefined in local mode (DR-024
+    // §"Decision rule for future PRs" 1).
+    const localConfig: MacfAgentConfig = {
+      project: 'localproj',
+      agent_name: 'paper-agent',
+      agent_role: 'paper-agent',
+      agent_type: 'permanent',
+      registry: { type: 'local', path: '/home/op/.macf/registry/localproj.json' },
+      versions: { cli: '0.1.0', plugin: '0.1.0', actions: 'v1' },
+      // github_app intentionally omitted — DR-024 marks it optional.
+    };
+
+    it('does NOT emit the macf-gh-token.sh fail-loud block', () => {
+      const output = generateClaudeSh(localConfig);
+      expect(output).not.toContain('macf-gh-token.sh');
+      expect(output).not.toContain('GH_TOKEN=$(');
+    });
+
+    it('does NOT export GH_TOKEN', () => {
+      const output = generateClaudeSh(localConfig);
+      expect(output).not.toContain('export GH_TOKEN');
+    });
+
+    it('does NOT export APP_ID / INSTALL_ID / KEY_PATH', () => {
+      const output = generateClaudeSh(localConfig);
+      expect(output).not.toContain('export APP_ID');
+      expect(output).not.toContain('export INSTALL_ID');
+      expect(output).not.toContain('export KEY_PATH');
+    });
+
+    it('exports MACF_REGISTRY_TYPE="local" + MACF_REGISTRY_PATH=<path>', () => {
+      const output = generateClaudeSh(localConfig);
+      expect(output).toContain('export MACF_REGISTRY_TYPE="local"');
+      expect(output).toContain(
+        'export MACF_REGISTRY_PATH="/home/op/.macf/registry/localproj.json"',
+      );
+    });
+
+    it('points MACF_CA_CERT / MACF_CA_KEY at registry-co-located CA paths', () => {
+      // DR-024 §"Cert flow": the CA lives next to the registry file
+      // at <dir>/<project>.ca.{crt,key}. The launcher must export
+      // those paths so the channel-server can load the CA for mTLS.
+      const output = generateClaudeSh(localConfig);
+      expect(output).toContain(
+        'export MACF_CA_CERT="/home/op/.macf/registry/localproj.ca.crt"',
+      );
+      expect(output).toContain(
+        'export MACF_CA_KEY="/home/op/.macf/registry/localproj.ca.key"',
+      );
+    });
+
+    it('includes synthetic-identity comment block (no bot login attribution)', () => {
+      const output = generateClaudeSh(localConfig);
+      // The block surfaces the explicit "no GitHub here" trade-off
+      // rather than emitting silent gaps in the launcher.
+      expect(output).toContain('local-registry mode');
+      expect(output).toContain(
+        'echo "Starting paper-agent (paper-agent) [local-registry mode]..."',
+      );
+    });
+
+    it('does NOT emit GIT_AUTHOR_NAME / GIT_COMMITTER_NAME (no bot identity)', () => {
+      // GitHub mode tags commits as `<agent>[bot]`; local mode lets
+      // commits land as the local user (DR-024 §"Routing trade-offs").
+      const output = generateClaudeSh(localConfig);
+      expect(output).not.toContain('GIT_AUTHOR_NAME');
+      expect(output).not.toContain('GIT_COMMITTER_NAME');
+    });
+
+    it('preserves shared exports (MACF_PROJECT, MACF_AGENT_NAME, MACF_HOST, etc.)', () => {
+      // The launcher's identity + transport-shape stays the same across
+      // GitHub and local modes — only the GitHub-coupled steps swap.
+      const output = generateClaudeSh(localConfig);
+      expect(output).toContain('export MACF_PROJECT="localproj"');
+      expect(output).toContain('MACF_AGENT_NAME="${MACF_AGENT_NAME:-paper-agent}"');
+      expect(output).toContain('export MACF_HOST="0.0.0.0"');
+      expect(output).toContain('export MACF_AGENT_CERT="$SCRIPT_DIR/.macf/certs/agent-cert.pem"');
+    });
+
+    it('still emits exec claude (launches the TUI same as GitHub mode)', () => {
+      // Launching Claude is mode-independent — only the env exports change.
+      const output = generateClaudeSh(localConfig);
+      expect(output).toContain('exec claude -c --plugin-dir');
+    });
+  });
 });

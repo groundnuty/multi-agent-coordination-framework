@@ -42,15 +42,26 @@ function registryEnvLines(cfg: MacfAgentConfig): string[] {
         `export MACF_REGISTRY_USER="${cfg.registry.user}"`,
       ];
     case 'local':
-      // DR-024 / macf#322 PR-B will fill in the no-GitHub branch
-      // (skip token mint, set MACF_REGISTRY_PATH, etc.). Until then,
-      // this arm keeps the exhaustive switch valid so PR-A's purely
-      // additive types extension compiles cleanly.
-      throw new Error(
-        'claude.sh template does not yet support MACF_REGISTRY_TYPE=local. ' +
-          'See macf#322 PR-B for the no-GitHub-mode template extension.',
-      );
+      // DR-024 / macf#322 PR-B: no-GitHub-mode launcher branch. The
+      // channel-server reads MACF_REGISTRY_PATH and dispatches through
+      // `createRegistryFromConfig` to LocalRegistryClient. No GitHub
+      // App, no token mint. The path was resolved at `macf init --local`
+      // time; quoting matches the existing shell-double-quoted template.
+      return [
+        `export MACF_REGISTRY_TYPE="local"`,
+        `export MACF_REGISTRY_PATH="${cfg.registry.path}"`,
+      ];
   }
+}
+
+/**
+ * True when this config runs in local-registry mode (DR-024). Used by
+ * the launcher template to short-circuit GitHub-coupled steps (token
+ * mint, App env exports, `gen_ai.agent.*` OTel attrs that key off the
+ * bot identity).
+ */
+function isLocalMode(cfg: MacfAgentConfig): boolean {
+  return cfg.registry.type === 'local';
 }
 
 /**
@@ -270,6 +281,126 @@ const MANAGED_HEADER_LINES = [
 ];
 
 /**
+ * Emit GitHub-App env exports (`APP_ID`, `INSTALL_ID`, `KEY_PATH` + the
+ * relative-path resolver) when running in a GitHub-backed registry mode.
+ *
+ * In local-registry mode (DR-024) the launcher does not mint a token —
+ * `github_app` is absent on the config, every export here would resolve
+ * to `undefined`, and the downstream token-mint block is skipped anyway
+ * (`githubTokenAndIdentityLines`). Returning `[]` keeps the launcher
+ * lean instead of emitting `export APP_ID=""` placeholders that imply
+ * "this is a misconfigured GitHub-mode agent."
+ */
+function githubAppEnvLines(cfg: MacfAgentConfig): string[] {
+  if (isLocalMode(cfg) || !cfg.github_app) return [];
+  return [
+    `export APP_ID="${cfg.github_app.app_id}"`,
+    `export INSTALL_ID="${cfg.github_app.install_id}"`,
+    `export KEY_PATH="${cfg.github_app.key_path}"`,
+    // Resolve KEY_PATH against $SCRIPT_DIR if it's relative. Absolute
+    // paths (e.g., operators who stored the key under /etc or /opt)
+    // pass through unchanged. Previously KEY_PATH stayed relative and
+    // broke the moment the agent cd'd to another repo — attribution
+    // trap fires on the next `gh` call. See #140 + coordination.md
+    // Token & Git Hygiene (cross-repo cwd trap note).
+    'case "$KEY_PATH" in',
+    '  /*) ;;  # already absolute',
+    '  *) KEY_PATH="$SCRIPT_DIR/$KEY_PATH" ;;',
+    'esac',
+    'export KEY_PATH',
+  ];
+}
+
+/**
+ * Emit per-project CA + agent cert path exports.
+ *
+ * In local-registry mode (DR-024) the CA lives next to the registry
+ * file (`~/.macf/registry/<project>.ca.{crt,key}`) — set at
+ * `macf init --local` time. In GitHub mode it lives under
+ * `~/.macf/certs/<project>/`. Both modes need MACF_CA_CERT /
+ * MACF_CA_KEY exported so the channel-server can load the CA for
+ * mTLS (and the GitHub-mode `/sign` endpoint, which doesn't fire in
+ * local mode).
+ */
+function caPathLines(cfg: MacfAgentConfig): string[] {
+  if (isLocalMode(cfg)) {
+    // Pre-resolve the local-registry directory at template time so the
+    // launcher doesn't need to expand `~` or recompute the path. Tilde
+    // is already resolved in cfg.registry.path (init.ts uses os.homedir()).
+    const registryDir = posixDirname(
+      cfg.registry.type === 'local' ? cfg.registry.path : '',
+    );
+    return [
+      `export MACF_CA_CERT="${registryDir}/${cfg.project}.ca.crt"`,
+      `export MACF_CA_KEY="${registryDir}/${cfg.project}.ca.key"`,
+    ];
+  }
+  return [
+    `export MACF_CA_CERT="$HOME/.macf/certs/${cfg.project}/ca-cert.pem"`,
+    `export MACF_CA_KEY="$HOME/.macf/certs/${cfg.project}/ca-key.pem"`,
+  ];
+}
+
+/**
+ * Compute POSIX-style dirname without pulling in node:path at template
+ * generation time. The local-mode CA paths derive from the registry
+ * file path (e.g. `/home/u/.macf/registry/project.json` →
+ * `/home/u/.macf/registry`); using `path.dirname` is overkill and
+ * couples the template to the host's OS path semantics. The launcher
+ * always runs on POSIX-shaped filesystems (see DR-024 §threat model).
+ */
+function posixDirname(p: string): string {
+  const idx = p.lastIndexOf('/');
+  if (idx < 0) return '.';
+  if (idx === 0) return '/';
+  return p.slice(0, idx);
+}
+
+/**
+ * Emit the GitHub bot-token mint block + `GIT_AUTHOR_NAME` / `GIT_COMMITTER_NAME`
+ * exports. Both depend on the bot's GitHub identity — neither makes
+ * sense in local-registry mode (DR-024 §"Routing trade-offs":
+ * commits land as the local user, not as `app/<bot>[bot]`).
+ *
+ * Local-mode launcher emits a synthetic identity comment block instead,
+ * so anyone reading the script sees the explicit "no GitHub here"
+ * trade-off rather than a missing-export silence.
+ */
+function githubTokenAndIdentityLines(cfg: MacfAgentConfig): string[] {
+  if (isLocalMode(cfg)) {
+    return [
+      '# DR-024 / macf#322: local-registry mode. No GitHub App token is',
+      '# minted (no APP_ID / INSTALL_ID / KEY_PATH); commits land as the',
+      '# local user, not as `app/<bot>[bot]`. Coordination uses the local',
+      '# registry file at $MACF_REGISTRY_PATH; agents reach each other via',
+      '# direct mTLS POST /notify. See DR-024 §"Routing trade-offs".',
+      '',
+      `echo "Starting ${cfg.agent_name} (${cfg.agent_role}) [local-registry mode]..."`,
+      '',
+    ];
+  }
+  return [
+    '# Bot token generation — fail loud. The helper validates the ghs_ prefix',
+    '# and surfaces diagnostics (clock drift, bad key, wrong App/install ID).',
+    '# Do NOT inline the bare CLI here — without pipefail, a failed fetch piped',
+    '# through jq would succeed, GH_TOKEN would become "null", and Claude Code',
+    '# would silently fall back to stored `gh auth login` as the user. See the',
+    '# attribution-trap section of coordination.md Token & Git Hygiene.',
+    'GH_TOKEN=$("$SCRIPT_DIR/.claude/scripts/macf-gh-token.sh" \\',
+    '    --app-id "$APP_ID" --install-id "$INSTALL_ID" --key "$KEY_PATH") || {',
+    '  echo "FATAL: bot token generation failed — see stderr above." >&2',
+    '  exit 1',
+    '}',
+    'export GH_TOKEN',
+    '',
+    `export GIT_AUTHOR_NAME="${cfg.agent_name}[bot]"`,
+    `export GIT_COMMITTER_NAME="${cfg.agent_name}[bot]"`,
+    '',
+    `echo "Starting ${cfg.agent_name} (${cfg.agent_role})..."`,
+  ];
+}
+
+/**
  * Build the full `claude.sh` content for a given agent config. Pure
  * function — no I/O. Used by both `macf init` (first write) and
  * `macf update` (refresh).
@@ -310,22 +441,8 @@ export function generateClaudeSh(config: MacfAgentConfig): string {
     'export MACF_AGENT_ROLE',
     ...tmuxSelfWrapLines(),
     '',
-    `export APP_ID="${config.github_app.app_id}"`,
-    `export INSTALL_ID="${config.github_app.install_id}"`,
-    `export KEY_PATH="${config.github_app.key_path}"`,
-    // Resolve KEY_PATH against $SCRIPT_DIR if it's relative. Absolute
-    // paths (e.g., operators who stored the key under /etc or /opt)
-    // pass through unchanged. Previously KEY_PATH stayed relative and
-    // broke the moment the agent cd'd to another repo — attribution
-    // trap fires on the next `gh` call. See #140 + coordination.md
-    // Token & Git Hygiene (cross-repo cwd trap note).
-    'case "$KEY_PATH" in',
-    '  /*) ;;  # already absolute',
-    '  *) KEY_PATH="$SCRIPT_DIR/$KEY_PATH" ;;',
-    'esac',
-    'export KEY_PATH',
-    `export MACF_CA_CERT="$HOME/.macf/certs/${config.project}/ca-cert.pem"`,
-    `export MACF_CA_KEY="$HOME/.macf/certs/${config.project}/ca-key.pem"`,
+    ...githubAppEnvLines(config),
+    ...caPathLines(config),
     'export MACF_AGENT_CERT="$SCRIPT_DIR/.macf/certs/agent-cert.pem"',
     'export MACF_AGENT_KEY="$SCRIPT_DIR/.macf/certs/agent-key.pem"',
     'export MACF_LOG_PATH="$SCRIPT_DIR/.macf/logs/channel.log"',
@@ -350,23 +467,7 @@ export function generateClaudeSh(config: MacfAgentConfig): string {
     ...registryEnvLines(config),
     ...otelTelemetryLines(config),
     '',
-    '# Bot token generation — fail loud. The helper validates the ghs_ prefix',
-    '# and surfaces diagnostics (clock drift, bad key, wrong App/install ID).',
-    '# Do NOT inline the bare CLI here — without pipefail, a failed fetch piped',
-    '# through jq would succeed, GH_TOKEN would become "null", and Claude Code',
-    '# would silently fall back to stored `gh auth login` as the user. See the',
-    '# attribution-trap section of coordination.md Token & Git Hygiene.',
-    'GH_TOKEN=$("$SCRIPT_DIR/.claude/scripts/macf-gh-token.sh" \\',
-    '    --app-id "$APP_ID" --install-id "$INSTALL_ID" --key "$KEY_PATH") || {',
-    '  echo "FATAL: bot token generation failed — see stderr above." >&2',
-    '  exit 1',
-    '}',
-    'export GH_TOKEN',
-    '',
-    `export GIT_AUTHOR_NAME="${config.agent_name}[bot]"`,
-    `export GIT_COMMITTER_NAME="${config.agent_name}[bot]"`,
-    '',
-    `echo "Starting ${config.agent_name} (${config.agent_role})..."`,
+    ...githubTokenAndIdentityLines(config),
     // --plugin-dir loads the pinned macf-agent plugin from this workspace
     // (per DR-013). Additive — user-scope plugins still load alongside.
     // `-c` (for permanent agents) reattaches to the prior Claude Code

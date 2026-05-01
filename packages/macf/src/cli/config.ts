@@ -47,11 +47,23 @@ export function caKeyPath(project: string): string {
  * Extract TokenSource-compatible credentials from a loaded config.
  * Resolves the relative key_path against the project directory so it's
  * absolute when passed to `gh token generate`.
+ *
+ * Throws if `github_app` is absent — that combination means a local-mode
+ * workspace whose caller mistakenly reached for the token-mint path.
+ * Callers must dispatch on `registry.type === 'local'` upstream and
+ * skip token-mint entirely (DR-024 §"Routing trade-offs").
  */
 export function tokenSourceFromConfig(
   projectDir: string,
   config: Pick<MacfAgentConfig, 'github_app'>,
 ): { readonly appId: string; readonly installId: string; readonly keyPath: string } {
+  if (!config.github_app) {
+    throw new Error(
+      'tokenSourceFromConfig called on a config without a `github_app` block ' +
+        '(local-registry mode). Callers must dispatch on registry.type before ' +
+        'reaching this helper. See DR-024.',
+    );
+  }
   return {
     appId: config.github_app.app_id,
     installId: config.github_app.install_id,
@@ -123,11 +135,16 @@ export const MacfAgentConfigSchema = z.object({
   // `.min(1)` on sub-fields). Import-based unifies the schema and
   // adopts the stricter validation automatically. Ultrareview A9.
   registry: RegistryConfigSchema,
+  // Optional in local-registry mode (DR-024 / macf#322): the launcher
+  // doesn't mint a GitHub App installation token, so APP_ID / INSTALL_ID /
+  // KEY_PATH have nothing to point at. All GitHub-mode variants
+  // (`registry.type` ∈ `repo`/`org`/`profile`) still require these fields;
+  // `init.ts` enforces that pairing at write time.
   github_app: z.object({
     app_id: z.string(),
     install_id: z.string(),
     key_path: z.string(),
-  }),
+  }).optional(),
   // Host the agent advertises in its registry entry (written by the
   // channel server on bind). When unset, claude.sh falls back to
   // 127.0.0.1 — matches the plugin's existing default. Set this to a
