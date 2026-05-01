@@ -30,6 +30,12 @@ The trap is that defensive programming targets exit codes, but exit-code success
 **Recurrence:** 5+ confirmed instances across multiple agents
 **Canonical defense:** `gh-token-attribution-traps.md` (sister canonical rule) — 6 specific failure modes + result-invariant defenses (`[[ "$GH_TOKEN" == ghs_* ]]` prefix check, `macf-whoami.sh` spot-check, PreToolUse hook intercepts `gh` and `git push` invocations)
 
+**Sub-case (expiry, macf#317, 2026-05-01):** Bot installation tokens have a **1-hour TTL by design** (GitHub App contract). `claude.sh` mints a fresh token at session start and exports `GH_TOKEN`; the macf-channel-server child process inherits that same env var via standard Node `process.env` pass-through. **Without an in-runner refresh, every gh-API-using handler 401s after ~60 minutes of session uptime.** Detection: 401 (`Bad credentials`) on `listVariables` / `readVariable` / `writeVariable` calls 60+ min after server start. Witnessed 2026-05-01 ~14:30Z on cv-architect's Stop hook at ~67min uptime — the operator-witnessed incident motivating macf#317.
+
+This is a distinct sub-case from the missing-helper / mis-pipefail / wrong-prefix attribution-trap modes catalogued in `gh-token-attribution-traps.md`: the agent has the right token *shape* (`ghs_*`) but it's stale. The hazard is structural — session lifetime ≠ token lifetime by design (1hr vs ∞), so any long-running agent eventually hits this.
+
+**Defense (macf#317, v0.2.11):** in-process token-refresh helper in macf-channel-server (`src/token-refresh.ts`) caches `{token, mintedAt}`; on every `getRefreshedToken()` call, returns cached if `age < 50min` (10-min safety margin under 1hr TTL), else mints fresh via `macf-gh-token.sh`. The refresh-aware client wrapper (`src/refresh-aware-client.ts`) decorates `GitHubVariablesClient`: every method call gets a refreshed token; on 401, force-refreshes + retries once. Refresh failures throw with diagnostic — never silently fall back to the stale env-var token. Sister-shape: `macf-testbed#135` (sweep-harness in-runner refresh between iterations; closed/deferred for testbed but the channel-server class needed structural defense).
+
 ### Instance 2 — GitHub auto-close negation-blindness
 
 **Surface:** PR / issue body markdown parsing
@@ -245,7 +251,7 @@ For coordination-system safety analysis: this is a class of hazards multi-agent 
 
 | Instance | Surface | Structural defense | Pattern |
 |---|---|---|---|
-| 1 — gh-token attribution traps | `gh` ops + bot tokens | PreToolUse hook + helper-with-fail-loud-prefix-check | Pattern B |
+| 1 — gh-token attribution traps | `gh` ops + bot tokens | PreToolUse hook + helper-with-fail-loud-prefix-check; expiry sub-case (macf#317) adds in-runner token refresh in macf-channel-server (`token-refresh.ts` + `refresh-aware-client.ts`) — caches token ~50min, force-refreshes on 401 | Pattern B (acquisition) + Pattern A (expiry retry) |
 | 2 — GitHub auto-close negation-blindness | PR/issue body markdown | Pattern B candidate; structural defense via PreToolUse hook on body content per #275 precedent — not yet shipped | Pattern B (latent) |
 | 3 — Remote Control IPC blocking tmux send-keys | Claude Code TUI input | Two-tier: consumer fleet structurally retired via channel-server primitive (DR-020 mTLS HTTPS POST); substrate fleet permanent operational reality — defense = rule-discipline + Pattern C fragility detector | Pattern C deployable as fragility detector |
 | 4 — Loki/CH-logs pipeline divergence | OTLP logs routing | manifest warnings + shape-aware diagnostic | Pattern A |
