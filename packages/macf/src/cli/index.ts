@@ -74,13 +74,22 @@ program
   .requiredOption('--role <role>', 'Agent role (e.g., code-agent)')
   .option('--name <name>', 'Agent name (defaults to role)')
   .option('--type <type>', 'Agent type: permanent or worker', 'permanent')
-  .requiredOption('--app-id <id>', 'GitHub App ID')
-  .requiredOption('--install-id <id>', 'GitHub App Installation ID')
-  .requiredOption('--key-path <path>', 'Path to GitHub App private key')
-  .option('--registry-type <type>', 'Registry: org, profile, or repo', 'repo')
+  // App-cred flags are required only for GitHub-backed registries.
+  // `--local` (DR-024 / macf#322) skips token mint entirely; commander
+  // can't easily express conditional-required, so accept these as
+  // optional and let `validateInitOpts` enforce the pairing per
+  // registry-type. Operators get an actionable error from the validator
+  // rather than commander's generic missing-required message.
+  .option('--app-id <id>', 'GitHub App ID (required for repo/org/profile registries)')
+  .option('--install-id <id>', 'GitHub App Installation ID (required for repo/org/profile registries)')
+  .option('--key-path <path>', 'Path to GitHub App private key (required for repo/org/profile registries)')
+  .option('--registry-type <type>', 'Registry: repo, org, profile, or local (DR-024)', 'repo')
   .option('--registry-org <org>', 'Org name (for org registry)')
   .option('--registry-user <user>', 'User name (for profile registry)')
   .option('--registry-repo <repo>', 'owner/repo (for repo registry)')
+  .option('--local', 'Shorthand for --registry-type local (DR-024). Bootstraps a single-host project without GitHub Apps; auto-generates a local CA at ~/.macf/registry/<project>.ca.{crt,key} on first invocation.')
+  .option('--path <path>', 'Absolute path to the local-registry JSON file (only with --local / --registry-type=local). Defaults to ~/.macf/registry/<project>.json.')
+  .option('--migrate-from <path>', 'One-shot migrate from a local-registry JSON file into the new GitHub-backed registry (DR-024 §Migration path). Rejected with --local.')
   .option('--advertise-host <host>', 'Host the channel server advertises in its registry entry + includes in its cert SAN (e.g., Tailscale IP). Defaults to 127.0.0.1 when unset.')
   .option('--tmux-session <name>', 'Tmux session name for on-notify wake (macf#185). When set, channel server\'s /notify handler injects the prompt into this tmux session via tmux-send-to-claude.sh after the MCP push. If unset, auto-detects from $TMUX.')
   .option('--tmux-window <idx-or-name>', 'Tmux window index or name within the session (e.g., "0", "cv-architect"). Optional — defaults to the session\'s current window.')
@@ -90,6 +99,11 @@ program
   .option('--dir <path>', 'Project directory (defaults to current working directory)')
   .action(async (opts) => {
     const projectDir = opts.dir ? resolve(opts.dir) : process.cwd();
+    // `--local` is the discoverable shorthand for `--registry-type local`
+    // (locked-in option 2 per macf#322 thread). Both flow into the same
+    // LocalRegistryConfig at init time. The flag wins if both forms are
+    // supplied with conflicting values; they almost always agree.
+    const registryType = opts.local ? 'local' : opts.registryType;
     await initAgent(projectDir, {
       project: opts.project,
       role: opts.role,
@@ -98,10 +112,12 @@ program
       appId: opts.appId,
       installId: opts.installId,
       keyPath: opts.keyPath,
-      registryType: opts.registryType,
+      registryType,
       registryOrg: opts.registryOrg,
       registryUser: opts.registryUser,
       registryRepo: opts.registryRepo,
+      registryPath: opts.path,
+      migrateFrom: opts.migrateFrom,
       advertiseHost: opts.advertiseHost,
       tmuxSession: opts.tmuxSession,
       tmuxWindow: opts.tmuxWindow,
