@@ -39,10 +39,24 @@ export const RepoRegistryConfigSchema = z.object({
   repo: z.string().min(1),
 });
 
+/**
+ * Local-registry mode (DR-024). The `path` field is the absolute filesystem
+ * path to the project's registry JSON file (e.g.
+ * `~/.macf/registry/<project>.json` after operator-side `~` expansion). The
+ * config schema is intentionally minimal — init-time concerns (default
+ * path resolution, `--local` flag aliasing, CA generation) live in the
+ * `macf` CLI package, not here.
+ */
+export const LocalRegistryConfigSchema = z.object({
+  type: z.literal('local'),
+  path: z.string().min(1),
+});
+
 export const RegistryConfigSchema = z.union([
   OrgRegistryConfigSchema,
   ProfileRegistryConfigSchema,
   RepoRegistryConfigSchema,
+  LocalRegistryConfigSchema,
 ]);
 
 export type RegistryConfig = z.infer<typeof RegistryConfigSchema>;

@@ -180,6 +180,20 @@ async function main(): Promise<void> {
     case 'org': signPathPrefix = `/orgs/${config.registry.org}`; break;
     case 'profile': signPathPrefix = `/repos/${config.registry.user}/${config.registry.user}`; break;
     case 'repo': signPathPrefix = `/repos/${config.registry.owner}/${config.registry.repo}`; break;
+    case 'local':
+      // DR-024 / macf#322: local mode has no /sign challenge-response
+      // and no GitHub Variables API. Channel-server local-mode wiring
+      // (skipping /sign, dispatching createRegistryFromConfig directly
+      // on the local variant, etc.) ships in PR-B. Until then, this arm
+      // keeps the exhaustive switch valid so the PR-A types extension
+      // compiles. Throwing here is observational — claude.sh in PR-A
+      // never sets MACF_REGISTRY_TYPE=local, so this code path is
+      // unreachable until PR-B completes the wiring.
+      throw new Error(
+        'channel-server does not yet support MACF_REGISTRY_TYPE=local. ' +
+          'See macf#322 PR-B for the no-GitHub-mode wiring (skip /sign, ' +
+          'dispatch createRegistryFromConfig directly).',
+      );
   }
 
   // macf#317: in-runner token refresh. The refresher caches the current

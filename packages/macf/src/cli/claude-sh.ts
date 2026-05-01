@@ -41,6 +41,15 @@ function registryEnvLines(cfg: MacfAgentConfig): string[] {
         `export MACF_REGISTRY_TYPE="profile"`,
         `export MACF_REGISTRY_USER="${cfg.registry.user}"`,
       ];
+    case 'local':
+      // DR-024 / macf#322 PR-B will fill in the no-GitHub branch
+      // (skip token mint, set MACF_REGISTRY_PATH, etc.). Until then,
+      // this arm keeps the exhaustive switch valid so PR-A's purely
+      // additive types extension compiles cleanly.
+      throw new Error(
+        'claude.sh template does not yet support MACF_REGISTRY_TYPE=local. ' +
+          'See macf#322 PR-B for the no-GitHub-mode template extension.',
+      );
   }
 }
 

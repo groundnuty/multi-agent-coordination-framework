@@ -1,6 +1,8 @@
-export { AgentInfoSchema, RegistryConfigSchema, OrgRegistryConfigSchema, ProfileRegistryConfigSchema, RepoRegistryConfigSchema } from './types.js';
+export { AgentInfoSchema, RegistryConfigSchema, OrgRegistryConfigSchema, ProfileRegistryConfigSchema, RepoRegistryConfigSchema, LocalRegistryConfigSchema } from './types.js';
 export type { AgentInfo, Registry, RegistryConfig, GitHubVariablesClient } from './types.js';
 export { createGitHubClient, GitHubApiError } from './github-client.js';
 export { createRegistry } from './registry.js';
 export { createRegistryFromConfig } from './factory.js';
+export { createLocalRegistry, LocalRegistryError, RegistryFileSchema, REGISTRY_SCHEMA_VERSION } from './local-client.js';
+export type { LocalRegistryOptions, RegistryFile } from './local-client.js';
 export { toVariableSegment } from './variable-name.js';
