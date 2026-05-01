@@ -15,6 +15,7 @@ import { formatDashboard, formatPeerTable, formatHealthDetail, formatIssues } fr
 import { getOwnRegistration, listPeers } from '../lib/registry.js';
 import { pingAgent } from '../lib/health.js';
 import { probePeerHealth } from '../lib/probe-peer-health.js';
+import { buildDashboardHealth } from '../lib/build-dashboard-health.js';
 import { checkIssues } from '../lib/work.js';
 import { createRegistryFromConfig } from '@groundnuty/macf-core';
 import { generateToken } from '@groundnuty/macf-core';
@@ -55,15 +56,12 @@ async function main(): Promise<void> {
         getOwnRegistration(agentName, registry),
         listPeers(registry),
       ]);
-      // Live-health probing for status is sister-class to macf#325
-      // (peers stub) — same fix shape (probePeerHealth helper). Tracked
-      // separately; not in scope for #325 per science-agent's scope-lock.
-      console.log(formatDashboard(
-        agentName,
+      const { ownHealth, peersWithHealth } = await buildDashboardHealth(
         ownRegistration,
-        null,
-        peers.map(p => ({ name: p.name, health: null })),
-      ));
+        peers,
+        probePeerHealth,
+      );
+      console.log(formatDashboard(agentName, ownRegistration, ownHealth, peersWithHealth));
       break;
     }
 
