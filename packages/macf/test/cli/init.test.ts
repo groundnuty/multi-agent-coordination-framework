@@ -83,7 +83,11 @@ describe('macf init', () => {
     const claudeSh = join(dir, 'claude.sh');
     expect(existsSync(claudeSh)).toBe(true);
     const content = readFileSync(claudeSh, 'utf-8');
-    expect(content).toContain('MACF_AGENT_NAME="agent"');
+    // Post-#313: settings-driven 3-layer chain for MACF_AGENT_NAME
+    // (env > settings.local.json > baked default). Assert on the baked
+    // default layer + final export.
+    expect(content).toContain('MACF_AGENT_NAME="${MACF_AGENT_NAME:-agent}"');
+    expect(content).toContain('export MACF_AGENT_NAME');
     expect(content).toContain('exec claude');
     // Per-project CA path (PR #36)
     expect(content).toContain('MACF_CA_CERT="$HOME/.macf/certs/TEST/ca-cert.pem"');
