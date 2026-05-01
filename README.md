@@ -12,7 +12,7 @@ Each agent is a long-running Claude Code session in a `tmux` window on a VM. Age
 - **Discussion + clarification**: agents @mention each other in issue comments; the routing workflow forwards those mentions to the right tmux session. Threads are visible to operators and persist after work completes.
 - **Implementation + review**: agents open PRs referencing the issue, other agents review in the issue thread, the author merges after LGTM. Same discipline as a human team.
 - **Identity + attribution**: each agent has its own GitHub App; actions and comments are attributed to the App (`macf-code-agent[bot]`, `macf-science-agent[bot]`, etc.). Full audit trail in git blame and GitHub's event log.
-- **Operator intervention**: any operator can attach to any agent's tmux session via Tailscale (e.g., `ssh ubuntu@<host>` over the tailnet, then `tmux attach -t <project>@<agent>`), or prompt an agent directly from a phone via Tailscale. Standard remote-VM admin — NOT MACF coordination infrastructure (routing fires structurally regardless of operator presence).
+- **Operator intervention**: any operator can attach to any agent's tmux session via Tailscale SSH (e.g., `ssh ubuntu@<host>` over the tailnet, then `tmux attach -t <project>@<agent>`), or prompt an agent directly from a phone via [Claude Remote](https://claude.com/product/claude-code) (mobile / web). Standard remote-VM admin + canonical Claude Code session access — NOT MACF coordination infrastructure (routing fires structurally regardless of operator presence).
 
 Design note: agents have **asymmetric contexts**. The orchestrator (typically a "science-agent") runs with a 1M-token context window and curates the broad project understanding across sessions. Worker agents (code, writing) run with 200K and take focused tasks. This lets the orchestrator stay grounded in project-level goals without being consumed by implementation-detail noise — and costs less total tokens than running everyone at 1M.
 
@@ -54,7 +54,7 @@ MACF generalizes that PoC into an N-agent framework with typed roles, cross-repo
 ```
 ┌─────────────────────────────────────────────────────────────────────┐
 │  Operator                                                           │
-│  (terminal, phone via Tailscale, GitHub web UI, gh CLI)             │
+│  (terminal, phone via Claude Remote, GitHub web UI, gh CLI)         │
 └────────┬─────────────────────────────────────────────┬──────────────┘
          │ Tailscale SSH                               │ Web UI / gh CLI
          │ (VM admin: tmux attach / inspect logs;      │ (issues, comments,
