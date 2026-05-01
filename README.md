@@ -12,7 +12,7 @@ Each agent is a long-running Claude Code session in a `tmux` window on a VM. Age
 - **Discussion + clarification**: agents @mention each other in issue comments; the routing workflow forwards those mentions to the right tmux session. Threads are visible to operators and persist after work completes.
 - **Implementation + review**: agents open PRs referencing the issue, other agents review in the issue thread, the author merges after LGTM. Same discipline as a human team.
 - **Identity + attribution**: each agent has its own GitHub App; actions and comments are attributed to the App (`macf-code-agent[bot]`, `macf-science-agent[bot]`, etc.). Full audit trail in git blame and GitHub's event log.
-- **Operator intervention**: any operator can SSH into the VM and attach to any agent's tmux session, or prompt an agent directly from a phone via Tailscale. No special mode — it's just a terminal.
+- **Operator intervention**: any operator can attach to any agent's tmux session via Tailscale (e.g., `ssh ubuntu@<host>` over the tailnet, then `tmux attach -t <project>@<agent>`), or prompt an agent directly from a phone via Tailscale. Standard remote-VM admin — NOT MACF coordination infrastructure (routing fires structurally regardless of operator presence).
 
 Design note: agents have **asymmetric contexts**. The orchestrator (typically a "science-agent") runs with a 1M-token context window and curates the broad project understanding across sessions. Worker agents (code, writing) run with 200K and take focused tasks. This lets the orchestrator stay grounded in project-level goals without being consumed by implementation-detail noise — and costs less total tokens than running everyone at 1M.
 
@@ -273,50 +273,30 @@ Real files, taken from a live deployment. Identifiers and IP addresses replaced 
 
 ### `agent-config.json` (in the coordination repo's `.github/` directory)
 
-Populated by `macf repo-init`. Read by the routing workflow to decide where to deliver events.
+Populated by `macf repo-init`. Read by the routing workflow (`groundnuty/macf-actions@v3`) to identify which agents this repo coordinates.
 
 ```json
 {
   "agents": {
-    "code-agent": {
-      "app_name": "macf-code-agent",
-      "host": "<agent-vm-tailscale-ip>",
-      "tmux_session": "project-name",
-      "tmux_window": "code-agent",
-      "tmux_bin": "tmux",
-      "ssh_user": "ubuntu",
-      "ssh_key_secret": "AGENT_SSH_KEY",
-      "workspace_dir": "/home/ubuntu/repos/<owner>/<code-agent-workspace>",
-      "port": 8847
-    },
-    "science-agent": {
-      "app_name": "macf-science-agent",
-      "host": "<agent-vm-tailscale-ip>",
-      "tmux_session": "project-name",
-      "tmux_window": "science-agent",
-      "tmux_bin": "tmux",
-      "ssh_user": "ubuntu",
-      "ssh_key_secret": "AGENT_SSH_KEY",
-      "workspace_dir": "/home/ubuntu/repos/<owner>/<science-agent-workspace>",
-      "port": 8848
-    }
+    "code-agent":    { "app_name": "macf-code-agent" },
+    "science-agent": { "app_name": "macf-science-agent" }
   },
   "label_to_status": {
     "in-progress": "In Progress",
-    "in-review": "In Review",
-    "blocked": "Blocked"
+    "in-review":   "In Review",
+    "blocked":     "Blocked"
   }
 }
 ```
 
 Field notes:
 
-- `app_name` — the GitHub App slug (used to compute the bot username `<app_name>[bot]` for @mention matching)
-- `host` + `port` — agent's Tailscale IP and channel-server port (Stage 3 mTLS transport only; Stage 2 uses SSH and ignores port)
-- `tmux_session` + `tmux_window` — where the routing workflow delivers the event via `tmux send-keys` (Stage 2)
-- `ssh_key_secret` — repo secret holding the SSH key for VM access
-- `workspace_dir` — the target workspace's path on the VM (for secondary agents whose workspace isn't the coordination repo)
-- `label_to_status` — maps status labels to Projects-V2 board column names
+- `app_name` (required) — the GitHub App slug. Used to compute the bot username `<app_name>[bot]` for `@mention` matching + as the registry-key prefix when looking up the agent's address (`MACF_<PROJECT_UPPER>_AGENT_<NAME_UPPER>` repo Variable).
+- `label_to_status` — maps status labels to Projects-V2 board column names.
+
+**Address resolution.** The recipient agent's `host` + `port` are NOT in this config — they're in the **registry** (per [DR-007](design/decisions/DR-007-port-assignment.md): registry is the single source of truth for `host`/`port`/`instance_id`). The channel server self-registers via `gh variable set MACF_<PROJECT>_AGENT_<NAME>` on session start; the routing-Action reads the variable to resolve the recipient's address before firing the mTLS POST.
+
+**v1.x-era fields ignored in v3.** Pre-v2.0 routing-Action versions used SSH+tmux delivery and required `host`, `port`, `tmux_session`, `tmux_window`, `tmux_bin`, `ssh_user`, `ssh_key_secret`, `workspace_dir` per agent in this file. v3+ ignores all of them — the registry-driven mTLS path doesn't need them. If a config has these fields from a pre-v3 era, they're harmless leftovers (just ignored) but `macf repo-init` regenerates the canonical v3 shape on next run.
 
 ### `claude.sh` (at workspace root)
 
@@ -374,3 +354,53 @@ What this launcher handles:
 - **Cert paths** — per-project CA at `~/.macf/certs/<project>/`, per-workspace agent cert under `.macf/certs/`
 - **Fail-loud token refresh** — the `macf-gh-token.sh` helper validates the `ghs_` token prefix; if it fails, the launcher exits rather than letting Claude Code silently fall back to a user token
 - **Plugin loading** — `--plugin-dir` points at the version pinned by `macf init`, so new CLI versions don't break older agent sessions until `macf update` runs
+
+### Observability (optional, opt-in)
+
+MACF emits OpenTelemetry telemetry (traces, metrics, logs) when configured — opt-in via a single env var. With observability wired, every `/notify`, `/sign`, peer ping produces a span; counters track per-agent per-type notification volume; structured logs flow alongside. Spec: [DR-021](design/decisions/DR-021-otel-instrumentation.md).
+
+**Enable:**
+
+```bash
+# Per-launch (operator's shell, before ./claude.sh):
+export OTEL_EXPORTER_OTLP_ENDPOINT="http://<your-collector-host>:14318"
+./claude.sh
+
+# Or template-time (bakes the default into claude.sh on macf init / update):
+MACF_OTEL_ENDPOINT="http://<your-collector-host>:14318" macf update
+```
+
+The 4-layer endpoint resolution per v0.2.10 (`macf#313`) cascades: runtime `OTEL_EXPORTER_OTLP_ENDPOINT` env var > runtime `MACF_OTEL_ENDPOINT` env var > `.claude/settings.local.json` `.env.MACF_OTEL_ENDPOINT` > template-time bake.
+
+**Disable:**
+
+```bash
+MACF_OTEL_DISABLED=1 macf update    # omits the entire OTel block from claude.sh
+```
+
+**Observability stack — where to set up the collector + dashboards:**
+
+`groundnuty/macf-devops-toolkit` ships the canonical observability stack — k3d cluster + Helm-deployed Tempo (traces) + Prometheus / Mimir (metrics) + Loki (logs) + Grafana (dashboards) + central OTel Collector. Read the runbook + design rationale there:
+
+- **[`macf-devops-toolkit:docs/observability-bundle-setup.md`](https://github.com/groundnuty/macf-devops-toolkit/blob/main/docs/observability-bundle-setup.md)** — operator runbook for wiring `.github/workflows/observability-snapshot.yml` end-to-end (Tailscale OAuth + cluster VM access + per-issue/PR observability bundles)
+- **[`macf-devops-toolkit:design/DR-001-argocd-gitops-for-observability-spike.md`](https://github.com/groundnuty/macf-devops-toolkit/blob/main/design/DR-001-argocd-gitops-for-observability-spike.md)** — design rationale for the GitOps-managed observability cluster
+- **[`macf-devops-toolkit:design/DR-002-observability-artifact-bundles.md`](https://github.com/groundnuty/macf-devops-toolkit/blob/main/design/DR-002-observability-artifact-bundles.md)** — design rationale for per-issue/PR observability bundles attached to the coordination thread
+- **[`macf-devops-toolkit:environments/macf/`](https://github.com/groundnuty/macf-devops-toolkit/tree/main/environments/macf)** — k3d cluster config + helper scripts (`make pf-grafana` / `make pf-tempo` for port-forwarded UI access; `hack/observability-snapshot.sh` for snapshot bundles)
+- **[`macf-devops-toolkit:CLAUDE.md`](https://github.com/groundnuty/macf-devops-toolkit/blob/main/CLAUDE.md)** — endpoint reference (canonical `:14318` host-port-mapped via k3d serverlb to the central-collector LoadBalancer)
+
+**Endpoint convention** (per `macf-devops-toolkit:CLAUDE.md`): the canonical k3d cluster's stable OTLP HTTP endpoint is `http://127.0.0.1:14318` (host-port-mapped serverlb). The pre-2026-04-25 compose-stack default `:4318` is retired (caused 34min of zero-telemetry on CV agents — see [`macf#282`](https://github.com/groundnuty/macf/issues/282) + [`macf#283`](https://github.com/groundnuty/macf/pull/283)).
+
+**Operator-side check that telemetry is flowing:**
+
+```bash
+# Verify trace ingestion (after running an agent for ~30s):
+make pf-tempo  # in macf-devops-toolkit; port-forwards Tempo to :13200
+curl -s "http://127.0.0.1:13200/api/search?tags=service.name%3Dmacf-agent-<name>" | jq '.traces | length'
+# Expected: > 0 (each /notify or /sign produces a span)
+
+# Verify metric ingestion (Grafana):
+make pf-grafana  # port-forwards Grafana to :3000
+# Browse: macf_notify_received_total{macf_agent="<name>"} should show non-zero counter
+```
+
+**OTel temporality** (per [`macf#281`](https://github.com/groundnuty/macf/issues/281) Phase 2, v0.2.9+): channel-server uses **DELTA** temporality on counters — process restarts produce independent delta points (collector aggregates by series identity to reconstruct cumulative). Robust to N-process / restart topologies. Pre-v0.2.9 used CUMULATIVE which broke `rate()` / `increase()` queries across process restarts.
