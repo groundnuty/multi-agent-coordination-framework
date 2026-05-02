@@ -156,4 +156,85 @@ describe('generateToken', () => {
       expect(token).toBe('from-env-vars');
     });
   });
+
+  describe('forceMint option (macf#338)', () => {
+    it('forceMint: true bypasses GH_TOKEN env shortcut and mints fresh', async () => {
+      // Pre-set a stale-shaped GH_TOKEN that would normally be returned as-is
+      process.env['GH_TOKEN'] = 'ghs_STALE_TOKEN_FROM_LONG_RUNNING_PARENT';
+      // Provide App-creds so the mint can proceed
+      process.env['APP_ID'] = 'env-app';
+      process.env['INSTALL_ID'] = 'env-install';
+      process.env['KEY_PATH'] = '/env/key.pem';
+
+      let mintInvoked = false;
+      vi.doMock('node:child_process', () => ({
+        execFile: (cmd: string, args: string[], _opts: unknown, cb: (err: unknown, result: { stdout: string; stderr: string }) => void) => {
+          mintInvoked = true;
+          expect(cmd).toBe('gh');
+          expect(args).toContain('token');
+          expect(args).toContain('generate');
+          cb(null, { stdout: JSON.stringify({ token: 'ghs_FRESHLY_MINTED_TOKEN' }), stderr: '' });
+          return {};
+        },
+      }));
+
+      const { generateToken } = await import('../src/token.js');
+      const token = await generateToken(undefined, { forceMint: true });
+
+      expect(token).toBe('ghs_FRESHLY_MINTED_TOKEN');
+      expect(token).not.toBe('ghs_STALE_TOKEN_FROM_LONG_RUNNING_PARENT');
+      expect(mintInvoked).toBe(true);
+    });
+
+    it('forceMint: true uses explicit TokenSource over env vars', async () => {
+      process.env['GH_TOKEN'] = 'ghs_STALE';
+      // Conflicting env App-creds — explicit source must win
+      process.env['APP_ID'] = 'env-app-bad';
+      process.env['INSTALL_ID'] = 'env-install-bad';
+      process.env['KEY_PATH'] = '/env/bad-key.pem';
+
+      vi.doMock('node:child_process', () => ({
+        execFile: (cmd: string, args: string[], _opts: unknown, cb: (err: unknown, result: { stdout: string; stderr: string }) => void) => {
+          // Explicit source values must appear; env values must NOT
+          expect(args).toContain('explicit-app');
+          expect(args).toContain('explicit-install');
+          expect(args).toContain('/explicit/key.pem');
+          expect(args).not.toContain('env-app-bad');
+          cb(null, { stdout: JSON.stringify({ token: 'from-explicit-mint' }), stderr: '' });
+          return {};
+        },
+      }));
+
+      const { generateToken } = await import('../src/token.js');
+      const token = await generateToken(
+        { appId: 'explicit-app', installId: 'explicit-install', keyPath: '/explicit/key.pem' },
+        { forceMint: true },
+      );
+
+      expect(token).toBe('from-explicit-mint');
+    });
+
+    it('forceMint: false (default) preserves backward-compat — env GH_TOKEN wins', async () => {
+      process.env['GH_TOKEN'] = 'ghs_FROM_ENV';
+      const { generateToken } = await import('../src/token.js');
+      const token = await generateToken(undefined, { forceMint: false });
+      expect(token).toBe('ghs_FROM_ENV');
+    });
+
+    it('forceMint: undefined (no opts) preserves backward-compat — env GH_TOKEN wins', async () => {
+      process.env['GH_TOKEN'] = 'ghs_FROM_ENV';
+      const { generateToken } = await import('../src/token.js');
+      const token = await generateToken();
+      expect(token).toBe('ghs_FROM_ENV');
+    });
+
+    it('forceMint: true throws when no App-cred fallback available', async () => {
+      process.env['GH_TOKEN'] = 'ghs_STALE';
+      // No APP_ID / INSTALL_ID / KEY_PATH set + no source passed
+      const { generateToken } = await import('../src/token.js');
+      await expect(generateToken(undefined, { forceMint: true })).rejects.toThrow(
+        /missing APP_ID/,
+      );
+    });
+  });
 });

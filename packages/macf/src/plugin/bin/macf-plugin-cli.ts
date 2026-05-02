@@ -17,9 +17,9 @@ import { pingAgent } from '../lib/health.js';
 import { probePeerHealth } from '../lib/probe-peer-health.js';
 import { buildDashboardHealth } from '../lib/build-dashboard-health.js';
 import { getRegistryConfig } from '../lib/registry-config.js';
+import { mintFreshGitHubToken } from '../lib/fresh-github-token.js';
 import { checkIssues } from '../lib/work.js';
 import { createRegistryFromConfig } from '@groundnuty/macf-core';
-import { generateToken } from '@groundnuty/macf-core';
 import { toVariableSegment } from '@groundnuty/macf-core';
 
 const command = process.argv[2];
@@ -32,10 +32,12 @@ async function main(): Promise<void> {
   switch (command) {
     case 'status': {
       // Local-mode skip-token: LocalRegistryClient ignores the token argument
-      // (no GitHub backend); generateToken() requires APP_ID/INSTALL_ID/KEY_PATH
-      // env vars which claude.sh intentionally doesn't export in local mode
-      // per DR-024 / PR #329. Mirrors `channel-server/src/server.ts` line 210.
-      const token = registryConfig.type === 'local' ? '' : await generateToken();
+      // (no GitHub backend); claude.sh intentionally doesn't export App-cred
+      // env vars in local mode per DR-024 / PR #329. Mirrors
+      // `channel-server/src/server.ts` line 210.
+      // GitHub-mode: forceMint via mintFreshGitHubToken() to bypass any stale
+      // GH_TOKEN inherited from a long-running parent Claude TUI (macf#338).
+      const token = registryConfig.type === 'local' ? '' : await mintFreshGitHubToken();
       const registry = createRegistryFromConfig(registryConfig, project, token);
       // Fetch own registration from the registry so the dashboard header
       // reflects whether THIS agent is actually registered (see #84 —
@@ -55,7 +57,11 @@ async function main(): Promise<void> {
 
     case 'peers': {
       // Local-mode skip-token (see status case for rationale).
-      const token = registryConfig.type === 'local' ? '' : await generateToken();
+      // GitHub-mode: forceMint to bypass any stale GH_TOKEN inherited from
+      // a long-running parent Claude TUI (>1hr → 1hr-TTL bot token expired).
+      // Each macf-plugin-cli invocation is a short-lived subprocess; mint
+      // freshness is bounded to one CLI run. macf#338.
+      const token = registryConfig.type === 'local' ? '' : await mintFreshGitHubToken();
       const registry = createRegistryFromConfig(registryConfig, project, token);
       const peers = await listPeers(registry);
       const peersWithHealth = await Promise.all(
@@ -87,7 +93,11 @@ async function main(): Promise<void> {
       }
 
       // Local-mode skip-token (see status case for rationale).
-      const token = registryConfig.type === 'local' ? '' : await generateToken();
+      // GitHub-mode: forceMint to bypass any stale GH_TOKEN inherited from
+      // a long-running parent Claude TUI (>1hr → 1hr-TTL bot token expired).
+      // Each macf-plugin-cli invocation is a short-lived subprocess; mint
+      // freshness is bounded to one CLI run. macf#338.
+      const token = registryConfig.type === 'local' ? '' : await mintFreshGitHubToken();
       const registry = createRegistryFromConfig(registryConfig, project, token);
       // Look up the target in the registry. Names in the registry are
       // sanitized (uppercase, underscores), so match in that space.
@@ -115,7 +125,10 @@ async function main(): Promise<void> {
     }
 
     case 'issues': {
-      const token = await generateToken();
+      // Same forceMint rationale as status/peers/ping (macf#338) — `issues`
+      // is GitHub-only by design (queries gh api repos/...), so the
+      // stale-token-from-long-running-parent class hits here too.
+      const token = await mintFreshGitHubToken();
       const repo = process.env['MACF_REGISTRY_REPO'] ?? 'groundnuty/macf';
       const label = process.env['MACF_AGENT_LABEL'] ?? 'code-agent';
       const issues = await checkIssues({ repo, label, token });
