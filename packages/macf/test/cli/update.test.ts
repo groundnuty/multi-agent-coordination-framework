@@ -15,6 +15,17 @@ vi.mock('../../src/cli/plugin-fetcher.js', () => ({
   workspacePluginDir: (dir: string) => join(dir, '.macf', 'plugin'),
 }));
 
+// Stub `node:readline.createInterface` so tests can drive the unified
+// Proceed? prompt (macf#334) without attaching to real stdin. Tests set
+// `mockPromptAnswer` before invoking `update` to feed the prompt.
+let mockPromptAnswer = '';
+vi.mock('node:readline', () => ({
+  createInterface: () => ({
+    question: (_message: string, cb: (answer: string) => void) => cb(mockPromptAnswer),
+    close: () => undefined,
+  }),
+}));
+
 import { update, buildDiff, renderDiff } from '../../src/cli/commands/update.js';
 import { agentConfigPath } from '../../src/cli/config.js';
 import { fetchPluginToWorkspace } from '../../src/cli/plugin-fetcher.js';
@@ -277,6 +288,102 @@ describe('update command', () => {
 
     expect(code).toBe(0);
     expect(after).toBe(before);
+  });
+
+  describe('unified preview-then-prompt flow (#334)', () => {
+    it('bare `macf update` shows preview + Proceed? prompt; "y" applies all bumps', async () => {
+      writeConfig(dir, { cli: '0.1.0', plugin: '0.1.0', actions: 'v1' });
+      mockFetchReturning({ cli: '0.3.0', plugin: '0.2.0', actions: 'v2' });
+      mockPromptAnswer = 'y';
+
+      const code = await update(dir, { all: false, cli: false, plugin: false, actions: false, yes: false, dryRun: false });
+      expect(code).toBe(0);
+
+      // Preview surfaced
+      const allLogs = logSpy.mock.calls.flat().join('\n');
+      expect(allLogs).toContain('This run will bump:');
+      expect(allLogs).toContain('cli: 0.1.0 → 0.3.0');
+      expect(allLogs).toContain('plugin: 0.1.0 → 0.2.0');
+      expect(allLogs).toContain('actions: v1 → v2');
+
+      // All 3 bumps applied
+      const cfg = JSON.parse(readFileSync(agentConfigPath(dir), 'utf-8'));
+      expect(cfg.versions).toEqual({ cli: '0.3.0', plugin: '0.2.0', actions: 'v2' });
+    });
+
+    it('bare `macf update` with "n" answer leaves config unchanged', async () => {
+      writeConfig(dir, { cli: '0.1.0', plugin: '0.1.0', actions: 'v1' });
+      mockFetchReturning({ cli: '0.3.0', plugin: '0.2.0', actions: 'v2' });
+      mockPromptAnswer = 'n';
+
+      const before = readFileSync(agentConfigPath(dir), 'utf-8');
+      const code = await update(dir, { all: false, cli: false, plugin: false, actions: false, yes: false, dryRun: false });
+      const after = readFileSync(agentConfigPath(dir), 'utf-8');
+
+      expect(code).toBe(0);
+      expect(after).toBe(before);
+      expect(logSpy.mock.calls.flat().join('\n')).toContain('No changes. Exiting.');
+    });
+
+    it('bare `macf update` with empty answer (default N) leaves config unchanged', async () => {
+      writeConfig(dir, { cli: '0.1.0', plugin: '0.1.0', actions: 'v1' });
+      mockFetchReturning({ cli: '0.3.0', plugin: '0.2.0', actions: 'v2' });
+      mockPromptAnswer = '';
+
+      const before = readFileSync(agentConfigPath(dir), 'utf-8');
+      await update(dir, { all: false, cli: false, plugin: false, actions: false, yes: false, dryRun: false });
+      const after = readFileSync(agentConfigPath(dir), 'utf-8');
+
+      expect(after).toBe(before);
+    });
+
+    it('--confirm flag is explicit alias for the unified flow (no behavioral change vs bare)', async () => {
+      writeConfig(dir, { cli: '0.1.0', plugin: '0.1.0', actions: 'v1' });
+      mockFetchReturning({ cli: '0.3.0', plugin: '0.2.0', actions: 'v2' });
+      mockPromptAnswer = 'yes';
+
+      const code = await update(dir, { all: false, cli: false, plugin: false, actions: false, yes: false, dryRun: false, confirm: true });
+      expect(code).toBe(0);
+
+      // Preview rendered (the prompt itself goes to stderr via readline,
+      // not captured here; presence of preview header confirms the flow ran).
+      const allLogs = logSpy.mock.calls.flat().join('\n');
+      expect(allLogs).toContain('This run will bump:');
+
+      const cfg = JSON.parse(readFileSync(agentConfigPath(dir), 'utf-8'));
+      expect(cfg.versions.cli).toBe('0.3.0');
+    });
+
+    it('--yes bypasses the prompt entirely (no preview header)', async () => {
+      writeConfig(dir, { cli: '0.1.0', plugin: '0.1.0', actions: 'v1' });
+      mockFetchReturning({ cli: '0.3.0', plugin: '0.2.0', actions: 'v2' });
+      mockPromptAnswer = 'n';  // would say no IF prompted; but --yes bypasses
+
+      const code = await update(dir, { all: false, cli: false, plugin: false, actions: false, yes: true, dryRun: false });
+      expect(code).toBe(0);
+
+      const cfg = JSON.parse(readFileSync(agentConfigPath(dir), 'utf-8'));
+      expect(cfg.versions).toEqual({ cli: '0.3.0', plugin: '0.2.0', actions: 'v2' });
+
+      // No preview header rendered (--yes bypasses the entire prompt flow)
+      const allLogs = logSpy.mock.calls.flat().join('\n');
+      expect(allLogs).not.toContain('This run will bump:');
+    });
+
+    it('explicit selection (--cli alone) bypasses prompt for backward compat', async () => {
+      writeConfig(dir, { cli: '0.1.0', plugin: '0.1.0', actions: 'v1' });
+      mockFetchReturning({ cli: '0.3.0', plugin: '0.2.0', actions: 'v2' });
+      mockPromptAnswer = 'n';  // would say no IF prompted
+
+      const code = await update(dir, { all: false, cli: true, plugin: false, actions: false, yes: false, dryRun: false });
+      expect(code).toBe(0);
+
+      const cfg = JSON.parse(readFileSync(agentConfigPath(dir), 'utf-8'));
+      // cli bumped; plugin/actions unchanged (not in selection)
+      expect(cfg.versions.cli).toBe('0.3.0');
+      expect(cfg.versions.plugin).toBe('0.1.0');
+      expect(cfg.versions.actions).toBe('v1');
+    });
   });
 
   it('combines --cli and --plugin flags', async () => {
