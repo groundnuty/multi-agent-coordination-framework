@@ -9,6 +9,50 @@ Plugin + routing-workflow changes ship from separate repos
 [`groundnuty/macf-actions`](https://github.com/groundnuty/macf-actions))
 and are not included here — pin them explicitly in each workspace.
 
+## [0.2.14] — 2026-05-02
+
+Single hotfix release for a long-latent v0.1.x version-resolver typo
+that surfaced when operator's CV workspaces tried to bump the cli pin
+on the v0.2.13 cycle and got stuck. Companion fix to v0.2.13 (which
+fixed local-mode dispatch but exposed this orthogonal cli-pin bug).
+
+### Fixed
+- **`macf update --all --yes` cli pin actually bumps now ([#336], closes [#335])** —
+  two coupled fixes in `packages/macf/src/cli/`:
+  1. **Primary (URL typo)**: `version-resolver.ts` `fetchLatestCliVersion()`
+     fetched `https://registry.npmjs.org/@macf/cli` — but the actual
+     package is `@groundnuty/macf` (typo from pre-`@groundnuty` org-scope
+     days; latent since the original P5 design landed). The wrong URL
+     always 404'd, classified as `not_published`, and the candidates
+     filter in `update.ts` silently excluded the row. Operator's 4 CV
+     workspaces stuck at older cli pins despite explicit `--all --yes`
+     during the v0.2.13 cycle. Fix: use the correct package URL.
+  2. **Secondary (operator-experience)**: `update.ts` summary path
+     printed `Everything is up to date` even when one or more rows
+     were silently filtered out due to fetch failure
+     (`not_published` / `network_error` / `rate_limited` /
+     `invalid_response`). Fix: distinguish "all OK + same" (existing
+     bare summary) from "some rows in failure states" (explicit
+     `Skipped due to fetch failure: <component> (<status>)` +
+     `Other pins are up to date. See per-component status above for
+     details.`).
+
+  3 regression tests: URL assertion (pins the correct npm package URL
+  so a future regression to `@macf/cli` or any other path fails
+  immediately), skipped-rows summary path (cli URL returns 404,
+  plugin/actions same → asserts new summary surfaces the skip), and a
+  no-regression companion (all 3 ok+same → bare summary still prints).
+  1118 → 1121 tests.
+
+  Diagnosis discipline note: `FALLBACK_VERSIONS.cli = PACKAGE_VERSION`
+  caused the operator's resolver-output table to show
+  `Latest = 0.2.13` (the locally-installed version), masking the
+  actual cause until I curl'd the URL directly. Verify-before-claim
+  at every hop including resolver-output tables.
+
+[#335]: https://github.com/groundnuty/macf/issues/335
+[#336]: https://github.com/groundnuty/macf/pull/336
+
 ## [0.2.13] — 2026-05-01
 
 Single hotfix release: critical regression fix for v0.2.12 local-mode
