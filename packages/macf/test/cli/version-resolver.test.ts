@@ -80,6 +80,19 @@ describe('fetchLatestCliVersion', () => {
     expect(result).toEqual({ status: 'ok', value: '1.2.3' });
   });
 
+  it('hits the @groundnuty/macf npm package URL (not the @macf/cli typo from #335)', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => ({ 'dist-tags': { latest: '0.2.13' } }),
+    });
+    globalThis.fetch = fetchMock as typeof fetch;
+    await fetchLatestCliVersion();
+    const calledUrl = String(fetchMock.mock.calls[0]?.[0]);
+    expect(calledUrl).toBe('https://registry.npmjs.org/@groundnuty/macf');
+    expect(calledUrl).not.toContain('@macf/cli');
+  });
+
   it('returns not_published on HTTP 404', async () => {
     globalThis.fetch = vi.fn().mockResolvedValue({ ok: false, status: 404 }) as typeof fetch;
     expect(await fetchLatestCliVersion()).toEqual({ status: 'not_published', value: null });

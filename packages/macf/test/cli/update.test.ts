@@ -180,6 +180,47 @@ describe('update command', () => {
     expect(logSpy.mock.calls.flat().join('\n')).toContain('up to date');
   });
 
+  it('surfaces skipped-due-to-fetch-failure rows in summary instead of silent "up to date" (#335)', async () => {
+    writeConfig(dir, { cli: '0.1.0', plugin: '0.2.0', actions: 'v2' });
+    // cli URL returns 404 (simulating pre-fix wrong-URL OR genuine not-published)
+    // plugin + actions return values matching current → status `same`
+    globalThis.fetch = vi.fn().mockImplementation((url: string) => {
+      if (url.includes('registry.npmjs.org')) {
+        return Promise.resolve({ ok: false, status: 404 });
+      }
+      if (url.includes('macf-marketplace')) {
+        return Promise.resolve({ ok: true, json: async () => ({ tag_name: 'v0.2.0' }) });
+      }
+      if (url.includes('macf-actions')) {
+        return Promise.resolve({ ok: true, json: async () => ({ tag_name: 'v2' }) });
+      }
+      return Promise.reject(new Error('unexpected URL'));
+    }) as typeof fetch;
+
+    const code = await update(dir, { all: true, cli: false, plugin: false, actions: false, yes: true, dryRun: false });
+    expect(code).toBe(0);
+
+    const allLogs = logSpy.mock.calls.flat().join('\n');
+    // The new summary message must surface the skipped pin explicitly
+    expect(allLogs).toContain('Skipped due to fetch failure');
+    expect(allLogs).toContain('cli');
+    expect(allLogs).toContain('not_published');
+    // The misleading bare "Everything is up to date" should NOT appear
+    expect(allLogs).not.toMatch(/^Everything is up to date\.$/m);
+  });
+
+  it('still prints bare "Everything is up to date" when all 3 components are ok + same (no regression)', async () => {
+    writeConfig(dir, { cli: '0.3.0', plugin: '0.2.0', actions: 'v2' });
+    mockFetchReturning({ cli: '0.3.0', plugin: '0.2.0', actions: 'v2' });
+
+    const code = await update(dir, { all: true, cli: false, plugin: false, actions: false, yes: true, dryRun: false });
+    expect(code).toBe(0);
+
+    const allLogs = logSpy.mock.calls.flat().join('\n');
+    expect(allLogs).toMatch(/Everything is up to date/);
+    expect(allLogs).not.toContain('Skipped due to fetch failure');
+  });
+
   it('--all --yes bumps all out-of-date components', async () => {
     writeConfig(dir, { cli: '0.1.0', plugin: '0.1.0', actions: 'v1' });
     mockFetchReturning({ cli: '0.3.0', plugin: '0.2.0', actions: 'v2' });

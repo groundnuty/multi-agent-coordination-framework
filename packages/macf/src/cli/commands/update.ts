@@ -334,7 +334,21 @@ export async function update(
   });
 
   if (candidates.length === 0) {
-    console.log('Everything is up to date.');
+    // Distinguish "all rows OK + same" from "some rows in failure states
+    // were silently filtered out" — pre-#335 the latter case printed
+    // "Everything is up to date" even when a fetch had failed, masking
+    // the actual reason a pin wasn't bumped.
+    const FAIL_STATES_FOR_SUMMARY: readonly DiffRow['status'][] = [
+      'not_published', 'network_error', 'rate_limited', 'invalid_response',
+    ];
+    const failedRows = diff.filter(row => FAIL_STATES_FOR_SUMMARY.includes(row.status));
+    if (failedRows.length > 0) {
+      const skipped = failedRows.map(r => `${r.component} (${r.status})`).join(', ');
+      console.log(`No bump candidates. Skipped due to fetch failure: ${skipped}.`);
+      console.log('Other pins are up to date. See per-component status above for details.');
+    } else {
+      console.log('Everything is up to date.');
+    }
     return 0;
   }
 
