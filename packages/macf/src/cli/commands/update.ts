@@ -60,6 +60,14 @@ export interface UpdateOptions {
   readonly actions: boolean;
   readonly yes: boolean;
   readonly dryRun: boolean;
+  /**
+   * Explicit opt-in to the unified preview-then-prompt-then-execute flow
+   * (macf#334). Equivalent to bare `macf update` since the unified flow is
+   * the default for non-`--yes` / non-`--dry-run` invocations; the flag
+   * exists as an explicit-intent declaration for scripted workflows.
+   * `--yes` still wins (bypass).
+   */
+  readonly confirm?: boolean;
 }
 
 type Component = 'cli' | 'plugin' | 'actions';
@@ -153,12 +161,24 @@ function selectedComponents(opts: UpdateOptions): readonly Component[] {
   return selected;
 }
 
-async function confirmBump(row: DiffRow, autoYes: boolean): Promise<boolean> {
-  if (autoYes) return true;
-  const answer = await prompt(
-    `Update ${row.component} from ${row.current} to ${row.latest}? [y/N]: `,
-  );
-  return answer.trim().toLowerCase() === 'y' || answer.trim().toLowerCase() === 'yes';
+/**
+ * Print the unified preview of pending bumps + ask a single Proceed?
+ * prompt (macf#334). Replaces the pre-#334 per-candidate prompt loop —
+ * operators wanted "show all, then yes-to-all" instead of being asked
+ * y/N for each component in sequence.
+ *
+ * Returns `true` on `y`/`yes` (case-insensitive); `false` on anything
+ * else (including blank input, matching the `[y/N]` default).
+ */
+async function confirmPlan(rows: readonly DiffRow[]): Promise<boolean> {
+  console.log('This run will bump:');
+  for (const row of rows) {
+    console.log(`  ⬆ ${row.component}: ${row.current} → ${row.latest}`);
+  }
+  console.log('');
+  const answer = await prompt('Proceed? [y/N]: ');
+  const normalized = answer.trim().toLowerCase();
+  return normalized === 'y' || normalized === 'yes';
 }
 
 /**
@@ -352,13 +372,19 @@ export async function update(
     return 0;
   }
 
-  // Ask per candidate (or auto-accept with --yes / --all / --<component>).
+  // Per macf#334 (unified preview-then-prompt UX): show ALL pending bumps
+  // + single Proceed? prompt instead of per-candidate y/N loop. Auto-yes
+  // bypass paths preserved (--yes / --all / --<component>) for backward
+  // compat with scripted workflows. The `--confirm` flag is an explicit
+  // alias for the new default (no behavioral change vs bare `macf update`).
   const autoYes = opts.yes || opts.all || explicitSelection.length > 0;
-  const toBump: DiffRow[] = [];
-  for (const row of candidates) {
-    if (await confirmBump(row, autoYes)) {
-      toBump.push(row);
-    }
+  let toBump: readonly DiffRow[];
+  if (autoYes) {
+    toBump = candidates;
+  } else if (await confirmPlan(candidates)) {
+    toBump = candidates;
+  } else {
+    toBump = [];
   }
 
   if (toBump.length === 0) {

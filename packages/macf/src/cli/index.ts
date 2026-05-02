@@ -155,7 +155,9 @@ What the flags actually control:
   --plugin    bump versions.plugin pin + re-fetch .macf/plugin/ if pin bumped
   --actions   bump versions.actions pin to latest
   --all       bump all three non-interactively
-  --yes       skip per-pin confirmation prompts
+  --yes       skip the unified Proceed? prompt; non-interactive bypass
+  --confirm   explicit opt-in to the unified preview-then-prompt flow
+              (also the default for bare \`macf update\`; --yes overrides)
   --dry-run   show diff + would-bump list, write nothing
 
 Implication for reproducible bootstrap (cv-e2e-test, harness pinning, etc.):
@@ -168,7 +170,8 @@ Implication for reproducible bootstrap (cv-e2e-test, harness pinning, etc.):
   .option('--cli', 'Bump only the CLI version pin', false)
   .option('--plugin', 'Bump only the plugin version pin (+ re-fetch .macf/plugin/ if bumped)', false)
   .option('--actions', 'Bump only the macf-actions version pin', false)
-  .option('--yes', 'Skip per-pin confirmation prompts', false)
+  .option('--yes', 'Skip the unified Proceed? prompt; non-interactive bypass', false)
+  .option('--confirm', 'Explicit opt-in to the unified preview-then-prompt flow (also the default; --yes overrides)', false)
   .option('--dry-run', 'Show the diff but do not write the config', false)
   .option('--dir <path>', 'Project directory (defaults to auto-discovery from cwd)')
   .action(async (opts) => {
@@ -179,6 +182,7 @@ Implication for reproducible bootstrap (cv-e2e-test, harness pinning, etc.):
       actions: opts.actions,
       yes: opts.yes,
       dryRun: opts.dryRun,
+      confirm: opts.confirm,
     });
     process.exitCode = code;
   });
