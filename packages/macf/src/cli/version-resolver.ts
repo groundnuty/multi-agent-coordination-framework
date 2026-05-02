@@ -146,10 +146,18 @@ async function fetchHighestTag(repo: string): Promise<FetchResult> {
 
 /**
  * Fetch latest CLI version from npm registry.
+ *
+ * The package name is `@groundnuty/macf` (per `packages/macf/package.json`).
+ * Pre-#335 this fetched `@macf/cli` — a typo from the original P5 design
+ * before the `@groundnuty` org scope landed; that URL always 404'd, so
+ * the resolver flagged the cli as `not_published` even when the version
+ * was on npm. The cli pin then silently skipped bump (status filter in
+ * `update.ts` excludes non-`'update'` rows). 4 CV workspaces hit the
+ * stale-pin state on 2026-05-01 cycle. Fix: use the correct package URL.
  */
 export async function fetchLatestCliVersion(): Promise<FetchResult> {
   try {
-    const res = await fetch('https://registry.npmjs.org/@macf/cli', {
+    const res = await fetch('https://registry.npmjs.org/@groundnuty/macf', {
       headers: { 'Accept': 'application/json' },
     });
     if (res.status === 404) return { status: 'not_published', value: null };
