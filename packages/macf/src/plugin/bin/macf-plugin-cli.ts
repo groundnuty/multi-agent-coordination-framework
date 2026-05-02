@@ -55,7 +55,11 @@ async function main(): Promise<void> {
 
     case 'peers': {
       // Local-mode skip-token (see status case for rationale).
-      const token = registryConfig.type === 'local' ? '' : await generateToken();
+      // GitHub-mode: forceMint to bypass any stale GH_TOKEN inherited from
+      // a long-running parent Claude TUI (>1hr → 1hr-TTL bot token expired).
+      // Each macf-plugin-cli invocation is a short-lived subprocess; mint
+      // freshness is bounded to one CLI run. macf#338.
+      const token = registryConfig.type === 'local' ? '' : await generateToken(undefined, { forceMint: true });
       const registry = createRegistryFromConfig(registryConfig, project, token);
       const peers = await listPeers(registry);
       const peersWithHealth = await Promise.all(
@@ -87,7 +91,11 @@ async function main(): Promise<void> {
       }
 
       // Local-mode skip-token (see status case for rationale).
-      const token = registryConfig.type === 'local' ? '' : await generateToken();
+      // GitHub-mode: forceMint to bypass any stale GH_TOKEN inherited from
+      // a long-running parent Claude TUI (>1hr → 1hr-TTL bot token expired).
+      // Each macf-plugin-cli invocation is a short-lived subprocess; mint
+      // freshness is bounded to one CLI run. macf#338.
+      const token = registryConfig.type === 'local' ? '' : await generateToken(undefined, { forceMint: true });
       const registry = createRegistryFromConfig(registryConfig, project, token);
       // Look up the target in the registry. Names in the registry are
       // sanitized (uppercase, underscores), so match in that space.
@@ -115,7 +123,10 @@ async function main(): Promise<void> {
     }
 
     case 'issues': {
-      const token = await generateToken();
+      // Same forceMint rationale as status/peers/ping (macf#338) — `issues`
+      // is GitHub-only by design (queries gh api repos/...), so the
+      // stale-token-from-long-running-parent class hits here too.
+      const token = await generateToken(undefined, { forceMint: true });
       const repo = process.env['MACF_REGISTRY_REPO'] ?? 'groundnuty/macf';
       const label = process.env['MACF_AGENT_LABEL'] ?? 'code-agent';
       const issues = await checkIssues({ repo, label, token });
