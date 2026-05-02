@@ -9,6 +9,71 @@ Plugin + routing-workflow changes ship from separate repos
 [`groundnuty/macf-actions`](https://github.com/groundnuty/macf-actions))
 and are not included here — pin them explicitly in each workspace.
 
+## [0.2.16] — 2026-05-02
+
+Single hotfix release for the GitHub-mode plugin-CLI token-staleness
+class. Sister-shape to v0.2.11's macf#317 (which fixed the same
+class in macf-channel-server) — the plugin-CLI subprocess was outside
+that fix's scope, so operators with long-running Claude TUIs hit 401
+on `/macf-peers` / `/macf-status` / `/macf-ping` / `/macf-issues`
+after ≥1hr uptime.
+
+### Fixed
+- **`macf-plugin-cli` GitHub-mode token freshness ([#339], closes [#338])** —
+  every `macf-plugin-cli` invocation runs as a short-lived npx
+  subprocess from a Claude TUI parent. The subprocess inherits the
+  parent's `GH_TOKEN` env, which is a 1hr-TTL bot installation token
+  minted at TUI startup. After ≥1hr of TUI uptime, that env-token is
+  stale and `generateToken()` returned it as-is (env-shortcut),
+  causing 401 from GitHub Variables / Issues APIs. Operator hit it
+  on CV workspace 2026-05-02 ~19:30Z (~24h TUI uptime).
+
+  Two-part fix:
+  1. **`generateToken()` `forceMint?: boolean` option** in
+     `@groundnuty/macf-core/src/token.ts` — when `forceMint: true`,
+     skip the GH_TOKEN env-shortcut and always mint fresh from
+     APP_ID/INSTALL_ID/KEY_PATH (env or TokenSource). Backward-compat
+     preserved: `forceMint: false` and undefined match pre-fix
+     behavior.
+  2. **`mintFreshGitHubToken()` helper** at
+     `packages/macf/src/plugin/lib/fresh-github-token.ts` wraps
+     `generateToken(undefined, { forceMint: true })` as a single
+     declarative entry point. All 4 plugin-cli cases
+     (status / peers / ping / issues) call the helper. Bin file no
+     longer imports `generateToken` directly — the import boundary
+     enforces the invariant.
+
+  Why Option A (force-fresh per invocation) over Option B
+  (`createRefreshAwareClient` mirror): plugin-cli subprocesses are
+  short-lived (one CLI run per call), so the in-process 50min cache
+  from macf#317's helper provides zero benefit across invocations
+  (cache discarded with subprocess). Option A eliminates the
+  staleness class entirely (no retry-on-401 needed).
+
+  10 regression tests across two layers:
+  - 5 `generateToken()` unit tests for `forceMint` option (forceMint
+    true bypasses env, forceMint false preserves shortcut, throws
+    actionably without App-creds, explicit TokenSource still wins
+    under forceMint, undefined opts preserves backward-compat)
+  - 3 source-level invariant tests at
+    `test/plugin/lib/fresh-github-token.test.ts` pin the
+    "no direct generateToken( in bin" rule + "exactly 4 helper call
+    sites" + "helper imported from lib path"
+  - 2 helper unit tests for `mintFreshGitHubToken()` itself
+
+  Diagnosis discipline note: the original commit's `replace_all`
+  matched only 2 of 4 sites (peers + ping) because their comment text
+  matched verbatim; status's comment differed, so it was silently
+  skipped. Caught by science-agent in PR review via
+  verify-at-every-hop on the diff. Counter-discipline saved as memory
+  `feedback_verify_after_replace_all.md`: when replace_all is meant
+  to enforce a multi-site invariant, grep for residual unmatched
+  sites BEFORE pushing. Refactor-to-helper + source-level invariant
+  test is the structural form (this PR demonstrates).
+
+[#338]: https://github.com/groundnuty/macf/issues/338
+[#339]: https://github.com/groundnuty/macf/pull/339
+
 ## [0.2.15] — 2026-05-02
 
 Single feature release: unified preview-then-prompt flow for `macf update`
