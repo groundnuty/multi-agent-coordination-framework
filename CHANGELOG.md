@@ -9,6 +9,42 @@ Plugin + routing-workflow changes ship from separate repos
 [`groundnuty/macf-actions`](https://github.com/groundnuty/macf-actions))
 and are not included here — pin them explicitly in each workspace.
 
+## [0.2.15] — 2026-05-02
+
+Single feature release: unified preview-then-prompt flow for `macf update`
+replaces the per-candidate y/N loop. Operator-experience polish driven
+by the friction of being asked y/N for each component sequentially.
+
+### Added
+- **`macf update` unified Proceed? prompt + `--confirm` flag ([#337],
+  closes [#334])** — replaces per-candidate `confirmBump` loop with a
+  single `confirmPlan` prompt that previews ALL pending bumps in one
+  pass + asks one `Proceed? [y/N]:`. Behavior matrix:
+  - Bare `macf update`: preview + single Proceed? prompt
+  - `--confirm`: explicit alias for the new default (scripted-intent
+    declaration; no behavioral change vs bare)
+  - `--yes`: bypass prompt entirely (existing behavior preserved)
+  - `--dry-run`: preview only, no prompt, no writes (existing
+    behavior preserved)
+  - `--all` / `--cli` / `--plugin` / `--actions`: scope select +
+    prompt-bypass for backward compat with existing scripts
+
+  Scope-narrowing note: canonical refreshes (rules / scripts /
+  settings / claude.sh / sandbox / plugin repair) remain always-on,
+  matching the existing `--dry-run` semantic where dry-run only gates
+  version-bump writes — not canonical refreshes. Full plan-then-execute
+  restructure (where Proceed? gates ALL writes including canonical
+  refreshes) is out of scope; deferred to a follow-up if operator
+  surfaces a concrete need.
+
+  6 regression tests at `test/cli/update.test.ts` cover every branch
+  of the behavior matrix. `node:readline.createInterface` mocked at
+  file top so tests drive the prompt deterministically via
+  `mockPromptAnswer`. 1121 → 1127 tests.
+
+[#334]: https://github.com/groundnuty/macf/issues/334
+[#337]: https://github.com/groundnuty/macf/pull/337
+
 ## [0.2.14] — 2026-05-02
 
 Single hotfix release for a long-latent v0.1.x version-resolver typo
