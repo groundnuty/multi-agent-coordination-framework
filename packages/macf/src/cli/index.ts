@@ -176,14 +176,23 @@ Implication for reproducible bootstrap (cv-e2e-test, harness pinning, etc.):
   .option('--actions', 'Bump only the macf-actions version pin', false)
   .option('--yes', 'Skip the unified Proceed? prompt; non-interactive bypass', false)
   .option('--confirm', 'Explicit opt-in to the unified preview-then-prompt flow (also the default; --yes overrides)', false)
-  .option('--no-migrate-env-files', 'Skip the macf#342 monolithic→multi-file claude.sh migration AND env-file refresh (operator opt-out)', false)
+  // Commander's `--no-<flag>` convention auto-defaults `opts.migrateEnvFiles`
+  // to `true` (migration enabled) + the flag flips it to `false` when passed.
+  // Pre-#347 this option had an explicit `false` 3rd-arg default which
+  // CONFLICTED with the `--no-` convention and made `opts.migrateEnvFiles`
+  // always-`false` regardless of whether the flag was passed → migration
+  // block in update.ts skipped on every invocation. Empirically reproduced
+  // via commander v14. The fix is to omit the explicit 3rd arg so the
+  // canonical `--no-` semantic holds. See macf#347.
+  .option('--no-migrate-env-files', 'Skip the macf#342 monolithic→multi-file claude.sh migration AND env-file refresh (operator opt-out)')
   .option('--dry-run', 'Show the diff but do not write the config', false)
   .option('--dir <path>', 'Project directory (defaults to auto-discovery from cwd)')
   .action(async (opts) => {
-    // Commander's --no-<flag> convention sets opts.migrateEnvFiles = false
-    // when --no-migrate-env-files is passed (the default is `true` because
-    // of the leading `--no-` in the option name). Translate to the more
-    // intuitive opt-out shape used inside `update()`.
+    // Commander's --no-<flag> convention: opts.migrateEnvFiles = true by
+    // default (auto-set when --no-migrate-env-files is registered without
+    // an explicit 3rd-arg default per macf#347 fix); --no-migrate-env-files
+    // flips it to false. Translate to the more intuitive opt-out shape
+    // used inside `update()`.
     const noMigrateEnvFiles = opts.migrateEnvFiles === false;
     const code = await update(resolveProjectDir(opts.dir), {
       all: opts.all,
