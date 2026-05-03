@@ -261,15 +261,33 @@ describe('macf init --local (DR-024)', () => {
       registryPath,
     });
 
-    const claudeSh = (await import('node:fs')).readFileSync(
-      join(workspaceDir, 'claude.sh'),
-      'utf8',
-    );
+    // Post-#342 PR-B: claude.sh is a thin source-then-exec template.
+    // The local-mode contract (no GH_TOKEN / APP_ID, MACF_REGISTRY_TYPE=local
+    // exported, local-registry-mode banner) is now enforced via the
+    // env.* files sourced by claude.sh — assert on those instead.
+    const fs = await import('node:fs');
+    const claudeSh = fs.readFileSync(join(workspaceDir, 'claude.sh'), 'utf8');
+    // claude.sh itself must not embed the GH_TOKEN block.
     expect(claudeSh).not.toContain('macf-gh-token.sh');
     expect(claudeSh).not.toContain('export GH_TOKEN');
     expect(claudeSh).not.toContain('export APP_ID');
-    expect(claudeSh).toContain('MACF_REGISTRY_TYPE="local"');
-    expect(claudeSh).toContain(`MACF_REGISTRY_PATH="${registryPath}"`);
-    expect(claudeSh).toContain('local-registry mode');
+
+    // env.github (local mode) — placeholder, no exports, banner present.
+    const envGithub = fs.readFileSync(
+      join(workspaceDir, '.claude', '.macf', 'env.github'),
+      'utf8',
+    );
+    expect(envGithub).not.toContain('macf-gh-token.sh');
+    expect(envGithub).not.toContain('export GH_TOKEN');
+    expect(envGithub).not.toContain('export APP_ID');
+    expect(envGithub).toContain('local-registry mode');
+
+    // env.registry — local-mode discriminated union case.
+    const envRegistry = fs.readFileSync(
+      join(workspaceDir, '.claude', '.macf', 'env.registry'),
+      'utf8',
+    );
+    expect(envRegistry).toContain('MACF_REGISTRY_TYPE="local"');
+    expect(envRegistry).toContain(`MACF_REGISTRY_PATH="${registryPath}"`);
   });
 });

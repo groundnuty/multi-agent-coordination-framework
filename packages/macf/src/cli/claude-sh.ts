@@ -13,6 +13,27 @@ import { chmodSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import type { MacfAgentConfig } from './config.js';
 
+// ---------------------------------------------------------------------------
+// Legacy per-concern emitters (macf#342 PR-B note)
+// ---------------------------------------------------------------------------
+//
+// `registryEnvLines`, `caPathLines`, `githubAppEnvLines`,
+// `githubTokenAndIdentityLines`, `settingsGetHelperLines`,
+// `otelTelemetryLines` were the file-private emitters that the
+// pre-#342 monolithic `generateClaudeSh` composed. PR-A extracted
+// equivalents into `env-files.ts` (`generateEnvRegistry`,
+// `generateEnvCerts`, `generateEnvGitHub`, etc.) and PR-B refactored
+// `generateClaudeSh` to a thin source-then-exec template — so these
+// helpers are no longer called from inside this file.
+//
+// They're still EXPORTED (rather than deleted in PR-B) so PR-C's
+// migration tooling can detect a legacy monolithic claude.sh by
+// matching against their output (or call them as a regression-shape
+// reference). PR-D removes them once PR-C migration ships.
+//
+// `otelTelemetryLines` stays internally needed too (claude-sh.test.ts
+// asserts on its output as the canonical reference shape pre-migration).
+
 /**
  * Emit shell `export MACF_REGISTRY_*` lines matching the registry
  * scope in `cfg`. The plugin's `src/config.ts` reads these three env
@@ -24,7 +45,7 @@ import type { MacfAgentConfig } from './config.js';
  * variant is ever added, TypeScript fails the build here, forcing a
  * paired env-line update.
  */
-function registryEnvLines(cfg: MacfAgentConfig): string[] {
+export function registryEnvLines(cfg: MacfAgentConfig): string[] {
   switch (cfg.registry.type) {
     case 'repo':
       return [
@@ -77,7 +98,7 @@ function isLocalMode(cfg: MacfAgentConfig): boolean {
  * calling it with no settings.local.json present is safe (just returns
  * empty).
  */
-function settingsGetHelperLines(): string[] {
+export function settingsGetHelperLines(): string[] {
   return [
     '',
     '# Settings-driven identity helper (macf#313). Reads `.env.<NAME>` from',
@@ -316,7 +337,7 @@ const MANAGED_HEADER_LINES = [
  * lean instead of emitting `export APP_ID=""` placeholders that imply
  * "this is a misconfigured GitHub-mode agent."
  */
-function githubAppEnvLines(cfg: MacfAgentConfig): string[] {
+export function githubAppEnvLines(cfg: MacfAgentConfig): string[] {
   if (isLocalMode(cfg) || !cfg.github_app) return [];
   return [
     `export APP_ID="${cfg.github_app.app_id}"`,
@@ -347,7 +368,7 @@ function githubAppEnvLines(cfg: MacfAgentConfig): string[] {
  * mTLS (and the GitHub-mode `/sign` endpoint, which doesn't fire in
  * local mode).
  */
-function caPathLines(cfg: MacfAgentConfig): string[] {
+export function caPathLines(cfg: MacfAgentConfig): string[] {
   if (isLocalMode(cfg)) {
     // Pre-resolve the local-registry directory at template time so the
     // launcher doesn't need to expand `~` or recompute the path. Tilde
@@ -391,7 +412,7 @@ function posixDirname(p: string): string {
  * so anyone reading the script sees the explicit "no GitHub here"
  * trade-off rather than a missing-export silence.
  */
-function githubTokenAndIdentityLines(cfg: MacfAgentConfig): string[] {
+export function githubTokenAndIdentityLines(cfg: MacfAgentConfig): string[] {
   if (isLocalMode(cfg)) {
     return [
       '# DR-024 / macf#322: local-registry mode. No GitHub App token is',
@@ -429,6 +450,27 @@ function githubTokenAndIdentityLines(cfg: MacfAgentConfig): string[] {
  * Build the full `claude.sh` content for a given agent config. Pure
  * function — no I/O. Used by both `macf init` (first write) and
  * `macf update` (refresh).
+ *
+ * **Thin source-then-exec template (macf#342 PR-B).** All per-concern
+ * env exports moved into separate files under `<workspace>/.claude/.macf/`,
+ * sourced here via a single shell glob loop. claude.sh now carries only
+ * orchestration: shebang + managed header, SCRIPT_DIR resolution,
+ * source-loop, optional non-cleanly-bucketed exports (MACF_HOST /
+ * MACF_ADVERTISE_HOST / MACF_DEBUG — see PR body for rationale), tmux
+ * self-wrap (macf#340 env-isolation preserved), and the conditional
+ * `exec claude` block.
+ *
+ * **Source order is alphabetical** (shell glob expansion). The
+ * underscore-prefixed `env._helpers` sorts BEFORE alphabetical-letter
+ * siblings, so its function definitions (`macf_settings_get`) are
+ * available when `env.identity` and `env.telemetry` are sourced later.
+ *
+ * **Backward compat**: this thin template depends on the env.* files
+ * existing in `.claude/.macf/`. PR-B's `init` writes both env.* files
+ * AND claude.sh in lockstep, so fresh inits and re-runs are safe.
+ * Existing workspaces with the pre-#342 monolithic claude.sh continue
+ * to work UNTIL their claude.sh is regenerated — at which point they
+ * also need the env.* files. PR-C ships the migrate-existing path.
  */
 export function generateClaudeSh(config: MacfAgentConfig): string {
   return [
@@ -437,62 +479,53 @@ export function generateClaudeSh(config: MacfAgentConfig): string {
     '',
     `# MACF Agent Launcher: ${config.agent_name}`,
     ...MANAGED_HEADER_LINES,
+    '#',
+    '# This is a THIN launcher (macf#342 PR-B). All per-concern env exports',
+    '# (identity, GitHub, certs, registry, telemetry, tmux) live in separate',
+    '# files under .claude/.macf/env.* and are sourced via the loop below.',
+    '# To regenerate after a config change, run `macf update` here.',
     '',
     'SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"',
     'cd "$SCRIPT_DIR"',
     '',
-    // Export MACF_WORKSPACE_DIR so runtime agent templates
-    // (.claude/rules/agent-identity.md + plugin/agents/*.md) can
-    // reference the workspace root as an absolute path. Relative
-    // paths break the moment the agent cd's to another repo for
-    // cross-repo work — attribution trap fires. See #140 + the
-    // cross-repo cwd trap note in coordination.md Token & Git Hygiene.
-    'export MACF_WORKSPACE_DIR="$SCRIPT_DIR"',
-    `export MACF_PROJECT="${config.project}"`,
-    `export MACF_AGENT_TYPE="${config.agent_type}"`,
-    ...settingsGetHelperLines(),
+    '# Source per-concern env files (macf#342). Shell glob sorts',
+    '# alphabetically, so env._helpers (underscore prefix sorts before',
+    '# letters) loads first and defines macf_settings_get used by',
+    '# env.identity and env.telemetry. The `[ -f ]` guard tolerates the',
+    '# (very unusual) case where the directory exists but a sibling tool',
+    '# created a non-file glob match.',
+    '#',
+    '# Operator-custom env files (override or extend canonical config):',
+    '# use `env.local.<name>` or `env.zz.<name>` prefix so they sort',
+    '# AFTER all macf-managed canonical files (env._helpers / env.certs /',
+    '# env.github / env.identity / env.registry / env.telemetry / env.tmux).',
+    '# Bash glob sorts ASCII: uppercase A-Z (0x41-0x5A) BEFORE underscore',
+    '# (0x5F) BEFORE lowercase a-z (0x61-0x7A). An operator-added file like',
+    '# `env.UPPERCASE_OVERRIDE` would sort before `env._helpers` and source',
+    '# in a context without macf_settings_get defined yet — followed by',
+    '# `env.identity` calling that undefined function. Stick to the',
+    '# `env.local.*` or `env.zz.*` convention to avoid the trap.',
+    'if [ -d "$SCRIPT_DIR/.claude/.macf" ]; then',
+    '  for f in "$SCRIPT_DIR/.claude/.macf"/env.*; do',
+    '    [ -f "$f" ] && source "$f"',
+    '  done',
+    'fi',
     '',
-    '# Settings-driven identity overrides (macf#313). Three-layer priority:',
-    '#   1. Already-set env var (operator: `MACF_AGENT_NAME=foo ./claude.sh`)',
-    '#   2. .claude/settings.local.json `env` block (operator: edit JSON;',
-    '#      no script edit needed; persists across `macf update`)',
-    '#   3. Baked default from macf init/update (this template)',
-    '# Identity changes become JSON edits rather than script edits.',
-    `MACF_AGENT_NAME="\${MACF_AGENT_NAME:-$(macf_settings_get MACF_AGENT_NAME)}"`,
-    `MACF_AGENT_NAME="\${MACF_AGENT_NAME:-${config.agent_name}}"`,
-    'export MACF_AGENT_NAME',
-    `MACF_AGENT_ROLE="\${MACF_AGENT_ROLE:-$(macf_settings_get MACF_AGENT_ROLE)}"`,
-    `MACF_AGENT_ROLE="\${MACF_AGENT_ROLE:-${config.agent_role}}"`,
-    'export MACF_AGENT_ROLE',
-    ...tmuxSelfWrapLines(),
-    '',
-    ...githubAppEnvLines(config),
-    ...caPathLines(config),
-    'export MACF_AGENT_CERT="$SCRIPT_DIR/.macf/certs/agent-cert.pem"',
-    'export MACF_AGENT_KEY="$SCRIPT_DIR/.macf/certs/agent-key.pem"',
-    'export MACF_LOG_PATH="$SCRIPT_DIR/.macf/logs/channel.log"',
-    'export MACF_DEBUG="${MACF_DEBUG:-false}"',
-    // Listen on all interfaces; advertise the routable host below. When
-    // advertise_host is unset in macf-agent.json, fall back to 127.0.0.1
-    // (the plugin's existing default — keeps backward compat for
-    // workspaces that haven't set the field yet). See macf#178.
+    '# Channel-server runtime knobs that don\'t cleanly bucket into a',
+    '# single env.* concern. MACF_HOST/MACF_ADVERTISE_HOST are network',
+    '# transport (close to certs but not cert-related); MACF_DEBUG is a',
+    '# global verbosity gate. Kept in claude.sh as orchestration; PR-D',
+    '# may refactor into a dedicated env.channel-server file.',
+    '#',
+    '# Listen on all interfaces; advertise the routable host below. When',
+    '# advertise_host is unset in macf-agent.json, fall back to 127.0.0.1',
+    '# (the plugin\'s existing default — keeps backward compat for',
+    '# workspaces that haven\'t set the field yet). See macf#178.',
     'export MACF_HOST="0.0.0.0"',
     `export MACF_ADVERTISE_HOST="${config.advertise_host ?? '127.0.0.1'}"`,
-    // macf#185: tmux session:window for on-notify wake via
-    // tmux-send-to-claude.sh. If unset, the server auto-detects
-    // from $TMUX when launched inside a tmux pane. Explicit-env
-    // takes priority — handy when the agent is launched outside
-    // tmux by a supervisor and still wants to target a named pane.
-    ...(config.tmux_session !== undefined
-      ? [`export MACF_TMUX_SESSION="${config.tmux_session}"`]
-      : []),
-    ...(config.tmux_window !== undefined
-      ? [`export MACF_TMUX_WINDOW="${config.tmux_window}"`]
-      : []),
-    ...registryEnvLines(config),
-    ...otelTelemetryLines(config),
+    'export MACF_DEBUG="${MACF_DEBUG:-false}"',
+    ...tmuxSelfWrapLines(),
     '',
-    ...githubTokenAndIdentityLines(config),
     // --plugin-dir loads the pinned macf-agent plugin from this workspace
     // (per DR-013). Additive — user-scope plugins still load alongside.
     // `-c` (for permanent agents) reattaches to the prior Claude Code
