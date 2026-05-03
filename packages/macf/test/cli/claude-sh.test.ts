@@ -236,6 +236,69 @@ describe('generateClaudeSh', () => {
     // And specifically does NOT reinstate the naive pattern.
     expect(output).not.toMatch(/gh token generate[^\n]*\|\s*jq/);
   });
+
+  describe('tmux self-wrap env-isolation (macf#340)', () => {
+    // Reproduces the operator's PPAM 2026 bug: when `tmux new-session`
+    // runs against an already-running tmux server, the new session's
+    // env initializes from server-global env, NOT calling shell's env.
+    // First-launched agent populates server-global; subsequent agents
+    // inherit that stale env, and `${VAR:-default}` shortcuts preserve
+    // the leaked values → AGENT_COLLISION on register.
+    //
+    // Fix: build `-e VAR=VAL` flags from a MACF_TMUX_PASSTHROUGH array
+    // (single source of truth; unset-guard skips vars cleanly), pass to
+    // `tmux new-session` so session-level env wins over server-global.
+
+    it('builds MACF_TMUX_E_ARGS from env-pattern grep (single source of truth for what to pass through)', () => {
+      const output = generateClaudeSh(sampleConfig);
+      // Pattern-driven rather than hard-coded list: future MACF_* additions
+      // are picked up automatically; vars not set at wrap-time are absent.
+      expect(output).toMatch(/MACF_TMUX_E_ARGS=\(\)/);
+      expect(output).toMatch(/env\s*\|\s*grep -E "\^MACF_"/);
+    });
+
+    it('iterates the env-grep output with read -r and appends -e flags', () => {
+      const output = generateClaudeSh(sampleConfig);
+      expect(output).toMatch(/while IFS= read -r macf_env_line/);
+      expect(output).toMatch(/MACF_TMUX_E_ARGS\+=\("-e"\s+"\$macf_env_line"\)/);
+    });
+
+    it('expands MACF_TMUX_E_ARGS into the tmux new-session invocation', () => {
+      const output = generateClaudeSh(sampleConfig);
+      // Args go BEFORE -s/-c so the session is created with the env applied.
+      // Quoted-array-expansion form preserves arg integrity for values with spaces.
+      expect(output).toMatch(/exec tmux new-session "\$\{MACF_TMUX_E_ARGS\[@\]\}" -s "\$SESSION_NAME" -c "\$SCRIPT_DIR"/);
+    });
+
+    it('preserves the attach-if-exists branch (no -e env on attach; attach doesn\'t create new env)', () => {
+      const output = generateClaudeSh(sampleConfig);
+      expect(output).toContain('exec tmux attach -t "$SESSION_NAME"');
+    });
+
+    it('preserves MACF_NO_TMUX_WRAP=1 opt-out gate', () => {
+      const output = generateClaudeSh(sampleConfig);
+      expect(output).toMatch(/MACF_NO_TMUX_WRAP/);
+    });
+
+    it('emits the same env-grep template regardless of agent_role/agent_name', () => {
+      const codeAgent = { ...sampleConfig, agent_name: 'code-agent', agent_role: 'code-agent' };
+      const scienceAgent = { ...sampleConfig, agent_name: 'science-agent', agent_role: 'science-agent' };
+      const codeOutput = generateClaudeSh(codeAgent);
+      const scienceOutput = generateClaudeSh(scienceAgent);
+
+      for (const output of [codeOutput, scienceOutput]) {
+        expect(output).toMatch(/env\s*\|\s*grep -E "\^MACF_"/);
+        expect(output).toMatch(/MACF_TMUX_E_ARGS\[@\]/);
+      }
+    });
+
+    it('grep tolerates the no-match case via `|| true` (defensive: opt-out path or stripped env)', () => {
+      const output = generateClaudeSh(sampleConfig);
+      // grep returns exit 1 if no matches; `|| true` keeps the loop body
+      // from inheriting that under set -euo pipefail.
+      expect(output).toMatch(/grep -E "\^MACF_" \|\| true/);
+    });
+  });
 });
 
 describe('writeClaudeSh', () => {
@@ -494,7 +557,13 @@ describe('claude-sh.ts tmux self-wrap + settings-driven identity (macf#313)', ()
       const output = generateClaudeSh(sampleConfig);
       // -c sets the new session's start directory
       // "$0" "$@" re-execs the script inside the new session
-      expect(output).toContain('exec tmux new-session -s "$SESSION_NAME" -c "$SCRIPT_DIR" "$0" "$@"');
+      // Post-macf#340: multi-line form with -e env-isolation flags between
+      // exec and -s. Match the invariants that matter (presence of each
+      // canonical fragment) rather than the verbatim single-line form.
+      expect(output).toMatch(/exec tmux new-session\b/);
+      expect(output).toContain('-s "$SESSION_NAME"');
+      expect(output).toContain('-c "$SCRIPT_DIR"');
+      expect(output).toMatch(/"\$0" "\$@"/);
     });
 
     it('tmux wrap block comes AFTER MACF_PROJECT + MACF_AGENT_NAME exports (variable-resolution order)', () => {
