@@ -158,6 +158,10 @@ What the flags actually control:
   --yes       skip the unified Proceed? prompt; non-interactive bypass
   --confirm   explicit opt-in to the unified preview-then-prompt flow
               (also the default for bare \`macf update\`; --yes overrides)
+  --no-migrate-env-files
+              skip the macf#342 monolithic→multi-file claude.sh migration
+              AND env-file refresh (operator opt-out for hand-modified
+              launchers; does NOT roll back already-migrated workspaces)
   --dry-run   show diff + would-bump list, write nothing
 
 Implication for reproducible bootstrap (cv-e2e-test, harness pinning, etc.):
@@ -172,9 +176,15 @@ Implication for reproducible bootstrap (cv-e2e-test, harness pinning, etc.):
   .option('--actions', 'Bump only the macf-actions version pin', false)
   .option('--yes', 'Skip the unified Proceed? prompt; non-interactive bypass', false)
   .option('--confirm', 'Explicit opt-in to the unified preview-then-prompt flow (also the default; --yes overrides)', false)
+  .option('--no-migrate-env-files', 'Skip the macf#342 monolithic→multi-file claude.sh migration AND env-file refresh (operator opt-out)', false)
   .option('--dry-run', 'Show the diff but do not write the config', false)
   .option('--dir <path>', 'Project directory (defaults to auto-discovery from cwd)')
   .action(async (opts) => {
+    // Commander's --no-<flag> convention sets opts.migrateEnvFiles = false
+    // when --no-migrate-env-files is passed (the default is `true` because
+    // of the leading `--no-` in the option name). Translate to the more
+    // intuitive opt-out shape used inside `update()`.
+    const noMigrateEnvFiles = opts.migrateEnvFiles === false;
     const code = await update(resolveProjectDir(opts.dir), {
       all: opts.all,
       cli: opts.cli,
@@ -183,6 +193,7 @@ Implication for reproducible bootstrap (cv-e2e-test, harness pinning, etc.):
       yes: opts.yes,
       dryRun: opts.dryRun,
       confirm: opts.confirm,
+      noMigrateEnvFiles,
     });
     process.exitCode = code;
   });

@@ -504,4 +504,142 @@ describe('update command', () => {
     expect(cfg.registry).toEqual({ type: 'repo', owner: 'o', repo: 'r' });
     expect(cfg.github_app).toEqual({ app_id: '1', install_id: '2', key_path: 'k' });
   });
+
+  // ---------------------------------------------------------------------
+  // macf#342 PR-C: env-file refresh + monolithic migration
+  // ---------------------------------------------------------------------
+
+  describe('env-file refresh + migration (#342 PR-C)', () => {
+    it('writes per-concern env files on update (.claude/.macf/env.*)', async () => {
+      writeConfig(dir, { cli: '0.2.0', plugin: '0.1.0', actions: 'v1' });
+      mockFetchReturning({ cli: '0.2.0', plugin: '0.1.0', actions: 'v1' });
+
+      await update(dir, { all: false, cli: false, plugin: false, actions: false, yes: false, dryRun: false });
+
+      const envDir = join(dir, '.claude', '.macf');
+      for (const name of [
+        'env._helpers',
+        'env.identity',
+        'env.github',
+        'env.certs',
+        'env.registry',
+        'env.telemetry',
+        'env.tmux',
+      ]) {
+        expect(existsSync(join(envDir, name))).toBe(true);
+      }
+    });
+
+    it('preserves operator-managed env.telemetry across updates', async () => {
+      writeConfig(dir, { cli: '0.2.0', plugin: '0.1.0', actions: 'v1' });
+      mockFetchReturning({ cli: '0.2.0', plugin: '0.1.0', actions: 'v1' });
+      // Pre-seed an operator-edited env.telemetry
+      mkdirSync(join(dir, '.claude', '.macf'), { recursive: true });
+      const customTelemetry =
+        '# Operator override\nexport OTEL_EXPORTER_OTLP_ENDPOINT="http://my-collector:4318"\n';
+      const path = join(dir, '.claude', '.macf', 'env.telemetry');
+      writeFileSync(path, customTelemetry);
+
+      await update(dir, { all: false, cli: false, plugin: false, actions: false, yes: false, dryRun: false });
+
+      // Operator content preserved unchanged
+      expect(readFileSync(path, 'utf-8')).toBe(customTelemetry);
+    });
+
+    it('overwrites + warns on hand-edited macf-managed env.identity', async () => {
+      const stderrSpy = vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
+      try {
+        writeConfig(dir, { cli: '0.2.0', plugin: '0.1.0', actions: 'v1' });
+        mockFetchReturning({ cli: '0.2.0', plugin: '0.1.0', actions: 'v1' });
+        // Pre-seed a hand-edited macf-managed file
+        mkdirSync(join(dir, '.claude', '.macf'), { recursive: true });
+        const path = join(dir, '.claude', '.macf', 'env.identity');
+        writeFileSync(path, '# operator hand-edit\nexport HACK=1\n');
+
+        await update(dir, { all: false, cli: false, plugin: false, actions: false, yes: false, dryRun: false });
+
+        // Hand-edit replaced with canonical generator output
+        const after = readFileSync(path, 'utf-8');
+        expect(after).not.toContain('HACK=1');
+        expect(after).toContain('MACF_PROJECT="TEST"');
+        // Warning surfaced on stderr
+        const stderrOut = stderrSpy.mock.calls.flat().join('\n');
+        expect(stderrOut).toMatch(/hand-edited macf-managed/);
+      } finally {
+        stderrSpy.mockRestore();
+      }
+    });
+
+    it('migrates a monolithic claude.sh on first update (env files appear)', async () => {
+      writeConfig(dir, { cli: '0.2.0', plugin: '0.1.0', actions: 'v1' });
+      mockFetchReturning({ cli: '0.2.0', plugin: '0.1.0', actions: 'v1' });
+      // Pre-seed a monolithic-shaped claude.sh
+      const shPath = join(dir, 'claude.sh');
+      writeFileSync(
+        shPath,
+        '#!/usr/bin/env bash\nset -euo pipefail\nexport MACF_AGENT_NAME="test-agent"\nexec claude "$@"\n',
+        { mode: 0o755 },
+      );
+
+      await update(dir, { all: false, cli: false, plugin: false, actions: false, yes: false, dryRun: false });
+
+      // Thin template marker present after update (writeClaudeSh OR migration both produce it)
+      const sh = readFileSync(shPath, 'utf-8');
+      expect(sh).toContain('for f in "$SCRIPT_DIR/.claude/.macf"/env.*');
+      // env files present
+      expect(existsSync(join(dir, '.claude', '.macf', 'env.identity'))).toBe(true);
+      expect(existsSync(join(dir, '.claude', '.macf', 'env.github'))).toBe(true);
+    });
+
+    it('emits deprecation warning when settings.local.json carries env.MACF_OTEL_ENDPOINT', async () => {
+      const stderrSpy = vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
+      try {
+        writeConfig(dir, { cli: '0.2.0', plugin: '0.1.0', actions: 'v1' });
+        mockFetchReturning({ cli: '0.2.0', plugin: '0.1.0', actions: 'v1' });
+        // Pre-seed settings.local.json with a deprecated env key
+        mkdirSync(join(dir, '.claude'), { recursive: true });
+        writeFileSync(
+          join(dir, '.claude', 'settings.local.json'),
+          JSON.stringify(
+            { env: { MACF_OTEL_ENDPOINT: 'http://localhost:14318' } },
+            null,
+            2,
+          ),
+        );
+
+        await update(dir, { all: false, cli: false, plugin: false, actions: false, yes: false, dryRun: false });
+
+        const stderrOut = stderrSpy.mock.calls.flat().join('\n');
+        expect(stderrOut).toMatch(/env\.MACF_OTEL_ENDPOINT/);
+        expect(stderrOut).toMatch(/macf#342/);
+      } finally {
+        stderrSpy.mockRestore();
+      }
+    });
+
+    it('--no-migrate-env-files skips migration + claude.sh refresh + env-file refresh as a unit', async () => {
+      writeConfig(dir, { cli: '0.2.0', plugin: '0.1.0', actions: 'v1' });
+      mockFetchReturning({ cli: '0.2.0', plugin: '0.1.0', actions: 'v1' });
+      // Pre-seed an operator-customized claude.sh
+      const customLauncher =
+        '#!/usr/bin/env bash\n# operator-custom monolithic launcher\nexec claude "$@"\n';
+      writeFileSync(join(dir, 'claude.sh'), customLauncher, { mode: 0o755 });
+
+      await update(dir, {
+        all: false,
+        cli: false,
+        plugin: false,
+        actions: false,
+        yes: false,
+        dryRun: false,
+        noMigrateEnvFiles: true,
+      });
+
+      // claude.sh preserved (the three coupled steps all skipped as a
+      // unit so the launcher doesn't end up thin without env files).
+      expect(readFileSync(join(dir, 'claude.sh'), 'utf-8')).toBe(customLauncher);
+      // No env files written under .claude/.macf/ either.
+      expect(existsSync(join(dir, '.claude', '.macf', 'env.identity'))).toBe(false);
+    });
+  });
 });
