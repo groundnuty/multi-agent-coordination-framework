@@ -323,8 +323,24 @@ For multi-agent coordination patterns (when to use orchestrator-worker vs peer-t
 - [use-cases.md](use-cases.md) — when to use multi-agent at all
 - [`design/macf-consumer-onboarding.md`](../design/macf-consumer-onboarding.md) — full reference for new-consumer-project bootstrap
 
+## Customize observability endpoint
+
+By default, `macf init` configures OTel telemetry to point at `http://localhost:14318` (canonical k3d-cluster endpoint per [`groundnuty/macf-devops-toolkit`](https://github.com/groundnuty/macf-devops-toolkit)). To point at a custom endpoint:
+
+1. Open `.claude/.macf/env.telemetry` in the workspace
+2. Edit the `MACF_OTEL_ENDPOINT` line:
+
+   ```bash
+   export MACF_OTEL_ENDPOINT="https://your-collector.example.com/v1/traces"
+   ```
+
+3. Restart `claude.sh` — the new endpoint takes effect on next launch
+
+`env.telemetry` is operator-managed — `macf update` preserves your edits unconditionally. For the full per-concern env-file layout reference (which files are macf-managed vs operator-managed, the `env.local.<name>` operator-extension convention, rollback path), see [configuration.md](configuration.md).
+
 ## Where to go next
 
+- **Read [configuration.md](configuration.md)** — full per-concern env-file layout reference (`.claude/.macf/env.*`, macf-managed vs operator-managed boundary, operator workflows)
 - **Browse the [features](features.md)** — concrete inventory of what v0.2.9 ships
 - **Read [concepts](concepts.md)** — why MACF is shaped the way it is, with DR citations
 - **Skim [use-cases](use-cases.md)** — when MACF is the right tool, when it isn't

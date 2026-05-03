@@ -4,12 +4,13 @@ First-user docs for the Multi-Agent Coordination Framework. Tone: research-grade
 
 ## What's in here
 
-Seven docs covering the first-user journey, organized by [Diátaxis](https://diataxis.fr) (Procida) — distinguishing tutorials, how-to guides, reference, and explanation by user need:
+Eight docs covering the first-user journey, organized by [Diátaxis](https://diataxis.fr) (Procida) — distinguishing tutorials, how-to guides, reference, and explanation by user need:
 
 | Doc | Type | Read when |
 |---|---|---|
 | [quickstart.md](quickstart.md) | **Tutorial** (learning) | You want to bootstrap your first agent now (~30 min hands-on). Includes a separate **local-registry-mode quickstart** (no-GitHub-Apps single-host bootstrap per [DR-024](../design/decisions/DR-024-local-registry-mode.md)) for solo / education / demo / framework-dev / air-gapped / CI-fixture cases |
 | [concepts.md](concepts.md) | **Explanation** (understanding) | You want to understand WHY MACF is shaped the way it is, with DR citations |
+| [configuration.md](configuration.md) | **Reference** (information) | You want to customize the per-concern env-file layout (`.claude/.macf/env.*`) introduced in macf#342 / v0.2.18 — macf-managed vs operator-managed boundary, operator workflows, rollback |
 | [features.md](features.md) | **Reference** (information) | You need to look up what's in v0.2.9 — CLI subcommands, hooks, routing jobs, channel-server endpoints |
 | [use-cases.md](use-cases.md) | **Explanation** (understanding) | You want to decide whether MACF is the right tool — when to use, when not to, comparison to academic + open-source peers. Includes **"When MACF without GitHub makes sense"** subsection covering local-registry mode trade-offs |
 | [troubleshooting.md](troubleshooting.md) | **How-to** (problem-solving) | Something broke; you need the canonical fix for a known failure mode |
@@ -30,14 +31,15 @@ That's ~30-45 minutes of reading. By the end you'll know whether MACF fits your 
 
 4. **[quickstart.md](quickstart.md)** — hands-on bootstrap (~30 minutes)
 5. **[features.md](features.md)** — concrete reference for what's available
-6. **[troubleshooting.md](troubleshooting.md)** — bookmark this; you'll need it when something breaks
+6. **[configuration.md](configuration.md)** — per-concern env-file layout for the bootstrapped workspace (read after `macf init`)
+7. **[troubleshooting.md](troubleshooting.md)** — bookmark this; you'll need it when something breaks
 
 ### If you want to operate MACF (read as needed)
 
-7. **[glossary.md](glossary.md)** — term lookup; cross-references to canonical artifacts
-8. **[`design/macf-consumer-onboarding.md`](../design/macf-consumer-onboarding.md)** — full consumer-bootstrap reference (deeper than quickstart)
-9. **[`packages/macf/plugin/rules/coordination.md`](../packages/macf/plugin/rules/coordination.md)** — operational discipline for cross-agent work
-10. **[`design/decisions/`](../design/decisions/)** — 23 DRs grounding architectural choices
+8. **[glossary.md](glossary.md)** — term lookup; cross-references to canonical artifacts
+9. **[`design/macf-consumer-onboarding.md`](../design/macf-consumer-onboarding.md)** — full consumer-bootstrap reference (deeper than quickstart)
+10. **[`packages/macf/plugin/rules/coordination.md`](../packages/macf/plugin/rules/coordination.md)** — operational discipline for cross-agent work
+11. **[`design/decisions/`](../design/decisions/)** — 23 DRs grounding architectural choices
 
 ## What this directory does NOT cover
 
