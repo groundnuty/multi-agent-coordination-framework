@@ -14,6 +14,7 @@ import { copyCanonicalRules, copyCanonicalScripts } from '../rules.js';
 import { installGhTokenHook, installPluginSkillPermissions, installSandboxFdAllowRead, installSandboxExcludedCommands } from '../settings-writer.js';
 import { fetchPluginToWorkspace } from '../plugin-fetcher.js';
 import { writeClaudeSh } from '../claude-sh.js';
+import { writeEnvFiles } from '../env-files.js';
 import {
   resolveLatestVersions, isValidSemver, isValidActionsRef,
   FALLBACK_VERSIONS, statusMessage,
@@ -354,6 +355,14 @@ export async function initAgent(projectDir: string, opts: InitOptions): Promise<
   };
 
   writeAgentConfig(absDir, config);
+
+  // Generate per-concern env files BEFORE the launcher so claude.sh's
+  // source-loop on `.claude/.macf/env.*` finds them on first invocation
+  // (macf#342 PR-B). The thin claude.sh template depends on these files
+  // existing — without them, identity / GitHub / certs / registry /
+  // telemetry / tmux env exports are all silently absent.
+  const envFilesResult = writeEnvFiles(absDir, config);
+  console.log(`  Env: wrote ${envFilesResult.written.length} env file(s) to .claude/.macf/`);
 
   // Generate claude.sh launcher.
   const claudeShPath = writeClaudeSh(absDir, config);

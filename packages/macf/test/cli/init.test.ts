@@ -83,14 +83,20 @@ describe('macf init', () => {
     const claudeSh = join(dir, 'claude.sh');
     expect(existsSync(claudeSh)).toBe(true);
     const content = readFileSync(claudeSh, 'utf-8');
-    // Post-#313: settings-driven 3-layer chain for MACF_AGENT_NAME
-    // (env > settings.local.json > baked default). Assert on the baked
-    // default layer + final export.
-    expect(content).toContain('MACF_AGENT_NAME="${MACF_AGENT_NAME:-agent}"');
-    expect(content).toContain('export MACF_AGENT_NAME');
+    // Post-#342 PR-B: claude.sh is a thin source-then-exec template.
+    // Identity vars + CA paths live in .claude/.macf/env.identity +
+    // env.certs respectively — claude.sh sources them via the loop.
     expect(content).toContain('exec claude');
-    // Per-project CA path (PR #36)
-    expect(content).toContain('MACF_CA_CERT="$HOME/.macf/certs/TEST/ca-cert.pem"');
+    expect(content).toContain('for f in "$SCRIPT_DIR/.claude/.macf"/env.*');
+
+    // Per-project CA path (PR #36) — now in env.certs.
+    const certsContent = readFileSync(join(dir, '.claude', '.macf', 'env.certs'), 'utf-8');
+    expect(certsContent).toContain('MACF_CA_CERT="$HOME/.macf/certs/TEST/ca-cert.pem"');
+
+    // 3-layer chain for MACF_AGENT_NAME (post-#313) — now in env.identity.
+    const identityContent = readFileSync(join(dir, '.claude', '.macf', 'env.identity'), 'utf-8');
+    expect(identityContent).toContain('MACF_AGENT_NAME="${MACF_AGENT_NAME:-agent}"');
+    expect(identityContent).toContain('export MACF_AGENT_NAME');
   });
 
   it('adds .macf/ to .gitignore', async () => {

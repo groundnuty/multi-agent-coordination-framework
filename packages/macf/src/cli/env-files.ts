@@ -37,6 +37,8 @@
  * comment near the top so PR-C's migration tool (and any future bumps) can
  * detect the format version without parsing.
  */
+import { mkdirSync, writeFileSync } from 'node:fs';
+import { join, resolve } from 'node:path';
 import type { MacfAgentConfig } from './config.js';
 
 // ---------------------------------------------------------------------------
@@ -77,6 +79,28 @@ function operatorHeaderLines(generator: string): string[] {
     '#',
     '# This file is sourced (not executed) by claude.sh; vars use `export`',
     '# so they propagate to claude\'s child processes.',
+  ];
+}
+
+/**
+ * Header text for the `env._helpers` library file. Macf-managed (operators
+ * shouldn't override the helper definitions ad-hoc), but framed as a
+ * library/sourced-utility rather than a config file — no var exports, just
+ * function definitions consumed by sibling env.* files.
+ */
+function libraryHeaderLines(generator: string): string[] {
+  return [
+    '# This file is managed by `macf`. Do not edit directly — edits are',
+    '# overwritten on the next `macf update`. The template lives at',
+    `# groundnuty/macf:src/cli/env-files.ts (\`${generator}\`). To change`,
+    '# the generated content, file an issue or PR against that file, then',
+    '# run `macf update` here.',
+    '#',
+    '# This is a LIBRARY file: it defines shell FUNCTIONS used by the other',
+    '# env.* files when claude.sh sources them. The underscore prefix sorts',
+    '# this file BEFORE alphabetical-letter siblings under `env.*`, so the',
+    '# functions are defined before any caller is sourced (function-not-',
+    '# defined hazard guard).',
   ];
 }
 
@@ -125,6 +149,66 @@ function posixDirname(p: string): string {
 }
 
 // ---------------------------------------------------------------------------
+// env._helpers — macf-managed; library file, sourced first per alphabetical order
+// ---------------------------------------------------------------------------
+
+/**
+ * Generate `.claude/.macf/env._helpers` content.
+ *
+ * Defines shell helper FUNCTIONS used by sibling env.* files. The
+ * underscore prefix sorts this file BEFORE alphabetical-letter siblings
+ * (`env.certs`, `env.github`, `env.identity`, etc.), so when claude.sh
+ * sources `env.*` in alphabetical order via shell glob, this file's
+ * functions are defined before any caller is sourced.
+ *
+ * Currently exports one helper:
+ *
+ *   macf_settings_get(var_name)
+ *     Reads `.env.<var_name>` from `<workspace>/.claude/settings.local.json`
+ *     via jq. Returns empty string if the file/key is missing or jq isn't
+ *     installed. Used by:
+ *       - env.identity   — 3-layer settings priority for MACF_AGENT_NAME / ROLE
+ *       - env.telemetry  — 4-layer endpoint chain for MACF_OTEL_ENDPOINT
+ *
+ * **No exports** — this is a function-definition file. Sourcing it has
+ * no observable effect beyond making functions callable in the sourcing
+ * shell. macf#313 introduced the helper inline in claude.sh; macf#342
+ * extracted it here so multiple env.* files can share it without each
+ * file having to redeclare it (PR-A had `macf_settings_get` duplicated
+ * inside generateEnvIdentity to make env.identity self-contained;
+ * macf#342 PR-B moves the single source-of-truth into env._helpers).
+ *
+ * Pure function — no I/O. Doesn't take a config arg because the helper
+ * body is config-independent (it reads from settings.local.json at
+ * runtime, not from baked values).
+ */
+export function generateEnvHelpers(): string {
+  const body = [
+    '# Generator: generateEnvHelpers (env-files.ts)',
+    '#',
+    '# Sourced by claude.sh BEFORE any sibling env.* file (underscore prefix',
+    '# sorts before alphabetical letters in shell glob expansion). Defines',
+    '# helper functions used by env.identity (3-layer priority for AGENT_NAME',
+    '# / ROLE) and env.telemetry (4-layer endpoint chain). Single source of',
+    '# truth — pre-#342 the helper was inlined in claude.sh; pre-#342 PR-B',
+    '# it was duplicated inside generateEnvIdentity. This file dedupes both.',
+    '',
+    '# Settings-driven identity helper (macf#313). Reads `.env.<NAME>` from',
+    '# .claude/settings.local.json via jq; returns empty string if file/key',
+    '# missing or jq absent. Identity-override blocks use it to prefer',
+    '# operator-edited settings.local.json over baked defaults, without',
+    '# forcing operators to edit any generated env.* file.',
+    'macf_settings_get() {',
+    '  local var_name="$1"',
+    '  if [ -f "$SCRIPT_DIR/.claude/settings.local.json" ] && command -v jq >/dev/null 2>&1; then',
+    '    jq -r ".env.${var_name} // empty" "$SCRIPT_DIR/.claude/settings.local.json" 2>/dev/null',
+    '  fi',
+    '}',
+  ];
+  return assemble(libraryHeaderLines('generateEnvHelpers'), body);
+}
+
+// ---------------------------------------------------------------------------
 // env.identity — macf-managed
 // ---------------------------------------------------------------------------
 
@@ -144,31 +228,22 @@ function posixDirname(p: string): string {
  * MACF_AGENT_NAME and MACF_AGENT_ROLE preserve the post-#313 settings-driven
  * 3-layer priority (env > settings.local.json > baked default). Reading
  * settings.local.json requires the `macf_settings_get` helper, which is
- * defined in this file (so env.identity is self-contained when sourced
- * standalone).
+ * defined in `env._helpers` (sourced before this file alphabetically by
+ * claude.sh's `for f in env.*` glob — underscore prefix sorts first).
  *
  * **Note on SCRIPT_DIR**: `MACF_WORKSPACE_DIR=$SCRIPT_DIR` requires that
- * the sourcing script (claude.sh in PR-B) sets SCRIPT_DIR before sourcing.
- * That contract is documented in PR-B's claude.sh refactor; this file
- * trusts it.
+ * the sourcing script (claude.sh) sets SCRIPT_DIR before sourcing. That
+ * contract is documented in claude.sh; this file trusts it.
  */
 export function generateEnvIdentity(config: MacfAgentConfig): string {
   const body = [
     `# Generator: generateEnvIdentity (env-files.ts)`,
     `# Sourced by claude.sh BEFORE the tmux self-wrap so identity vars are`,
     `# present in the env captured by the \`-e VAR=VAL\` pass-through (macf#340).`,
-    '',
-    '# Settings-driven identity helper (macf#313). Reads `.env.<NAME>` from',
-    '# .claude/settings.local.json via jq; returns empty string if file/key',
-    '# missing or jq absent. Identity-override block uses it to prefer',
-    '# operator-edited settings.local.json over baked defaults, without',
-    '# forcing operators to edit this generated file.',
-    'macf_settings_get() {',
-    '  local var_name="$1"',
-    '  if [ -f "$SCRIPT_DIR/.claude/settings.local.json" ] && command -v jq >/dev/null 2>&1; then',
-    '    jq -r ".env.${var_name} // empty" "$SCRIPT_DIR/.claude/settings.local.json" 2>/dev/null',
-    '  fi',
-    '}',
+    '#',
+    '# `macf_settings_get` is defined in env._helpers (sourced first per',
+    '# alphabetical order — underscore prefix sorts before letters). Calls',
+    '# below resolve at runtime against the function defined there.',
     '',
     '# Cross-repo path resolution (#140 + #161). Runtime templates reference',
     '# $MACF_WORKSPACE_DIR for absolute-path commands so cd-ing to another',
@@ -510,4 +585,89 @@ export function generateEnvTmux(config: MacfAgentConfig): string {
     body.push(`export MACF_TMUX_WINDOW="${config.tmux_window}"`);
   }
   return assemble(operatorHeaderLines('generateEnvTmux'), body);
+}
+
+// ---------------------------------------------------------------------------
+// writeEnvFiles — orchestrator (PR-B / macf#342)
+// ---------------------------------------------------------------------------
+
+/**
+ * Result of `writeEnvFiles` — lists of file paths that were written and
+ * (currently empty; reserved for PR-C migration logic that may skip
+ * operator-managed files when they already exist) skipped.
+ *
+ * Returned so callers (init.ts, update.ts in PR-C) can log a summary
+ * line ("Wrote 7 env files to .claude/.macf/") without re-deriving the
+ * file list from an external mapping.
+ */
+export interface WriteEnvFilesResult {
+  readonly written: readonly string[];
+  readonly skipped: readonly string[];
+}
+
+/**
+ * Write all 7 per-concern env files into `<projectDir>/.claude/.macf/`.
+ *
+ *   env._helpers   — library file (sourced first per alphabetical order)
+ *   env.certs      — cert + log paths
+ *   env.github     — App creds + GH_TOKEN mint (empty-comment in local-mode)
+ *   env.identity   — MACF_PROJECT / MACF_AGENT_NAME / ROLE / TYPE / WORKSPACE_DIR
+ *   env.registry   — MACF_REGISTRY_TYPE + per-type vars
+ *   env.telemetry  — OTel gates + endpoint (operator-managed)
+ *   env.tmux       — MACF_TMUX_SESSION / MACF_TMUX_WINDOW (operator-managed)
+ *
+ * **Always emits all 7 files** — even when the concern is empty (e.g.,
+ * env.tmux with no tmux_session set, env.github in local-mode). The
+ * generators emit a header + comment explaining the empty case. This
+ * keeps the on-disk layout uniform across configs, so claude.sh's
+ * source-loop pattern (`for f in env.*; do source "$f"; done`) is
+ * deterministic — no "did the file get skipped" branching for the
+ * sourcing script to consider.
+ *
+ * **Mode 0644** — these are sourced, not executed; no execute bit needed.
+ *
+ * **Overwrites unconditionally** — macf-managed files have a managed
+ * header warning operators not to edit. Operator-managed files
+ * (env.telemetry, env.tmux) get overwritten too in PR-B because PR-C
+ * hasn't added the preserve-existing logic yet. Init's contract is
+ * "fresh write"; update's preserve-existing contract lands in PR-C.
+ *
+ * **Creates `.claude/.macf/`** with mkdir -p semantics. The directory
+ * may not exist on a fresh init (the `.claude/` parent often does
+ * because of `settings.json` / `rules/`, but `.macf/` under it is new
+ * to PR-B).
+ *
+ * @returns Lists of absolute file paths for caller logging. `skipped`
+ *   is reserved for PR-C and currently always empty.
+ */
+export function writeEnvFiles(
+  projectDir: string,
+  config: MacfAgentConfig,
+): WriteEnvFilesResult {
+  const absDir = resolve(projectDir);
+  const envDir = join(absDir, '.claude', '.macf');
+  mkdirSync(envDir, { recursive: true });
+
+  // Order in this list is purely for `written` array stability — the
+  // on-disk filesystem order is what claude.sh's `for f in env.*` glob
+  // sees, and shell glob sorts lexicographically (env._helpers first
+  // because `_` < lowercase letters in ASCII).
+  const files: ReadonlyArray<{ name: string; content: string }> = [
+    { name: 'env._helpers', content: generateEnvHelpers() },
+    { name: 'env.identity', content: generateEnvIdentity(config) },
+    { name: 'env.github', content: generateEnvGitHub(config) },
+    { name: 'env.certs', content: generateEnvCerts(config) },
+    { name: 'env.registry', content: generateEnvRegistry(config) },
+    { name: 'env.telemetry', content: generateEnvTelemetry(config) },
+    { name: 'env.tmux', content: generateEnvTmux(config) },
+  ];
+
+  const written: string[] = [];
+  for (const { name, content } of files) {
+    const path = join(envDir, name);
+    writeFileSync(path, content, { mode: 0o644 });
+    written.push(path);
+  }
+
+  return { written, skipped: [] };
 }

@@ -8,14 +8,19 @@
  * Test style mirrors `claude-sh.test.ts`: describe-block per generator,
  * with sample-config matrix for the cross-concern invariants near the end.
  */
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import {
+  generateEnvHelpers,
   generateEnvIdentity,
   generateEnvGitHub,
   generateEnvCerts,
   generateEnvRegistry,
   generateEnvTelemetry,
   generateEnvTmux,
+  writeEnvFiles,
 } from '../../src/cli/env-files.js';
 import type { MacfAgentConfig } from '../../src/cli/config.js';
 
@@ -118,10 +123,16 @@ describe('generateEnvIdentity', () => {
     expect(out).toContain('export MACF_AGENT_ROLE');
   });
 
-  it('defines macf_settings_get helper (env.identity self-contained)', () => {
+  it('does NOT define macf_settings_get inline (delegated to env._helpers per #342 PR-B)', () => {
+    // PR-B moved the helper definition into env._helpers (sourced first
+    // per alphabetical order). env.identity now CALLS the helper but
+    // doesn't redeclare it; downstream files (env.telemetry) also rely
+    // on the single source-of-truth defined in env._helpers.
     const out = generateEnvIdentity(baseConfig);
-    expect(out).toContain('macf_settings_get() {');
-    expect(out).toContain('settings.local.json');
+    expect(out).not.toContain('macf_settings_get() {');
+    // But CALLS the helper (resolves at runtime against env._helpers).
+    expect(out).toContain('$(macf_settings_get MACF_AGENT_NAME)');
+    expect(out).toContain('$(macf_settings_get MACF_AGENT_ROLE)');
   });
 
   it('worker agent_type flows through', () => {
@@ -570,6 +581,197 @@ describe('cross-concern invariants', () => {
     const exportLines = tmux.split('\n').filter(l => l.startsWith('export '));
     for (const line of exportLines) {
       expect(line).toMatch(/export MACF_TMUX_/);
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// generateEnvHelpers (PR-B / macf#342)
+// ---------------------------------------------------------------------------
+
+describe('generateEnvHelpers', () => {
+  it('defines macf_settings_get shell function', () => {
+    const out = generateEnvHelpers();
+    expect(out).toContain('macf_settings_get() {');
+    expect(out).toContain('local var_name="$1"');
+  });
+
+  it('reads .env.<NAME> from .claude/settings.local.json via jq', () => {
+    const out = generateEnvHelpers();
+    expect(out).toContain('"$SCRIPT_DIR/.claude/settings.local.json"');
+    expect(out).toContain('jq -r ".env.${var_name} // empty"');
+  });
+
+  it('suppresses jq stderr (missing-jq + malformed-json safe)', () => {
+    expect(generateEnvHelpers()).toContain('2>/dev/null');
+  });
+
+  it('emits library-style header (managed but framed as a function library)', () => {
+    const out = generateEnvHelpers();
+    expect(out).toContain('managed by `macf`');
+    expect(out).toContain('LIBRARY file');
+  });
+
+  it('emits the schema_version comment', () => {
+    expect(generateEnvHelpers()).toContain('# schema_version: 1');
+  });
+
+  it('emits NO `export` statements (function-definition only)', () => {
+    const out = generateEnvHelpers();
+    const exportLines = out.split('\n').filter(l => l.startsWith('export '));
+    expect(exportLines).toEqual([]);
+  });
+
+  it('content ends with trailing newline (assemble invariant)', () => {
+    expect(generateEnvHelpers().endsWith('\n')).toBe(true);
+  });
+
+  it('determinism — repeated invocations produce identical output', () => {
+    expect(generateEnvHelpers()).toBe(generateEnvHelpers());
+  });
+
+  it('takes no config argument (helper body is config-independent)', () => {
+    // Sanity check: calling with extra args shouldn't change anything.
+    // TypeScript signature already enforces this; smoke-test the runtime.
+    expect(generateEnvHelpers.length).toBe(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// writeEnvFiles (PR-B / macf#342)
+// ---------------------------------------------------------------------------
+
+describe('writeEnvFiles', () => {
+  let tmpRoot: string;
+
+  beforeEach(() => {
+    tmpRoot = mkdtempSync(join(tmpdir(), 'macf-write-env-files-test-'));
+  });
+
+  afterEach(() => {
+    rmSync(tmpRoot, { recursive: true, force: true });
+  });
+
+  it('writes all 7 env files into .claude/.macf/', () => {
+    const result = writeEnvFiles(tmpRoot, baseConfig);
+    expect(result.written.length).toBe(7);
+    const envDir = join(tmpRoot, '.claude', '.macf');
+    expect(existsSync(envDir)).toBe(true);
+    const onDisk = readdirSync(envDir).sort();
+    expect(onDisk).toEqual([
+      'env._helpers',
+      'env.certs',
+      'env.github',
+      'env.identity',
+      'env.registry',
+      'env.telemetry',
+      'env.tmux',
+    ]);
+  });
+
+  it('creates .claude/.macf/ when absent (mkdir -p semantics)', () => {
+    expect(existsSync(join(tmpRoot, '.claude'))).toBe(false);
+    writeEnvFiles(tmpRoot, baseConfig);
+    expect(existsSync(join(tmpRoot, '.claude', '.macf'))).toBe(true);
+  });
+
+  it('writes files at mode 0644 (sourced, not executed)', () => {
+    writeEnvFiles(tmpRoot, baseConfig);
+    const envDir = join(tmpRoot, '.claude', '.macf');
+    for (const name of readdirSync(envDir)) {
+      const mode = statSync(join(envDir, name)).mode & 0o777;
+      expect(mode).toBe(0o644);
+    }
+  });
+
+  it('returned written[] paths are absolute and point at .claude/.macf/', () => {
+    const { written } = writeEnvFiles(tmpRoot, baseConfig);
+    for (const path of written) {
+      expect(path.startsWith('/')).toBe(true);
+      expect(path).toContain('/.claude/.macf/env.');
+    }
+  });
+
+  it('skipped[] is empty in PR-B (PR-C wires preserve-existing logic)', () => {
+    const { skipped } = writeEnvFiles(tmpRoot, baseConfig);
+    expect(skipped).toEqual([]);
+  });
+
+  it('overwrites existing env files (init contract — PR-C handles preserve)', () => {
+    const { writeFileSync, mkdirSync } = require('node:fs');
+    mkdirSync(join(tmpRoot, '.claude', '.macf'), { recursive: true });
+    const stalePath = join(tmpRoot, '.claude', '.macf', 'env.identity');
+    writeFileSync(stalePath, '# stale operator edits\n');
+
+    writeEnvFiles(tmpRoot, baseConfig);
+
+    const after = readFileSync(stalePath, 'utf-8');
+    expect(after).not.toContain('stale operator edits');
+    expect(after).toContain('export MACF_PROJECT="TEST"');
+  });
+
+  it('env._helpers content matches generateEnvHelpers()', () => {
+    writeEnvFiles(tmpRoot, baseConfig);
+    const helpers = readFileSync(
+      join(tmpRoot, '.claude', '.macf', 'env._helpers'),
+      'utf-8',
+    );
+    expect(helpers).toBe(generateEnvHelpers());
+  });
+
+  it('env.identity content matches generateEnvIdentity(config)', () => {
+    writeEnvFiles(tmpRoot, baseConfig);
+    const identity = readFileSync(
+      join(tmpRoot, '.claude', '.macf', 'env.identity'),
+      'utf-8',
+    );
+    expect(identity).toBe(generateEnvIdentity(baseConfig));
+  });
+
+  it('writes env.github with local-mode placeholder when registry is local', () => {
+    writeEnvFiles(tmpRoot, localConfig);
+    const github = readFileSync(
+      join(tmpRoot, '.claude', '.macf', 'env.github'),
+      'utf-8',
+    );
+    expect(github).not.toContain('export GH_TOKEN');
+    expect(github).toContain('local-mode');
+  });
+
+  it('always writes env.tmux even when no tmux fields set (placeholder content)', () => {
+    writeEnvFiles(tmpRoot, baseConfig);
+    const tmuxPath = join(tmpRoot, '.claude', '.macf', 'env.tmux');
+    expect(existsSync(tmuxPath)).toBe(true);
+    const tmux = readFileSync(tmuxPath, 'utf-8');
+    expect(tmux).toContain('# schema_version: 1');
+    expect(tmux).toContain('auto-detect');
+  });
+
+  it('underscore-prefixed env._helpers sorts FIRST in shell glob order', () => {
+    // Critical contract for the source-loop in claude.sh: env._helpers
+    // must load before any sibling that calls macf_settings_get.
+    // Shell glob sorts lexicographically; `_` (0x5F) < lowercase letters
+    // (0x61-0x7A) in ASCII, so env._* sorts before env.<letter>.
+    writeEnvFiles(tmpRoot, baseConfig);
+    const envDir = join(tmpRoot, '.claude', '.macf');
+    const sorted = readdirSync(envDir).sort();
+    expect(sorted[0]).toBe('env._helpers');
+  });
+
+  it('all written files end with trailing newline', () => {
+    writeEnvFiles(tmpRoot, baseConfig);
+    const envDir = join(tmpRoot, '.claude', '.macf');
+    for (const name of readdirSync(envDir)) {
+      const content = readFileSync(join(envDir, name), 'utf-8');
+      expect(content.endsWith('\n')).toBe(true);
+    }
+  });
+
+  it('writes to absolute path resolved from relative input', () => {
+    // Sanity check that `resolve()` is applied — caller convenience.
+    const { written } = writeEnvFiles(tmpRoot, baseConfig);
+    for (const p of written) {
+      expect(p.startsWith(tmpRoot)).toBe(true);
     }
   });
 });

@@ -1,6 +1,26 @@
 /**
- * Tests for the extracted claude.sh generator. Used by both `macf init`
- * (first write) and `macf update` (refresh after a template change).
+ * Tests for the thin claude.sh launcher template (macf#342 PR-B).
+ *
+ * Pre-#342 the launcher was a monolithic 100+ line script with all
+ * per-concern env exports inlined. PR-B moved those exports into
+ * separate files under `.claude/.macf/env.*` and reduced claude.sh to
+ * a thin source-then-exec template — see `env-files.test.ts` for the
+ * per-concern export-shape coverage.
+ *
+ * What lives in claude.sh now (and is tested HERE):
+ *   - shebang + `set -euo pipefail`
+ *   - managed-file header
+ *   - SCRIPT_DIR resolution
+ *   - source-loop on `.claude/.macf/env.*` (alphabetical → env._helpers
+ *     first → defines macf_settings_get → callable from sibling files)
+ *   - MACF_HOST / MACF_ADVERTISE_HOST / MACF_DEBUG (channel-server runtime
+ *     knobs that don't bucket cleanly into a single env.* concern)
+ *   - tmux self-wrap block (macf#340 env-isolation preserved)
+ *   - conditional `exec claude` (MACF_TEST + permanent-vs-worker -c)
+ *
+ * `otelTelemetryLines` stays exported from claude-sh.ts as the canonical
+ * pre-migration reference shape (used by test fixtures). Its behavior is
+ * still tested in this file.
  */
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { existsSync, mkdtempSync, readFileSync, rmSync, statSync } from 'node:fs';
@@ -24,85 +44,6 @@ const sampleConfig: MacfAgentConfig = {
 };
 
 describe('generateClaudeSh', () => {
-  it('includes the --plugin-dir flag + -c for permanent agents (default branch)', () => {
-    const output = generateClaudeSh(sampleConfig);
-    // Permanent agent → `-c` reattaches to prior session (macf#178 Gap 5).
-    // The -c path lives inside the `else` branch; MACF_TEST-unset takes it.
-    expect(output).toContain('exec claude -c --plugin-dir "$SCRIPT_DIR/.macf/plugin" "$@"');
-  });
-
-  it('omits -c for worker agents (each invocation is fresh by design)', () => {
-    const workerConfig: MacfAgentConfig = { ...sampleConfig, agent_type: 'worker' };
-    const output = generateClaudeSh(workerConfig);
-    // Worker has no -c in either MACF_TEST branch, so both lines look the same.
-    expect(output).toContain('exec claude --plugin-dir "$SCRIPT_DIR/.macf/plugin" "$@"');
-    expect(output).not.toContain('exec claude -c');
-  });
-
-  describe('MACF_TEST escape hatch (macf#189 sub-item 4)', () => {
-    it('generates a conditional exec: MACF_TEST set → no -c, else → -c (permanent)', () => {
-      const output = generateClaudeSh(sampleConfig);
-      // The template emits an if/else in the shell; both execs appear
-      // in source, guarded at RUNTIME by the env check. Just assert
-      // the conditional is there + both branches produce the expected
-      // exec line.
-      expect(output).toContain('if [ -n "${MACF_TEST:-}" ]; then');
-      expect(output).toContain('exec claude --plugin-dir "$SCRIPT_DIR/.macf/plugin" "$@"');
-      expect(output).toContain('exec claude -c --plugin-dir "$SCRIPT_DIR/.macf/plugin" "$@"');
-      // Closing fi present.
-      expect(output).toMatch(/fi[\s\n]*$/);
-    });
-
-    it('worker agents get the same conditional shape (both branches have no -c)', () => {
-      // MACF_TEST doesn't change behavior for workers (already no -c),
-      // but the if/else still gets emitted — the template is uniform.
-      const workerConfig: MacfAgentConfig = { ...sampleConfig, agent_type: 'worker' };
-      const output = generateClaudeSh(workerConfig);
-      expect(output).toContain('if [ -n "${MACF_TEST:-}" ]; then');
-    });
-  });
-
-  it('exports the expected environment variables from config', () => {
-    const output = generateClaudeSh(sampleConfig);
-    // MACF_AGENT_NAME + MACF_AGENT_ROLE use settings-driven 3-layer
-    // priority post-#313 (env > settings.local.json > baked default).
-    // Assert on each layer + final export rather than the direct-export
-    // form that pre-#313 used.
-    expect(output).toContain('MACF_AGENT_NAME="${MACF_AGENT_NAME:-$(macf_settings_get MACF_AGENT_NAME)}"');
-    expect(output).toContain('MACF_AGENT_NAME="${MACF_AGENT_NAME:-code-agent}"');
-    expect(output).toContain('export MACF_AGENT_NAME');
-    expect(output).toContain('MACF_AGENT_ROLE="${MACF_AGENT_ROLE:-$(macf_settings_get MACF_AGENT_ROLE)}"');
-    expect(output).toContain('MACF_AGENT_ROLE="${MACF_AGENT_ROLE:-code-agent}"');
-    expect(output).toContain('export MACF_AGENT_ROLE');
-    // MACF_PROJECT + MACF_AGENT_TYPE stay as direct exports (no
-    // settings-driven priority — they're identity-internal, not
-    // operator-tweakable per agent run).
-    expect(output).toContain('export MACF_PROJECT="TEST"');
-    expect(output).toContain('export MACF_AGENT_TYPE="permanent"');
-    expect(output).toContain('export APP_ID="12345"');
-    expect(output).toContain('export INSTALL_ID="67890"');
-    expect(output).toContain('export KEY_PATH=".github-app-key.pem"');
-  });
-
-  it('exports MACF_WORKSPACE_DIR for cross-repo path resolution', () => {
-    // Runtime agent templates (.claude/rules/agent-identity.md +
-    // plugin/agents/*.md) reference $MACF_WORKSPACE_DIR so cd'ing to
-    // another repo doesn't break the token helper path.
-    // Observed failure mode: 2026-04-21 PR #16 attribution misfire.
-    const output = generateClaudeSh(sampleConfig);
-    expect(output).toContain('export MACF_WORKSPACE_DIR="$SCRIPT_DIR"');
-  });
-
-  it('resolves KEY_PATH against $SCRIPT_DIR when relative (cross-repo cwd trap)', () => {
-    // Previously KEY_PATH stayed at the bare config value. If
-    // `.github-app-key.pem` (relative), cd-ing to another repo made
-    // the helper unable to find the key → silent empty GH_TOKEN →
-    // attribution trap. Now claude.sh rewrites relative paths to
-    // absolute at launch.
-    const output = generateClaudeSh(sampleConfig);
-    expect(output).toMatch(/case "\$KEY_PATH" in[\s\S]*?\/\*\) ;;[\s\S]*?\*\) KEY_PATH="\$SCRIPT_DIR\/\$KEY_PATH"/);
-  });
-
   it('starts with a bash shebang and set -euo pipefail', () => {
     const output = generateClaudeSh(sampleConfig);
     const lines = output.split('\n');
@@ -116,101 +57,91 @@ describe('generateClaudeSh', () => {
     expect(output).toContain('overwritten on the next `macf update`');
   });
 
-  it('namespaces MACF_CA_CERT to the project', () => {
+  it('exports SCRIPT_DIR via cd $(dirname BASH_SOURCE) && pwd', () => {
     const output = generateClaudeSh(sampleConfig);
-    expect(output).toContain('export MACF_CA_CERT="$HOME/.macf/certs/TEST/ca-cert.pem"');
+    expect(output).toContain('SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"');
   });
 
-  it('exports MACF_CA_KEY alongside MACF_CA_CERT (#103 R3)', () => {
-    // Pre-#103 only MACF_CA_CERT was exported; server.ts derived the
-    // key path via string-replace. Now the launcher emits both so
-    // server config can consume the explicit field.
-    const output = generateClaudeSh(sampleConfig);
-    expect(output).toContain('export MACF_CA_KEY="$HOME/.macf/certs/TEST/ca-key.pem"');
-  });
-
-  describe('registry env exports (macf#178 Gap 1)', () => {
-    it('emits MACF_REGISTRY_TYPE + MACF_REGISTRY_REPO for repo-scoped registry', () => {
-      const cfg: MacfAgentConfig = {
-        ...sampleConfig,
-        registry: { type: 'repo', owner: 'groundnuty', repo: 'macf' },
-      };
-      const output = generateClaudeSh(cfg);
-      expect(output).toContain('export MACF_REGISTRY_TYPE="repo"');
-      expect(output).toContain('export MACF_REGISTRY_REPO="groundnuty/macf"');
-      expect(output).not.toContain('MACF_REGISTRY_ORG');
-      expect(output).not.toContain('MACF_REGISTRY_USER');
-    });
-
-    it('emits MACF_REGISTRY_TYPE + MACF_REGISTRY_ORG for org-scoped registry', () => {
-      const cfg: MacfAgentConfig = {
-        ...sampleConfig,
-        registry: { type: 'org', org: 'papers-org' },
-      };
-      const output = generateClaudeSh(cfg);
-      expect(output).toContain('export MACF_REGISTRY_TYPE="org"');
-      expect(output).toContain('export MACF_REGISTRY_ORG="papers-org"');
-      expect(output).not.toContain('MACF_REGISTRY_REPO');
-      expect(output).not.toContain('MACF_REGISTRY_USER');
-    });
-
-    it('emits MACF_REGISTRY_TYPE + MACF_REGISTRY_USER for profile-scoped registry', () => {
-      const cfg: MacfAgentConfig = {
-        ...sampleConfig,
-        registry: { type: 'profile', user: 'groundnuty' },
-      };
-      const output = generateClaudeSh(cfg);
-      expect(output).toContain('export MACF_REGISTRY_TYPE="profile"');
-      expect(output).toContain('export MACF_REGISTRY_USER="groundnuty"');
-      expect(output).not.toContain('MACF_REGISTRY_REPO');
-      expect(output).not.toContain('MACF_REGISTRY_ORG');
-    });
-  });
-
-  describe('tmux-wake env exports (macf#185)', () => {
-    it('emits MACF_TMUX_SESSION when tmux_session set in config', () => {
-      const cfg: MacfAgentConfig = { ...sampleConfig, tmux_session: 'cv-project' };
-      const output = generateClaudeSh(cfg);
-      expect(output).toContain('export MACF_TMUX_SESSION="cv-project"');
-    });
-
-    it('emits MACF_TMUX_WINDOW when tmux_window set', () => {
-      const cfg: MacfAgentConfig = {
-        ...sampleConfig,
-        tmux_session: 'cv-project',
-        tmux_window: 'cv-architect',
-      };
-      const output = generateClaudeSh(cfg);
-      expect(output).toContain('export MACF_TMUX_WINDOW="cv-architect"');
-    });
-
-    it('omits both exports when neither field set (auto-detect path)', () => {
+  describe('source-loop on .claude/.macf/env.* (macf#342 PR-B)', () => {
+    it('emits a for-loop that sources files matching env.* under .claude/.macf', () => {
       const output = generateClaudeSh(sampleConfig);
-      expect(output).not.toContain('MACF_TMUX_SESSION');
-      expect(output).not.toContain('MACF_TMUX_WINDOW');
+      expect(output).toMatch(/for f in "\$SCRIPT_DIR\/\.claude\/\.macf"\/env\.\*/);
+      expect(output).toContain('source "$f"');
     });
 
-    it('emits session alone when window not set', () => {
-      const cfg: MacfAgentConfig = { ...sampleConfig, tmux_session: 'macf-code' };
-      const output = generateClaudeSh(cfg);
-      expect(output).toContain('export MACF_TMUX_SESSION="macf-code"');
-      expect(output).not.toContain('MACF_TMUX_WINDOW');
+    it('guards the loop with a directory existence check', () => {
+      // Avoids set -euo pipefail tripping if the directory is missing
+      // (e.g., partially-installed workspace; PR-C migration in flight).
+      const output = generateClaudeSh(sampleConfig);
+      expect(output).toContain('if [ -d "$SCRIPT_DIR/.claude/.macf" ]; then');
+    });
+
+    it('source-loop happens BEFORE the tmux self-wrap (so AGENT_NAME is set in env captured by -e flags)', () => {
+      const output = generateClaudeSh(sampleConfig);
+      const sourcePos = output.indexOf('for f in "$SCRIPT_DIR/.claude/.macf"/env.*');
+      const tmuxWrapPos = output.indexOf('if [ -z "${TMUX:-}" ]');
+      expect(sourcePos).toBeGreaterThan(0);
+      expect(tmuxWrapPos).toBeGreaterThan(0);
+      expect(sourcePos).toBeLessThan(tmuxWrapPos);
+    });
+
+    it('source-loop happens BEFORE the final exec claude (so identity etc. are available to claude)', () => {
+      const output = generateClaudeSh(sampleConfig);
+      const sourcePos = output.indexOf('for f in "$SCRIPT_DIR/.claude/.macf"/env.*');
+      const claudeExecPos = output.indexOf('exec claude');
+      expect(sourcePos).toBeLessThan(claudeExecPos);
+    });
+
+    it('does NOT inline the per-concern exports (now in env-files)', () => {
+      // Regression guard: pre-#342 these were embedded in claude.sh.
+      // They moved to env.identity / env.github / env.registry / env.certs
+      // / env.telemetry / env.tmux — see env-files.test.ts for the
+      // per-concern coverage.
+      const output = generateClaudeSh(sampleConfig);
+      // env.identity owns these:
+      expect(output).not.toContain('export MACF_PROJECT="TEST"');
+      expect(output).not.toContain('export MACF_AGENT_TYPE="permanent"');
+      expect(output).not.toContain('export MACF_AGENT_NAME');
+      expect(output).not.toContain('export MACF_AGENT_ROLE');
+      expect(output).not.toContain('export MACF_WORKSPACE_DIR="$SCRIPT_DIR"');
+      // env.github owns these:
+      expect(output).not.toContain('export APP_ID="12345"');
+      expect(output).not.toContain('export INSTALL_ID="67890"');
+      expect(output).not.toContain('export KEY_PATH=".github-app-key.pem"');
+      expect(output).not.toContain('export GH_TOKEN');
+      expect(output).not.toContain('export GIT_AUTHOR_NAME');
+      // env.certs owns these:
+      expect(output).not.toContain('MACF_CA_CERT');
+      expect(output).not.toContain('MACF_CA_KEY');
+      expect(output).not.toContain('MACF_AGENT_CERT');
+      expect(output).not.toContain('MACF_LOG_PATH');
+      // env.registry owns these:
+      expect(output).not.toContain('MACF_REGISTRY_TYPE');
+      // env.telemetry owns these:
+      expect(output).not.toContain('CLAUDE_CODE_ENABLE_TELEMETRY');
+      expect(output).not.toContain('OTEL_TRACES_EXPORTER');
+      // env._helpers owns this:
+      expect(output).not.toContain('macf_settings_get() {');
     });
   });
 
-  describe('advertise-host env export (macf#178 Gap 2)', () => {
-    it('emits MACF_HOST=0.0.0.0 + MACF_ADVERTISE_HOST from config when set', () => {
+  describe('channel-server runtime knobs (kept in claude.sh as orchestration)', () => {
+    // MACF_HOST / MACF_ADVERTISE_HOST / MACF_DEBUG don't bucket cleanly
+    // into a single env.* concern (network-transport-but-not-cert,
+    // global-debug-gate). Kept inline in claude.sh post-PR-B.
+
+    it('exports MACF_HOST=0.0.0.0 (listen on all interfaces)', () => {
+      const output = generateClaudeSh(sampleConfig);
+      expect(output).toContain('export MACF_HOST="0.0.0.0"');
+    });
+
+    it('exports MACF_ADVERTISE_HOST from config when set (macf#178 Gap 2)', () => {
       const cfg: MacfAgentConfig = { ...sampleConfig, advertise_host: '100.124.163.105' };
       const output = generateClaudeSh(cfg);
-      expect(output).toContain('export MACF_HOST="0.0.0.0"');
       expect(output).toContain('export MACF_ADVERTISE_HOST="100.124.163.105"');
     });
 
     it('falls back to MACF_ADVERTISE_HOST=127.0.0.1 when config.advertise_host is unset', () => {
-      // Matches plugin's internal default in src/config.ts — keeps
-      // backward-compat for workspaces that haven't opted into off-box
-      // routing. The env is always emitted so `echo $MACF_ADVERTISE_HOST`
-      // shows the active value regardless.
       const output = generateClaudeSh(sampleConfig);
       expect(output).toContain('export MACF_ADVERTISE_HOST="127.0.0.1"');
     });
@@ -220,36 +151,67 @@ describe('generateClaudeSh', () => {
       const output = generateClaudeSh(cfg);
       expect(output).toContain('export MACF_ADVERTISE_HOST="agent.tailnet.ts.net"');
     });
+
+    it('exports MACF_DEBUG with default false', () => {
+      const output = generateClaudeSh(sampleConfig);
+      expect(output).toContain('export MACF_DEBUG="${MACF_DEBUG:-false}"');
+    });
   });
 
-  it('uses the fail-loud token helper (no naive gh token generate | jq)', () => {
-    // #67: the launcher must not embed the silent-fallback anti-pattern.
-    const output = generateClaudeSh(sampleConfig);
+  describe('exec claude conditional (macf#178 Gap 5 + macf#189 sub-item 4)', () => {
+    it('includes the --plugin-dir flag + -c for permanent agents (default branch)', () => {
+      const output = generateClaudeSh(sampleConfig);
+      expect(output).toContain('exec claude -c --plugin-dir "$SCRIPT_DIR/.macf/plugin" "$@"');
+    });
 
-    // Invokes the helper, not the bare CLI.
-    expect(output).toContain('macf-gh-token.sh');
-    expect(output).toContain('$SCRIPT_DIR/.claude/scripts/macf-gh-token.sh');
+    it('omits -c for worker agents (each invocation is fresh by design)', () => {
+      const workerConfig: MacfAgentConfig = { ...sampleConfig, agent_type: 'worker' };
+      const output = generateClaudeSh(workerConfig);
+      expect(output).toContain('exec claude --plugin-dir "$SCRIPT_DIR/.macf/plugin" "$@"');
+      expect(output).not.toContain('exec claude -c');
+    });
 
-    // Fails loud — explicit `exit 1` on helper failure.
-    expect(output).toMatch(/macf-gh-token\.sh[\s\S]*?exit 1/);
+    it('generates a conditional exec: MACF_TEST set → no -c, else → -c (permanent)', () => {
+      const output = generateClaudeSh(sampleConfig);
+      expect(output).toContain('if [ -n "${MACF_TEST:-}" ]; then');
+      expect(output).toContain('exec claude --plugin-dir "$SCRIPT_DIR/.macf/plugin" "$@"');
+      expect(output).toContain('exec claude -c --plugin-dir "$SCRIPT_DIR/.macf/plugin" "$@"');
+      expect(output).toMatch(/fi[\s\n]*$/);
+    });
 
-    // And specifically does NOT reinstate the naive pattern.
-    expect(output).not.toMatch(/gh token generate[^\n]*\|\s*jq/);
+    it('worker agents get the same conditional shape (both branches have no -c)', () => {
+      const workerConfig: MacfAgentConfig = { ...sampleConfig, agent_type: 'worker' };
+      const output = generateClaudeSh(workerConfig);
+      expect(output).toContain('if [ -n "${MACF_TEST:-}" ]; then');
+    });
   });
 
-  describe('tmux self-wrap env-isolation (macf#340)', () => {
-    // Reproduces the operator's PPAM 2026 bug: when `tmux new-session`
-    // runs against an already-running tmux server, the new session's
-    // env initializes from server-global env, NOT calling shell's env.
-    // First-launched agent populates server-global; subsequent agents
-    // inherit that stale env, and `${VAR:-default}` shortcuts preserve
-    // the leaked values → AGENT_COLLISION on register.
-    //
-    // Fix: build `-e VAR=VAL` flags from a MACF_TMUX_PASSTHROUGH array
-    // (single source of truth; unset-guard skips vars cleanly), pass to
-    // `tmux new-session` so session-level env wins over server-global.
+  describe('tmux self-wrap (macf#313 + macf#340 env-isolation preserved)', () => {
+    it('emits tmux self-wrap block with $TMUX guard + MACF_NO_TMUX_WRAP opt-out', () => {
+      const output = generateClaudeSh(sampleConfig);
+      expect(output).toContain('if [ -z "${TMUX:-}" ] && [ "${MACF_NO_TMUX_WRAP:-}" != "1" ]; then');
+    });
 
-    it('builds MACF_TMUX_E_ARGS from env-pattern grep (single source of truth for what to pass through)', () => {
+    it('emits canonical session name from MACF_PROJECT@MACF_AGENT_NAME', () => {
+      const output = generateClaudeSh(sampleConfig);
+      expect(output).toContain('SESSION_NAME="${MACF_PROJECT}@${MACF_AGENT_NAME}"');
+    });
+
+    it('emits has-session re-attach path with stderr suppressed', () => {
+      const output = generateClaudeSh(sampleConfig);
+      expect(output).toContain('if tmux has-session -t "$SESSION_NAME" 2>/dev/null; then');
+      expect(output).toContain('exec tmux attach -t "$SESSION_NAME"');
+    });
+
+    it('emits tmux new-session create path with -c $SCRIPT_DIR + script re-exec', () => {
+      const output = generateClaudeSh(sampleConfig);
+      expect(output).toMatch(/exec tmux new-session\b/);
+      expect(output).toContain('-s "$SESSION_NAME"');
+      expect(output).toContain('-c "$SCRIPT_DIR"');
+      expect(output).toMatch(/"\$0" "\$@"/);
+    });
+
+    it('builds MACF_TMUX_E_ARGS from env-pattern grep (macf#340 single source of truth)', () => {
       const output = generateClaudeSh(sampleConfig);
       // Pattern-driven rather than hard-coded list: future MACF_* additions
       // are picked up automatically; vars not set at wrap-time are absent.
@@ -265,14 +227,7 @@ describe('generateClaudeSh', () => {
 
     it('expands MACF_TMUX_E_ARGS into the tmux new-session invocation', () => {
       const output = generateClaudeSh(sampleConfig);
-      // Args go BEFORE -s/-c so the session is created with the env applied.
-      // Quoted-array-expansion form preserves arg integrity for values with spaces.
       expect(output).toMatch(/exec tmux new-session "\$\{MACF_TMUX_E_ARGS\[@\]\}" -s "\$SESSION_NAME" -c "\$SCRIPT_DIR"/);
-    });
-
-    it('preserves the attach-if-exists branch (no -e env on attach; attach doesn\'t create new env)', () => {
-      const output = generateClaudeSh(sampleConfig);
-      expect(output).toContain('exec tmux attach -t "$SESSION_NAME"');
     });
 
     it('preserves MACF_NO_TMUX_WRAP=1 opt-out gate', () => {
@@ -280,23 +235,18 @@ describe('generateClaudeSh', () => {
       expect(output).toMatch(/MACF_NO_TMUX_WRAP/);
     });
 
-    it('emits the same env-grep template regardless of agent_role/agent_name', () => {
-      const codeAgent = { ...sampleConfig, agent_name: 'code-agent', agent_role: 'code-agent' };
-      const scienceAgent = { ...sampleConfig, agent_name: 'science-agent', agent_role: 'science-agent' };
-      const codeOutput = generateClaudeSh(codeAgent);
-      const scienceOutput = generateClaudeSh(scienceAgent);
-
-      for (const output of [codeOutput, scienceOutput]) {
-        expect(output).toMatch(/env\s*\|\s*grep -E "\^MACF_"/);
-        expect(output).toMatch(/MACF_TMUX_E_ARGS\[@\]/);
-      }
+    it('grep tolerates the no-match case via `|| true` (defensive)', () => {
+      const output = generateClaudeSh(sampleConfig);
+      expect(output).toMatch(/grep -E "\^MACF_" \|\| true/);
     });
 
-    it('grep tolerates the no-match case via `|| true` (defensive: opt-out path or stripped env)', () => {
+    it('tmux wrap block comes BEFORE the final claude exec (re-exec hazard guard)', () => {
       const output = generateClaudeSh(sampleConfig);
-      // grep returns exit 1 if no matches; `|| true` keeps the loop body
-      // from inheriting that under set -euo pipefail.
-      expect(output).toMatch(/grep -E "\^MACF_" \|\| true/);
+      const tmuxWrapPos = output.indexOf('if [ -z "${TMUX:-}" ]');
+      const claudeExecPos = output.indexOf('exec claude');
+      expect(tmuxWrapPos).toBeGreaterThan(0);
+      expect(claudeExecPos).toBeGreaterThan(0);
+      expect(tmuxWrapPos).toBeLessThan(claudeExecPos);
     });
   });
 });
@@ -340,34 +290,25 @@ describe('writeClaudeSh', () => {
   });
 });
 
-describe('otelTelemetryLines (macf#197 + macf#245)', () => {
+describe('otelTelemetryLines (kept exported as canonical pre-migration reference)', () => {
+  // These tests preserve the `otelTelemetryLines` contract for any
+  // downstream tooling that compared a legacy monolithic claude.sh
+  // against the canonical shape. The function is no longer called from
+  // generateClaudeSh; the equivalent live emission is in
+  // generateEnvTelemetry (env-files.ts).
+
   it('emits all telemetry gates + per-signal exporters + OTLP endpoint env by default', () => {
     const lines = otelTelemetryLines(sampleConfig, {});
     const joined = lines.join('\n');
-    // Master gate + traces-beta gate.
     expect(joined).toContain('export CLAUDE_CODE_ENABLE_TELEMETRY=1');
     expect(joined).toContain('export CLAUDE_CODE_ENHANCED_TELEMETRY_BETA=1');
-    // Per-signal exporters — each missing → that signal silently emits
-    // nothing per Claude Code docs. macf#245 surfaced the metrics+logs
-    // gap (only traces was wired pre-#245, so devops's stack saw zero
-    // metrics + logs from any agent despite the master gate being on).
     expect(joined).toContain('export OTEL_TRACES_EXPORTER=otlp');
     expect(joined).toContain('export OTEL_METRICS_EXPORTER=otlp');
     expect(joined).toContain('export OTEL_LOGS_EXPORTER=otlp');
-    // Default endpoint — 4-layer chain (macf#313):
-    //   1. OTEL_EXPORTER_OTLP_ENDPOINT (runtime env, canonical OTel name)
-    //   2. MACF_OTEL_ENDPOINT (runtime env)
-    //   3. settings.local.json `.env.MACF_OTEL_ENDPOINT`
-    //   4. Baked default (template-time MACF_OTEL_ENDPOINT or hardcoded fallback)
-    // Default `:14318` per current k3d cluster topology (macf#282;
-    // pre-2026-04-25 default `:4318` was the retired compose-stack port).
     expect(joined).toContain('MACF_OTEL_ENDPOINT="${MACF_OTEL_ENDPOINT:-$(macf_settings_get MACF_OTEL_ENDPOINT)}"');
     expect(joined).toContain('MACF_OTEL_ENDPOINT="${MACF_OTEL_ENDPOINT:-http://localhost:14318}"');
     expect(joined).toContain('export OTEL_EXPORTER_OTLP_ENDPOINT="${OTEL_EXPORTER_OTLP_ENDPOINT:-$MACF_OTEL_ENDPOINT}"');
-    // Protocol.
     expect(joined).toContain('export OTEL_EXPORTER_OTLP_PROTOCOL=http/protobuf');
-    // Per-agent service name + resource attrs (semconv-compliant
-    // gen_ai.agent.* namespace per macf#245 alignment with devops).
     expect(joined).toContain('export OTEL_SERVICE_NAME="macf-agent-code-agent"');
     expect(joined).toContain(
       'export OTEL_RESOURCE_ATTRIBUTES="gen_ai.agent.name=code-agent,gen_ai.agent.role=code-agent,service.namespace=macf"',
@@ -379,22 +320,13 @@ describe('otelTelemetryLines (macf#197 + macf#245)', () => {
       MACF_OTEL_ENDPOINT: 'http://obs.tailnet.ts.net:14318',
     });
     const joined = lines.join('\n');
-    // Template-time override bakes the custom URL into the 4th layer
-    // of the chain (template-time MACF_OTEL_ENDPOINT default).
     expect(joined).toContain('MACF_OTEL_ENDPOINT="${MACF_OTEL_ENDPOINT:-http://obs.tailnet.ts.net:14318}"');
     expect(joined).toContain('export OTEL_EXPORTER_OTLP_ENDPOINT="${OTEL_EXPORTER_OTLP_ENDPOINT:-$MACF_OTEL_ENDPOINT}"');
-    // No mention of the canonical default since we overrode it.
     expect(joined).not.toContain('localhost:14318');
-    // No mention of the retired :4318 either (regression guard for macf#282).
     expect(joined).not.toContain(':4318');
   });
 
   it('default endpoint is :14318 (current cluster), NOT :4318 (retired)', () => {
-    // macf#282 regression guard: the canonical claude-sh template
-    // hardcoded `:4318` (retired compose-stack port). CV agents had
-    // 34min of zero telemetry because of this. The fix moved the
-    // default to `:14318` (k3d serverlb host-port mapping per
-    // macf-devops-toolkit:CLAUDE.md).
     const lines = otelTelemetryLines(sampleConfig, {});
     const joined = lines.join('\n');
     expect(joined).toContain('localhost:14318');
@@ -402,17 +334,8 @@ describe('otelTelemetryLines (macf#197 + macf#245)', () => {
   });
 
   it('emits env-overridable form for run-time OTEL_EXPORTER_OTLP_ENDPOINT override', () => {
-    // The bash `${OTEL_EXPORTER_OTLP_ENDPOINT:-<default>}` substitution
-    // means setting `OTEL_EXPORTER_OTLP_ENDPOINT=<url>` in the operator's
-    // shell BEFORE invoking ./claude.sh wins over the baked default.
-    // macf#282 fix: pre-2026-04-25 the export was unconditional
-    // (hardcoded value won regardless of operator env), which is what
-    // bit CV-agents.
     const lines = otelTelemetryLines(sampleConfig, {});
     const joined = lines.join('\n');
-    // Must contain the bash default-substitution syntax — not bare
-    // hardcoded value. Post-#313 the default-side is `$MACF_OTEL_ENDPOINT`
-    // (which itself resolves through the 4-layer chain).
     expect(joined).toMatch(/export OTEL_EXPORTER_OTLP_ENDPOINT="\$\{OTEL_EXPORTER_OTLP_ENDPOINT:-\$MACF_OTEL_ENDPOINT\}"/);
   });
 
@@ -427,10 +350,6 @@ describe('otelTelemetryLines (macf#197 + macf#245)', () => {
   });
 
   it('rejects shell-unsafe characters in MACF_OTEL_ENDPOINT', () => {
-    // Double-quoted shell context. A literal `"`, `$`, backtick,
-    // backslash, or newline in the URL would break the export line
-    // or trigger substitution. Same allowlist as validateInitOpts
-    // on keyPath.
     const unsafe = [
       'http://host"; rm -rf /;"',
       'http://host:$(whoami)',
@@ -442,288 +361,5 @@ describe('otelTelemetryLines (macf#197 + macf#245)', () => {
       expect(() => otelTelemetryLines(sampleConfig, { MACF_OTEL_ENDPOINT: val }))
         .toThrow(/shell-unsafe/);
     }
-  });
-});
-
-describe('generateClaudeSh integration with OTEL block (macf#197)', () => {
-  it('embeds the OTEL block in the full launcher output by default', () => {
-    // generateClaudeSh reads from process.env, not an injected env.
-    // Save + clear MACF_OTEL_* so the default-path test is
-    // deterministic on runners that happened to set them.
-    const backupDisabled = process.env['MACF_OTEL_DISABLED'];
-    const backupEndpoint = process.env['MACF_OTEL_ENDPOINT'];
-    delete process.env['MACF_OTEL_DISABLED'];
-    delete process.env['MACF_OTEL_ENDPOINT'];
-    try {
-      const output = generateClaudeSh(sampleConfig);
-      expect(output).toContain('export CLAUDE_CODE_ENABLE_TELEMETRY=1');
-      expect(output).toContain('export CLAUDE_CODE_ENHANCED_TELEMETRY_BETA=1');
-      expect(output).toContain('export OTEL_TRACES_EXPORTER=otlp');
-      // Post-#313: 4-layer chain — env > settings.local.json > MACF_OTEL_ENDPOINT > baked default
-      expect(output).toContain('MACF_OTEL_ENDPOINT="${MACF_OTEL_ENDPOINT:-http://localhost:14318}"');
-      expect(output).toContain('export OTEL_EXPORTER_OTLP_ENDPOINT="${OTEL_EXPORTER_OTLP_ENDPOINT:-$MACF_OTEL_ENDPOINT}"');
-    } finally {
-      if (backupDisabled !== undefined) process.env['MACF_OTEL_DISABLED'] = backupDisabled;
-      if (backupEndpoint !== undefined) process.env['MACF_OTEL_ENDPOINT'] = backupEndpoint;
-    }
-  });
-
-  it('omits the OTEL block when MACF_OTEL_DISABLED=1 at generate time', () => {
-    const backupDisabled = process.env['MACF_OTEL_DISABLED'];
-    process.env['MACF_OTEL_DISABLED'] = '1';
-    try {
-      const output = generateClaudeSh(sampleConfig);
-      expect(output).not.toContain('CLAUDE_CODE_ENABLE_TELEMETRY');
-      expect(output).not.toContain('OTEL_EXPORTER_OTLP_ENDPOINT');
-    } finally {
-      if (backupDisabled === undefined) delete process.env['MACF_OTEL_DISABLED'];
-      else process.env['MACF_OTEL_DISABLED'] = backupDisabled;
-    }
-  });
-});
-
-describe('claude-sh.ts tmux self-wrap + settings-driven identity (macf#313)', () => {
-  describe('settings-driven identity', () => {
-    it('emits macf_settings_get bash helper', () => {
-      const output = generateClaudeSh(sampleConfig);
-      expect(output).toContain('macf_settings_get() {');
-      expect(output).toContain('local var_name="$1"');
-      // Reads from .claude/settings.local.json relative to $SCRIPT_DIR
-      expect(output).toContain('"$SCRIPT_DIR/.claude/settings.local.json"');
-      // Uses jq with env-key path + // empty fallback
-      expect(output).toContain('jq -r ".env.${var_name} // empty"');
-      // Stderr suppressed for missing-jq / malformed-json cases
-      expect(output).toContain('2>/dev/null');
-    });
-
-    it('emits MACF_AGENT_NAME with three-layer priority', () => {
-      const output = generateClaudeSh(sampleConfig);
-      // Layer 1: env var wins (no rewrite when already set)
-      // Layer 2: settings.local.json `.env.MACF_AGENT_NAME`
-      expect(output).toContain('MACF_AGENT_NAME="${MACF_AGENT_NAME:-$(macf_settings_get MACF_AGENT_NAME)}"');
-      // Layer 3: baked default from config
-      expect(output).toContain('MACF_AGENT_NAME="${MACF_AGENT_NAME:-code-agent}"');
-      expect(output).toContain('export MACF_AGENT_NAME');
-    });
-
-    it('emits MACF_AGENT_ROLE with three-layer priority', () => {
-      const roleConfig: MacfAgentConfig = { ...sampleConfig, agent_role: 'science-agent' };
-      const output = generateClaudeSh(roleConfig);
-      expect(output).toContain('MACF_AGENT_ROLE="${MACF_AGENT_ROLE:-$(macf_settings_get MACF_AGENT_ROLE)}"');
-      expect(output).toContain('MACF_AGENT_ROLE="${MACF_AGENT_ROLE:-science-agent}"');
-      expect(output).toContain('export MACF_AGENT_ROLE');
-    });
-
-    it('emits MACF_OTEL_ENDPOINT four-layer chain (env > settings > template > hardcoded)', () => {
-      const output = generateClaudeSh(sampleConfig);
-      // Settings layer
-      expect(output).toContain('MACF_OTEL_ENDPOINT="${MACF_OTEL_ENDPOINT:-$(macf_settings_get MACF_OTEL_ENDPOINT)}"');
-      // Baked default layer
-      expect(output).toContain('MACF_OTEL_ENDPOINT="${MACF_OTEL_ENDPOINT:-http://localhost:14318}"');
-      // OTel canonical override pointing at MACF_OTEL_ENDPOINT (not direct hardcoded value)
-      expect(output).toContain('export OTEL_EXPORTER_OTLP_ENDPOINT="${OTEL_EXPORTER_OTLP_ENDPOINT:-$MACF_OTEL_ENDPOINT}"');
-    });
-
-    it('macf_settings_get is defined before any caller (function-not-defined hazard guard)', () => {
-      const output = generateClaudeSh(sampleConfig);
-      const helperPos = output.indexOf('macf_settings_get() {');
-      const firstCallerPos = output.indexOf('$(macf_settings_get');
-      expect(helperPos).toBeGreaterThan(0);
-      expect(firstCallerPos).toBeGreaterThan(helperPos);
-    });
-  });
-
-  describe('tmux self-wrap', () => {
-    it('emits tmux self-wrap block with $TMUX guard + MACF_NO_TMUX_WRAP opt-out', () => {
-      const output = generateClaudeSh(sampleConfig);
-      // Guard: bypass if already in tmux ($TMUX set) OR opt-out flag set
-      expect(output).toContain('if [ -z "${TMUX:-}" ] && [ "${MACF_NO_TMUX_WRAP:-}" != "1" ]; then');
-    });
-
-    it('emits canonical session name from MACF_PROJECT@MACF_AGENT_NAME', () => {
-      const output = generateClaudeSh(sampleConfig);
-      expect(output).toContain('SESSION_NAME="${MACF_PROJECT}@${MACF_AGENT_NAME}"');
-    });
-
-    it('emits has-session re-attach path with stderr suppressed', () => {
-      const output = generateClaudeSh(sampleConfig);
-      // Stderr suppressed handles stale-server-socket case (per
-      // science-agent's edge-case note)
-      expect(output).toContain('if tmux has-session -t "$SESSION_NAME" 2>/dev/null; then');
-      expect(output).toContain('exec tmux attach -t "$SESSION_NAME"');
-    });
-
-    it('emits tmux new-session create path with -c $SCRIPT_DIR + script re-exec', () => {
-      const output = generateClaudeSh(sampleConfig);
-      // -c sets the new session's start directory
-      // "$0" "$@" re-execs the script inside the new session
-      // Post-macf#340: multi-line form with -e env-isolation flags between
-      // exec and -s. Match the invariants that matter (presence of each
-      // canonical fragment) rather than the verbatim single-line form.
-      expect(output).toMatch(/exec tmux new-session\b/);
-      expect(output).toContain('-s "$SESSION_NAME"');
-      expect(output).toContain('-c "$SCRIPT_DIR"');
-      expect(output).toMatch(/"\$0" "\$@"/);
-    });
-
-    it('tmux wrap block comes AFTER MACF_PROJECT + MACF_AGENT_NAME exports (variable-resolution order)', () => {
-      const output = generateClaudeSh(sampleConfig);
-      const projectExportPos = output.indexOf('export MACF_PROJECT="TEST"');
-      const agentNamePos = output.indexOf('export MACF_AGENT_NAME');
-      const tmuxWrapPos = output.indexOf('if [ -z "${TMUX:-}" ]');
-      expect(projectExportPos).toBeGreaterThan(0);
-      expect(agentNamePos).toBeGreaterThan(0);
-      expect(tmuxWrapPos).toBeGreaterThan(0);
-      // Wrap MUST come after both — SESSION_NAME interpolates them
-      expect(tmuxWrapPos).toBeGreaterThan(projectExportPos);
-      expect(tmuxWrapPos).toBeGreaterThan(agentNamePos);
-    });
-
-    it('tmux wrap block comes BEFORE the final claude exec (re-exec hazard guard)', () => {
-      const output = generateClaudeSh(sampleConfig);
-      // The wrap re-execs the script inside tmux. The final claude exec
-      // must be reachable on the second invocation (when $TMUX is set).
-      // If the wrap comes AFTER claude, the script never reaches it on
-      // first invocation and can't deliver agent identity to claude.
-      const tmuxWrapPos = output.indexOf('if [ -z "${TMUX:-}" ]');
-      const claudeExecPos = output.indexOf('exec claude');
-      expect(tmuxWrapPos).toBeGreaterThan(0);
-      expect(claudeExecPos).toBeGreaterThan(0);
-      expect(tmuxWrapPos).toBeLessThan(claudeExecPos);
-    });
-
-    it('tmux wrap block does NOT bypass token generation or claude exec', () => {
-      // Regression guard: the tmux block uses `exec tmux` which replaces
-      // the process. The script after the wrap (token gen + claude exec)
-      // runs on the SECOND invocation (inside tmux, $TMUX set). The
-      // script doesn't have any `exit` statements that would skip later
-      // sections — only the conditional `exec` inside the if-block.
-      const output = generateClaudeSh(sampleConfig);
-      // Token gen + claude exec still present in the generated script
-      expect(output).toContain('GH_TOKEN=$("$SCRIPT_DIR/.claude/scripts/macf-gh-token.sh"');
-      expect(output).toContain('exec claude');
-    });
-  });
-
-  describe('substrate compat (regression guards)', () => {
-    it('does not break existing MACF_TEST escape hatch', () => {
-      const output = generateClaudeSh(sampleConfig);
-      // MACF_TEST=1 still bypasses -c (per macf#189 sub-item 4)
-      expect(output).toContain('if [ -n "${MACF_TEST:-}" ]; then');
-    });
-
-    it('does not break existing MACF_OTEL_DISABLED opt-out', () => {
-      const backupDisabled = process.env['MACF_OTEL_DISABLED'];
-      process.env['MACF_OTEL_DISABLED'] = '1';
-      try {
-        const output = generateClaudeSh(sampleConfig);
-        // No OTEL block + no MACF_OTEL_ENDPOINT line either
-        expect(output).not.toContain('CLAUDE_CODE_ENABLE_TELEMETRY');
-        expect(output).not.toContain('MACF_OTEL_ENDPOINT');
-      } finally {
-        if (backupDisabled === undefined) delete process.env['MACF_OTEL_DISABLED'];
-        else process.env['MACF_OTEL_DISABLED'] = backupDisabled;
-      }
-    });
-
-    it('preserves managed-file header (operators see "do not edit directly")', () => {
-      const output = generateClaudeSh(sampleConfig);
-      expect(output).toContain('# This file is managed by `macf`. Do not edit directly');
-    });
-  });
-
-  describe('local-registry mode (DR-024 / macf#322 PR-B)', () => {
-    // Local-mode launcher contract:
-    //   - No GH_TOKEN mint (no macf-gh-token.sh helper invocation)
-    //   - No GH_TOKEN export
-    //   - No APP_ID / INSTALL_ID / KEY_PATH exports
-    //   - MACF_REGISTRY_TYPE="local" + MACF_REGISTRY_PATH=<absolute path>
-    //   - CA paths point at the registry-co-located CA (not ~/.macf/certs/)
-    //   - Synthetic-identity comment block in place of the bot identity
-    //
-    // The `github_app` config field is undefined in local mode (DR-024
-    // §"Decision rule for future PRs" 1).
-    const localConfig: MacfAgentConfig = {
-      project: 'localproj',
-      agent_name: 'paper-agent',
-      agent_role: 'paper-agent',
-      agent_type: 'permanent',
-      registry: { type: 'local', path: '/home/op/.macf/registry/localproj.json' },
-      versions: { cli: '0.1.0', plugin: '0.1.0', actions: 'v1' },
-      // github_app intentionally omitted — DR-024 marks it optional.
-    };
-
-    it('does NOT emit the macf-gh-token.sh fail-loud block', () => {
-      const output = generateClaudeSh(localConfig);
-      expect(output).not.toContain('macf-gh-token.sh');
-      expect(output).not.toContain('GH_TOKEN=$(');
-    });
-
-    it('does NOT export GH_TOKEN', () => {
-      const output = generateClaudeSh(localConfig);
-      expect(output).not.toContain('export GH_TOKEN');
-    });
-
-    it('does NOT export APP_ID / INSTALL_ID / KEY_PATH', () => {
-      const output = generateClaudeSh(localConfig);
-      expect(output).not.toContain('export APP_ID');
-      expect(output).not.toContain('export INSTALL_ID');
-      expect(output).not.toContain('export KEY_PATH');
-    });
-
-    it('exports MACF_REGISTRY_TYPE="local" + MACF_REGISTRY_PATH=<path>', () => {
-      const output = generateClaudeSh(localConfig);
-      expect(output).toContain('export MACF_REGISTRY_TYPE="local"');
-      expect(output).toContain(
-        'export MACF_REGISTRY_PATH="/home/op/.macf/registry/localproj.json"',
-      );
-    });
-
-    it('points MACF_CA_CERT / MACF_CA_KEY at registry-co-located CA paths', () => {
-      // DR-024 §"Cert flow": the CA lives next to the registry file
-      // at <dir>/<project>.ca.{crt,key}. The launcher must export
-      // those paths so the channel-server can load the CA for mTLS.
-      const output = generateClaudeSh(localConfig);
-      expect(output).toContain(
-        'export MACF_CA_CERT="/home/op/.macf/registry/localproj.ca.crt"',
-      );
-      expect(output).toContain(
-        'export MACF_CA_KEY="/home/op/.macf/registry/localproj.ca.key"',
-      );
-    });
-
-    it('includes synthetic-identity comment block (no bot login attribution)', () => {
-      const output = generateClaudeSh(localConfig);
-      // The block surfaces the explicit "no GitHub here" trade-off
-      // rather than emitting silent gaps in the launcher.
-      expect(output).toContain('local-registry mode');
-      expect(output).toContain(
-        'echo "Starting paper-agent (paper-agent) [local-registry mode]..."',
-      );
-    });
-
-    it('does NOT emit GIT_AUTHOR_NAME / GIT_COMMITTER_NAME (no bot identity)', () => {
-      // GitHub mode tags commits as `<agent>[bot]`; local mode lets
-      // commits land as the local user (DR-024 §"Routing trade-offs").
-      const output = generateClaudeSh(localConfig);
-      expect(output).not.toContain('GIT_AUTHOR_NAME');
-      expect(output).not.toContain('GIT_COMMITTER_NAME');
-    });
-
-    it('preserves shared exports (MACF_PROJECT, MACF_AGENT_NAME, MACF_HOST, etc.)', () => {
-      // The launcher's identity + transport-shape stays the same across
-      // GitHub and local modes — only the GitHub-coupled steps swap.
-      const output = generateClaudeSh(localConfig);
-      expect(output).toContain('export MACF_PROJECT="localproj"');
-      expect(output).toContain('MACF_AGENT_NAME="${MACF_AGENT_NAME:-paper-agent}"');
-      expect(output).toContain('export MACF_HOST="0.0.0.0"');
-      expect(output).toContain('export MACF_AGENT_CERT="$SCRIPT_DIR/.macf/certs/agent-cert.pem"');
-    });
-
-    it('still emits exec claude (launches the TUI same as GitHub mode)', () => {
-      // Launching Claude is mode-independent — only the env exports change.
-      const output = generateClaudeSh(localConfig);
-      expect(output).toContain('exec claude -c --plugin-dir');
-    });
   });
 });
