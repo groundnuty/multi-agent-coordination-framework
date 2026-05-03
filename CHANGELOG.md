@@ -9,6 +9,61 @@ Plugin + routing-workflow changes ship from separate repos
 [`groundnuty/macf-actions`](https://github.com/groundnuty/macf-actions))
 and are not included here — pin them explicitly in each workspace.
 
+## [0.2.17] — 2026-05-03
+
+Single hotfix release for the tmux server-global env leak that broke
+multi-agent-per-project deployments. Operator hit it on PPAM 2026
+macbook (4-hour debug session with science-agent root-caused).
+
+### Fixed
+- **claude.sh tmux self-wrap env-isolation ([#341], closes [#340])** —
+  when `tmux new-session` runs against an already-running tmux server,
+  the new session's env initializes from the SERVER'S GLOBAL env (set
+  once at server-start), NOT the calling shell's env. So a second
+  `./claude.sh` from a different workspace inherited the FIRST agent's
+  `MACF_AGENT_NAME` from server-global; the `${VAR:-default}` shortcut
+  in the inner shell preserved the leaked value, causing
+  AGENT_COLLISION on register. Bug latent since macf#313 (v0.2.10)
+  introduced the self-wrap; only manifests in 2-agents-per-project
+  deployments. PPAM 2026 paper-and-code workspaces hit it 2026-05-03.
+
+  Fix: build `MACF_TMUX_E_ARGS` array dynamically from
+  `env | grep -E "^MACF_"` and pass each via `-e VAR=VAL` to
+  `tmux new-session`. Pattern-driven rather than hard-coded var list:
+  - Single source of truth = the grep pattern (`^MACF_`)
+  - Future MACF_* additions auto-included; no risk of forgetting to
+    update a maintained list
+  - Vars set AFTER the wrap (cert paths, App creds, OTel) are
+    naturally absent from the wrap-time env — they're set fresh by
+    inner re-execed shell, so no leak risk
+  - Works in local mode without conditional logic (fewer pre-wrap
+    vars; grep finds what's there; empty result → empty array →
+    clean tmux invocation)
+  - `|| true` after grep tolerates no-match case under
+    `set -euo pipefail`
+  - Doesn't pollute negative-string test assertions (no var names in
+    template source)
+
+  The actual leak surface is only `${VAR:-default}`-resolved vars
+  set BEFORE the wrap = `MACF_AGENT_NAME` + `MACF_AGENT_ROLE`. Vars
+  using unconditional `export` re-set per invocation regardless of
+  any leak. Pattern-grep covers this surface cleanly.
+
+  Architectural follow-up (multi-file env layout in
+  `.claude/.macf/env.{telemetry,identity,github,certs}`) deferred to
+  v0.2.18 per @macf-science-agent's note — broader scoping beyond
+  this fix's bug-fix scope.
+
+  7 regression tests at `test/cli/claude-sh.test.ts` describe
+  "tmux self-wrap env-isolation (macf#340)": env-grep pattern emitted,
+  read-loop appends `-e` flags, expansion into tmux invocation,
+  attach-branch unchanged, opt-out gate preserved, same template
+  across agent_name/role variations, defensive `|| true`. Plus 1
+  existing test updated for the new multi-line shape.
+
+[#340]: https://github.com/groundnuty/macf/issues/340
+[#341]: https://github.com/groundnuty/macf/pull/341
+
 ## [0.2.16] — 2026-05-02
 
 Single hotfix release for the GitHub-mode plugin-CLI token-staleness
