@@ -46,6 +46,12 @@ import { installGhTokenHook, installPluginSkillPermissions, installSandboxFdAllo
 import { detectStaleDist, detectUnknownFreshness } from '../build-info.js';
 import { fetchPluginToWorkspace, workspacePluginDir } from '../plugin-fetcher.js';
 import { writeClaudeSh } from '../claude-sh.js';
+import {
+  refreshEnvFiles,
+  migrateMonolithicClaudeSh,
+  detectSettingsLocalEnvKeys,
+  formatDeprecationWarning,
+} from '../env-files-update.js';
 import { createClientFromConfig } from '../registry-helper.js';
 import { generateToken } from '@groundnuty/macf-core';
 import { promptPassword, PromptCancelled } from '../prompt.js';
@@ -68,6 +74,21 @@ export interface UpdateOptions {
    * `--yes` still wins (bypass).
    */
   readonly confirm?: boolean;
+  /**
+   * Skip the monolithic→multi-file claude.sh migration AND the
+   * env-file refresh step (macf#342 PR-C). Operator opt-out for
+   * workspaces that intentionally keep the pre-#342 monolithic
+   * launcher (e.g., an out-of-tree fork that has hand-edited
+   * claude.sh and doesn't want it auto-rewritten). Migration is
+   * normally auto-detection-gated; this flag is a hard skip.
+   *
+   * Note: skipping does NOT roll back a workspace already migrated.
+   * The opt-out is for the migration step only; once the thin
+   * template + env files are on disk, they keep being the source
+   * of truth. To revert, the operator restores their pre-#342
+   * claude.sh from git (or runs `macf init --force`).
+   */
+  readonly noMigrateEnvFiles?: boolean;
 }
 
 type Component = 'cli' | 'plugin' | 'actions';
@@ -264,14 +285,79 @@ export async function update(
   installSandboxExcludedCommands(projectDir);
   console.log(`Refreshed sandbox excludedCommands in .claude/settings.json`);
 
-  // Regenerate claude.sh unconditionally — the launcher template changes
-  // over time (e.g., #60 added --plugin-dir) and workspaces need those
-  // changes without having to re-run `macf init` from scratch. The
-  // generated file carries a managed-file header warning users not to
-  // edit it. See #63. Doesn't depend on config.versions, so it runs even
-  // for legacy configs (before the error-exit for missing versions).
-  writeClaudeSh(projectDir, config);
-  console.log(`Refreshed claude.sh from current launcher template`);
+  // macf#342 PR-C: monolithic→multi-file migration + claude.sh refresh
+  // + per-concern env-file refresh. The three steps run as a unit
+  // because they're tightly coupled — the thin claude.sh template (PR-B)
+  // depends on the env files existing, so we never want claude.sh
+  // refreshed without the env files alongside it. Likewise, migration
+  // writes both in lockstep for workspaces upgrading from a pre-#342
+  // monolithic launcher.
+  //
+  // **Operator opt-out**: `--no-migrate-env-files` skips ALL THREE steps
+  // (migration, claude.sh refresh, env-file refresh). The flag is for
+  // operators with a hand-modified launcher who explicitly don't want
+  // it auto-rewritten; the trade-off is they also miss any unrelated
+  // launcher template evolution (e.g., a future #283-style endpoint
+  // fix) on runs where they pass the flag. Removing the flag on a
+  // subsequent run reapplies the canonical template + migration.
+  //
+  // **Migration order**: `migrateMonolithicClaudeSh` MUST run before
+  // `writeClaudeSh`, because writeClaudeSh emits the thin source-loop
+  // template that depends on env files; if writeClaudeSh ran first, the
+  // operator's claude.sh would become thin without env files on disk
+  // until refreshEnvFiles ran later — leaving a brief window where the
+  // launcher would source nothing. Migration writes both atomically.
+  if (!opts.noMigrateEnvFiles) {
+    const migration = migrateMonolithicClaudeSh(projectDir, config);
+    if (migration.migrated) {
+      console.log(
+        `Migrated monolithic claude.sh → thin source-loop template + ` +
+          `per-concern env files (macf#342)`,
+      );
+    } else if (migration.reason === 'unrecognized-template') {
+      // Operator-edited / third-party launcher. Don't auto-overwrite
+      // here, but `writeClaudeSh` below WILL overwrite per the existing
+      // #63 contract — surface the case so the operator can decide
+      // whether to re-run with `--no-migrate-env-files`.
+      console.warn(
+        `Note: claude.sh did not match the canonical macf template. ` +
+          `Will be overwritten with the current template (managed-file contract).`,
+      );
+    }
+
+    // Regenerate claude.sh unconditionally — the launcher template
+    // changes over time (e.g., #60 added --plugin-dir, #283 fixed the
+    // retired :4318 OTLP endpoint) and workspaces need those changes
+    // without having to re-run `macf init` from scratch. The generated
+    // file carries a managed-file header warning users not to edit it.
+    // See #63. Doesn't depend on config.versions, so it runs even for
+    // legacy configs (before the error-exit for missing versions).
+    writeClaudeSh(projectDir, config);
+    console.log(`Refreshed claude.sh from current launcher template`);
+
+    // Env-file refresh: macf-managed files (env._helpers / env.identity
+    // / env.github / env.certs / env.registry) overwrite + warn-on-
+    // handedit; operator-managed files (env.telemetry, env.tmux)
+    // bootstrap-write if absent + preserve unconditionally otherwise.
+    const refresh = refreshEnvFiles(projectDir, config);
+    const summary =
+      `Env: refreshed ${refresh.refreshed.length} macf-managed file(s); ` +
+      `preserved ${refresh.preserved.length} operator-managed file(s); ` +
+      `warned on ${refresh.warnedHandEdits.length} hand-edit(s)`;
+    console.log(summary);
+  }
+
+  // macf#342 PR-C deprecation surface: settings.local.json env keys
+  // matching MACF_* / OTEL_* are now redundant with the per-concern
+  // env files. Backward-compat preserved structurally (macf_settings_get
+  // still reads them at runtime); this warning gives operators a window
+  // to migrate. No automatic JSON-key migration in this PR — the risk
+  // surface is too broad (operator may intentionally have layered
+  // overrides). See env-files-update.ts for the full rationale.
+  const deprecatedKeys = detectSettingsLocalEnvKeys(projectDir);
+  if (deprecatedKeys.length > 0) {
+    process.stderr.write(formatDeprecationWarning(deprecatedKeys));
+  }
 
   // DR-011 rev2 auto-migrate: check for legacy v1 CA key backup and
   // upgrade it to v2 (JSON envelope at 600k iters) if found. One-time
