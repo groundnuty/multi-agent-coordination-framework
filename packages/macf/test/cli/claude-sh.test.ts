@@ -76,6 +76,40 @@ describe('generateClaudeSh', () => {
       expect(output).toContain('if [ -d "$SCRIPT_DIR/.claude/.macf" ]; then');
     });
 
+    it('canonical env files sort with env._helpers FIRST (alphabetical glob; _ < lowercase a-z)', () => {
+      // Per macf#342 helper-strategy decision (option v): env._helpers
+      // sorts before env.identity etc. via shell glob, so its
+      // macf_settings_get definition is available when env.identity +
+      // env.telemetry call it. Pin the invariant: if any canonical file
+      // is renamed in a way that breaks this sort order, this test fails.
+      const canonicalFiles = [
+        'env._helpers',
+        'env.certs',
+        'env.github',
+        'env.identity',
+        'env.registry',
+        'env.telemetry',
+        'env.tmux',
+      ];
+      const sorted = [...canonicalFiles].sort();
+      expect(sorted).toEqual(canonicalFiles);
+      expect(sorted[0]).toBe('env._helpers');
+    });
+
+    it('docs the operator-custom-env-file convention to avoid the env.UPPERCASE trap (macf#342)', () => {
+      // Bash glob sorts ASCII: uppercase A-Z (0x41-0x5A) BEFORE underscore
+      // (0x5F) BEFORE lowercase a-z. So an operator-added file
+      // `env.UPPERCASE_OVERRIDE` would sort BEFORE `env._helpers` and
+      // source in a context without macf_settings_get defined yet.
+      // Documented operator convention: env.local.* or env.zz.* prefix
+      // (sort post-canonical). Verify the comment block in claude.sh
+      // documents this so operators see it before falling into the trap.
+      const output = generateClaudeSh(sampleConfig);
+      expect(output).toMatch(/env\.local\./);
+      expect(output).toMatch(/env\.zz\./);
+      expect(output).toMatch(/UPPERCASE/);
+    });
+
     it('source-loop happens BEFORE the tmux self-wrap (so AGENT_NAME is set in env captured by -e flags)', () => {
       const output = generateClaudeSh(sampleConfig);
       const sourcePos = output.indexOf('for f in "$SCRIPT_DIR/.claude/.macf"/env.*');
