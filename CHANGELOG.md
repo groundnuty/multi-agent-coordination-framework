@@ -9,6 +9,53 @@ Plugin + routing-workflow changes ship from separate repos
 [`groundnuty/macf-actions`](https://github.com/groundnuty/macf-actions))
 and are not included here — pin them explicitly in each workspace.
 
+## [0.2.19] — 2026-05-03
+
+Single hotfix release for a v0.2.18 wiring regression that silently
+skipped the entire multi-file env layout migration on `macf update`.
+Operator hit it on CV workspaces immediately after v0.2.18 publish.
+
+### Fixed
+- **`macf update --all --yes` migration block silently skipped
+  ([#348], closes [#347])** — `index.ts` registered the
+  `--no-migrate-env-files` option with an explicit `false` 3rd-arg
+  default. Commander v14's `--no-<flag>` convention auto-defaults
+  `opts.migrateEnvFiles` to `true` so the flag can flip it to `false`
+  when passed. Adding the explicit `false` 3rd-arg CONFLICTED with the
+  convention and made `opts.migrateEnvFiles` always-`false` regardless
+  of whether the flag was passed. The action handler's translation
+  `noMigrateEnvFiles = opts.migrateEnvFiles === false` then evaluated
+  to `true` on every invocation. The migration block in `update.ts`
+  (gated on `!opts.noMigrateEnvFiles`) skipped on every `macf update`
+  call. v0.2.18 architectural release shipped its surface but not its
+  operator-facing benefit.
+
+  Empirically reproduced via standalone commander v14 test before
+  applying the fix; verified the canonical (no 3rd-arg-default) form
+  returns `migrateEnvFiles: true` by default.
+
+  Fix: drop the `, false` 3rd-arg. Comment block in index.ts cites
+  macf#347 + the framework-default-conflict gotcha.
+
+  4 regression tests at `test/cli/no-migrate-env-files-flag.test.ts`:
+  default-no-flag → `migrateEnvFiles=true`; with-flag →
+  `migrateEnvFiles=false`; action-handler translation distinguishes
+  both; **static source-shape regression** reads index.ts source +
+  asserts the option line MUST NOT include an explicit 3rd-arg
+  default (catches future re-introduction at unit-test time).
+
+  Discipline lessons captured:
+  - `feedback_commander_no_flag_default_conflict.md` — specific
+    framework-convention gotcha
+  - `feedback_silent_default_fallback_class.md` — class-level
+    pattern covering 3 instances across 2 days (macf#332 +
+    macf#335 + macf#347): default-fallback masks the actual surface
+    failure; counter-discipline: source-shape tests +
+    verify-actual-source-not-just-resolver-output
+
+[#347]: https://github.com/groundnuty/macf/issues/347
+[#348]: https://github.com/groundnuty/macf/pull/348
+
 ## [0.2.18] — 2026-05-03
 
 Architectural release: multi-file env layout in `<workspace>/.claude/.macf/env.*`
