@@ -112,6 +112,39 @@ describe('PeerNotificationPayloadSchema (macf#256, DR-023 UC-1)', () => {
     expect(wide.source).toBe('macf-tester-1-agent');
     expect(wide.event).toBe('session-end');
   });
+
+  it('accepts wake=true (macf#351 opt-in)', () => {
+    const result = PeerNotificationPayloadSchema.parse({
+      type: 'peer_notification',
+      source: 'operator',
+      event: 'custom',
+      wake: true,
+    });
+    expect(result.wake).toBe(true);
+  });
+
+  it('omits wake when absent — Pattern E preserved (macf#351)', () => {
+    // Regression: hooks.json's Stop entry never sets `wake`. The schema
+    // MUST accept the omission AND return the parsed object without
+    // synthesizing a default value. Receiver-side `decideWake` treats
+    // `wake !== true` as skip → loop prevention preserved.
+    const result = PeerNotificationPayloadSchema.parse({
+      type: 'peer_notification',
+      source: 'macf-tester-1-agent',
+      event: 'session-end',
+    });
+    expect(result.wake).toBeUndefined();
+  });
+
+  it('parses wake field via wider NotifyPayloadSchema (macf#351)', () => {
+    const wide = NotifyPayloadSchema.parse({
+      type: 'peer_notification',
+      source: 'operator',
+      event: 'custom',
+      wake: true,
+    });
+    expect(wide.wake).toBe(true);
+  });
 });
 
 describe('PrReviewStatePayloadSchema (macf-actions#39, v3.3.0)', () => {

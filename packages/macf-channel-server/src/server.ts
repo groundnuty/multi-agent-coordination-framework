@@ -26,6 +26,7 @@ import { loadCA } from '@groundnuty/macf-core';
 import { HttpError } from '@groundnuty/macf-core';
 import { formatNotifyContent } from './notify-formatter.js';
 import { wakeViaTmux } from './tmux-wake.js';
+import { decideWake } from './wake-decision.js';
 import type { NotifyPayload, SignRequest } from '@groundnuty/macf-core';
 
 // NOTE: `checkPendingIssues` from './startup-issues.js' used to be
@@ -135,20 +136,42 @@ async function main(): Promise<void> {
     // session, helper missing, tmux command errors).
     //
     // macf#267 Finding 2 (Option d): peer_notification is observational
-    // only — MCP push deposits the notification in channel state for
-    // /macf-status visibility, but tmux wake is suppressed. This stops
-    // the cross-agent Stop-hook ping-pong loop: peer notifications no
-    // longer trigger fresh turns on receivers, so receivers don't fire
-    // their own Stop hooks in response. SessionStart polling-fallback
-    // (DR-020) catches notifications on next session start if needed.
-    // All other NotifyTypes (issue_routed, mention, startup_check,
-    // ci_completion) preserve existing wake-on-receipt behavior.
-    if (payload.type === 'peer_notification') {
+    // only by default — MCP push deposits the notification in channel
+    // state for /macf-status visibility, but tmux wake is suppressed.
+    // This stops the cross-agent Stop-hook ping-pong loop: peer
+    // notifications don't trigger fresh turns on receivers, so receivers
+    // don't fire their own Stop hooks in response. SessionStart polling-
+    // fallback (DR-020) catches notifications on next session start if
+    // needed. All other NotifyTypes (issue_routed, mention,
+    // startup_check, ci_completion) preserve existing wake-on-receipt
+    // behavior.
+    //
+    // macf#351: operator-driven invocations (slash command in macf#350)
+    // can opt in to tmux wake by setting `wake: true` on the payload.
+    // The cross-agent loop hazard does NOT apply when the trigger is a
+    // human typing into one TUI — the loop fires only on Stop-hook
+    // chains where receiver's wake → fresh turn → receiver's Stop hook
+    // → echo back. Operator-driven calls have a non-recurring trigger.
+    // Stop-hook autonomous flows continue to omit `wake` (default false)
+    // → loop prevention preserved.
+    const wakeDecision = decideWake(payload);
+    if (wakeDecision.action === 'skip') {
       logger.info('tmux_wake_skipped', {
-        reason: 'peer_notification_observational',
+        reason: wakeDecision.reason,
         detail: 'macf#267 Option d — peer notifications skip tmux wake to prevent cross-agent Stop-hook loop',
       });
     } else if (config.workspaceDir !== undefined) {
+      // macf#351: surface the wake-opt-in path explicitly when a
+      // peer_notification arrives with wake=true. The downstream
+      // wakeViaTmux call already logs `tmux_wake_delivered` on success,
+      // but that event is identical for routed-issue / mention / opt-in
+      // calls — this annotation makes the opt-in cause visible.
+      if (wakeDecision.reason === 'peer_notification_wake_opt_in') {
+        logger.info('peer_notification_wake_opt_in', {
+          source: payload.source ?? 'unknown',
+          event: payload.event ?? 'unknown',
+        });
+      }
       // Use the formatted content as the wake prompt — same text
       // Claude would see via the MCP channel, just delivered
       // through the input buffer path so it becomes an actual turn.

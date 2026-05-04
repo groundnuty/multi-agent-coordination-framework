@@ -48,6 +48,8 @@ export const NotifyPeerInputSchema = {
     .describe('Optional human-readable message body.'),
   context: z.record(z.string(), z.unknown()).optional()
     .describe('Optional structured context payload (string-keyed object).'),
+  wake: z.boolean().optional()
+    .describe('If true, request the receiver tmux wake on receipt (cancels Pattern E skip-wake for this call). Default: false (preserve Pattern E for Stop-hook-driven flows; prevents cross-agent Stop-hook loops).'),
 } as const;
 
 export const NotifyPeerOutputSchema = {
@@ -75,6 +77,13 @@ export interface NotifyPeerInput {
   readonly event: 'session-end' | 'turn-complete' | 'error' | 'custom';
   readonly message?: string;
   readonly context?: Record<string, unknown>;
+  /**
+   * macf#351: when true, the receiver wakes its tmux TUI in addition to
+   * the MCP push (cancels Pattern E skip-wake). Default false preserves
+   * Pattern E for Stop-hook autonomous flows so cross-agent Stop-hook
+   * loops stay structurally prevented.
+   */
+  readonly wake?: boolean;
 }
 
 export interface NotifyPeerResult {
@@ -250,6 +259,12 @@ export async function notifyPeer(
           event: input.event,
           ...(input.message !== undefined ? { message: input.message } : {}),
           ...(input.context !== undefined ? { context: input.context } : {}),
+          // macf#351: forward `wake` only when caller set it explicitly.
+          // Omitting the field on the wire when undefined keeps the
+          // POST body shape-compatible with pre-#351 receivers (they
+          // ignore unknown fields per Zod's default `.passthrough()`-off
+          // behavior — the schema reads but doesn't preserve unknowns).
+          ...(input.wake === true ? { wake: true } : {}),
         };
 
         const results = await Promise.all(
