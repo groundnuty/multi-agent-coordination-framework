@@ -9,6 +9,63 @@ Plugin + routing-workflow changes ship from separate repos
 [`groundnuty/macf-actions`](https://github.com/groundnuty/macf-actions))
 and are not included here — pin them explicitly in each workspace.
 
+## [0.2.22] — 2026-05-04
+
+OTel resource-attribute identity plumbing. Replaces the literal
+`service.namespace=macf` in `env.telemetry` with shell-expanded
+identity-bearing attributes so Tempo / Loki / Prometheus can
+distinguish PPAM agents on macbook from VM substrate, and adds
+`service.version` for release-cadence correlation queries.
+
+### Added
+- **9-attribute OTel resource set on `env.telemetry`
+  ([#358], closes [#357])** — `OTEL_RESOURCE_ATTRIBUTES` now carries:
+
+  | Attribute | Source |
+  |---|---|
+  | `service.namespace` | `${MACF_PROJECT}` (was: literal `macf`) |
+  | `service.version` | `${MACF_VERSION:-unknown}` (NEW; baked from `versions.cli`) |
+  | `service.instance.id` | `${MACF_PROJECT}-${MACF_AGENT_NAME}@$(hostname -s)` |
+  | `host.name` | `$(hostname -s)` (NEW) |
+  | `gen_ai.agent.name` / `role` | `${MACF_AGENT_NAME}` / `${MACF_AGENT_ROLE}` |
+  | `macf.framework=macf` | literal (NEW; designed all-macf-agents filter) |
+  | `macf.agent.type` | `${MACF_AGENT_TYPE}` (NEW) |
+  | `macf.registry.type` | `${MACF_REGISTRY_TYPE}` (NEW) |
+
+  Shell-var expansion picks up `env.identity`'s 3-layer settings
+  priority (operator overrides for `MACF_AGENT_NAME` / `MACF_AGENT_ROLE`
+  via `settings.local.json` survive) and `env.registry`'s mode
+  discrimination. `env.telemetry` sources after `env.identity` +
+  `env.registry` per alphabetical glob, so vars are available at
+  export time.
+
+  `MACF_VERSION` baked literal from `.macf/macf-agent.json` `versions.cli`
+  at template-write time. Falls back to `unknown` via
+  `${MACF_VERSION:-unknown}` for substrate / pre-P6 workspaces lacking
+  the versions block — well-formed label, not empty-string.
+
+  `gen_ai.system` intentionally NOT set — Claude Code's SDK auto-sets
+  it for the LLM provider; overwriting would mislabel telemetry.
+
+  `env.telemetry` remains operator-managed per macf#342 — bootstrap-
+  write on first `macf update` if absent; preserved unconditionally
+  otherwise. **Operator-side note**: `MACF_VERSION` does NOT auto-
+  refresh on subsequent `macf update`s (operator-managed contract
+  trumps automatic version refresh). To pick up a new pinned version,
+  delete `env.telemetry` and re-run `macf update`, or hand-edit the
+  `MACF_VERSION` line. Documented in `docs/configuration.md`.
+
+  Enables paper-grade query patterns:
+  - `macf.framework="macf" AND service.namespace="ppam-2026"` — just PPAM
+  - `macf.framework="macf" AND service.version="0.2.20"` — pre-/post-release behavior comparison
+  - `macf.framework="macf" AND macf.registry.type="local"` — coordination-mode dimension
+
+  1296 tests green (827 macf + 173 channel-server + 296 core; +12
+  from #357).
+
+[#357]: https://github.com/groundnuty/macf/issues/357
+[#358]: https://github.com/groundnuty/macf/pull/358
+
 ## [0.2.21] — 2026-05-04
 
 Fast-follow refactor for v0.2.20. Removes the `wake?: boolean` field
