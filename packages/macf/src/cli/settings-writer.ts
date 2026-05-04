@@ -131,7 +131,7 @@ function readSettings(path: string): Settings {
 }
 
 /**
- * Permission patterns pre-approving the 4 `macf-agent` plugin skills.
+ * Permission patterns pre-approving the `macf-agent` plugin skills.
  * Without these, every first invocation of a skill (e.g. `/macf-status`
  * during the SessionStart auto-pickup hook) fires an interactive
  * approval dialog — blocking autonomy for the time operator takes to
@@ -147,15 +147,17 @@ function readSettings(path: string): Settings {
  * anything shipped under the plugin namespace including future
  * unreviewed additions; we opt out of that security posture.
  *
- * Keep in lockstep with the 4 skills shipped by
+ * Keep in lockstep with the skills shipped by
  * `groundnuty/macf-marketplace/macf-agent/skills/`. When plugin adds
- * a skill, add its pattern here + bump CLI version.
+ * a skill, add its pattern here + bump CLI version. macf#350 added
+ * `macf-notify-peer` (operator-driven cross-agent messaging slash-command).
  */
 export const PLUGIN_SKILL_PERMISSIONS: readonly string[] = [
   'Skill(macf-agent:macf-status)',
   'Skill(macf-agent:macf-issues)',
   'Skill(macf-agent:macf-peers)',
   'Skill(macf-agent:macf-ping)',
+  'Skill(macf-agent:macf-notify-peer)',
 ];
 
 /**

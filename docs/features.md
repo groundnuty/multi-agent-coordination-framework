@@ -42,7 +42,7 @@ The merge-view fix (PR #306, v0.2.9) closed a false-positive WARN trap: pre-fix 
 
 Distributed via [`groundnuty/macf-marketplace`](https://github.com/groundnuty/macf-marketplace) at version pinned by `macf init`. Loaded by Claude Code via `claude --plugin-dir <workspace>/.macf/plugin`. Manifest at `.claude-plugin/plugin.json`.
 
-### 4 skills (slash commands)
+### 5 skills (slash commands)
 
 | Skill | What it does |
 |---|---|
@@ -50,8 +50,11 @@ Distributed via [`groundnuty/macf-marketplace`](https://github.com/groundnuty/ma
 | `/macf-peers` | mTLS peer-health table — list of registered peers with reachability + cert info |
 | `/macf-ping` | Round-trip mTLS test — POST `/health` against a named peer; report latency + cert chain |
 | `/macf-issues` | Pending-work queue — open issues tagged for this agent, with `agent-offline` highlighted |
+| `/macf-notify-peer` | Send a peer notification (operator-driven cross-agent messaging). Wraps the `notify_peer` MCP tool with one-line minimal output by default — minimizes context-token consumption per macf#350. |
 
 Pre-approved in `.claude/settings.json` per `installPluginSkillPermissions` so first-invocation doesn't fire an interactive permission prompt. Implementation: `packages/macf/src/plugin/`. Backing CLI: `macf-plugin-cli` binary.
+
+`/macf-notify-peer` is the operator-driven counterpart to the autonomous Stop-hook `notify_peer` invocation: it defaults `wake: true` (cancels Pattern E for that one call so the receiver TUI visibly wakes) and emits a one-line confirmation (`→ <peer> [<event>] delivered=<bool>`). Use `--no-wake` to skip the wake (preserves Pattern E); use `--verbose` to opt back into the full JSON result for debugging.
 
 ### 7 agent identity templates
 
