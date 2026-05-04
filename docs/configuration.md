@@ -162,7 +162,7 @@ export MACF_REGISTRY_REPO="my-org/coordination-repo"
 
 **Owner**: operator-managed. Bootstrap-written on first `macf update` if absent; preserved unconditionally otherwise.
 
-**Vars defined**: `CLAUDE_CODE_ENABLE_TELEMETRY`, `CLAUDE_CODE_ENHANCED_TELEMETRY_BETA`, `OTEL_TRACES_EXPORTER`, `OTEL_METRICS_EXPORTER`, `OTEL_LOGS_EXPORTER`, `MACF_OTEL_ENDPOINT`, `OTEL_EXPORTER_OTLP_ENDPOINT`, `OTEL_EXPORTER_OTLP_PROTOCOL`, `OTEL_SERVICE_NAME`, `OTEL_RESOURCE_ATTRIBUTES`.
+**Vars defined**: `CLAUDE_CODE_ENABLE_TELEMETRY`, `CLAUDE_CODE_ENHANCED_TELEMETRY_BETA`, `OTEL_TRACES_EXPORTER`, `OTEL_METRICS_EXPORTER`, `OTEL_LOGS_EXPORTER`, `MACF_OTEL_ENDPOINT`, `OTEL_EXPORTER_OTLP_ENDPOINT`, `OTEL_EXPORTER_OTLP_PROTOCOL`, `MACF_VERSION`, `OTEL_SERVICE_NAME`, `OTEL_RESOURCE_ATTRIBUTES`.
 
 Three independent telemetry-signal gates — ALL required for the corresponding signal to emit:
 
@@ -174,11 +174,47 @@ Three independent telemetry-signal gates — ALL required for the corresponding 
 
 **Minimal placeholder** when `MACF_OTEL_DISABLED=1` is set at `macf init` / `macf update` time (per macf#197): the body shrinks to a comment explaining the opt-out — no OTel exports emitted, sourcing the file is a no-op.
 
+**Resource-attribute set (macf#357)**: `OTEL_RESOURCE_ATTRIBUTES` carries 9 identity-bearing labels for cross-project / cross-host attribution. Most use shell-variable expansion (resolved at export time from `env.identity` + `env.registry` which source first per the alphabetical glob); `MACF_VERSION` is the only baked literal.
+
+| Attribute | Source | Purpose |
+|---|---|---|
+| `service.namespace` | `${MACF_PROJECT}` | Per OTel semconv; the project (e.g., `ppam-2026`, `cv`) — closes cross-project label collision |
+| `service.version` | `${MACF_VERSION:-unknown}` | Macf CLI version pinned in `.macf/macf-agent.json` `versions.cli`; baked at `macf init` / `macf update` time. Falls back to `unknown` for substrate / hand-configured workspaces. |
+| `service.instance.id` | `${MACF_PROJECT}-${MACF_AGENT_NAME}@$(hostname -s)` | Distinguishes same-named agents on different hosts (PPAM macbook vs VM substrate) |
+| `host.name` | `$(hostname -s)` | VM vs macbook distinction |
+| `gen_ai.agent.name` / `role` | `${MACF_AGENT_NAME}` / `${MACF_AGENT_ROLE}` | Picks up `settings.local.json` overrides via `env.identity`'s 3-layer settings priority |
+| `macf.framework=macf` | literal | Designed "all macf agents" single-label filter (replaces accidental reliance on `service.namespace=macf`) |
+| `macf.agent.type` | `${MACF_AGENT_TYPE}` | `permanent` vs `worker` — useful for scenario sweeps |
+| `macf.registry.type` | `${MACF_REGISTRY_TYPE}` | `local` vs `repo` / `org` / `profile` — coordination-mode dimension |
+
+`gen_ai.system` is intentionally NOT set here — Claude Code's SDK auto-sets it for the LLM provider (anthropic / openai). Overwriting would mislabel telemetry.
+
+**Common query patterns enabled**:
+
+```promql
+# All macf telemetry, anywhere
+{ macf.framework="macf" }
+
+# Just one project (closes cross-project label collision)
+{ macf.framework="macf", service.namespace="ppam-2026" }
+
+# Pre-/post-release behavior comparison (paper-grade for substrate-evolution-cadence analysis)
+{ macf.framework="macf", service.version="0.2.20" }
+
+# Coordination-mode dimension
+{ macf.framework="macf", macf.registry.type="local" }
+
+# Exact pinpoint
+{ service.name="macf-agent-science-agent", service.namespace="ppam-2026" }
+```
+
+**`MACF_VERSION` drift after CLI bump**: `MACF_VERSION` is baked at the bootstrap-write of `env.telemetry`. Running `macf update` to bump the workspace's pinned CLI version (`.macf/macf-agent.json` `versions.cli`) does NOT refresh the baked value — `env.telemetry` is operator-managed per macf#342, so it's preserved unconditionally once written. To refresh `MACF_VERSION` after a CLI bump, either delete `env.telemetry` and re-run `macf update` (regenerates with the new pinned version) or hand-edit the `export MACF_VERSION="x.y.z"` line directly. Trade-off accepted: the operator-managed contract trumps automatic version refresh; the runtime `${MACF_VERSION:-unknown}` fallback ensures the label stays well-formed in any case.
+
 **Common operator edits**:
 
 - **Customize the OTLP endpoint**: edit `MACF_OTEL_ENDPOINT` (e.g., `export MACF_OTEL_ENDPOINT="https://your-collector.example.com/v1/traces"`). Survives `macf update`.
 - **Turn off a single signal**: comment out the relevant `OTEL_<SIGNAL>_EXPORTER=otlp` line.
-- **Change service name / resource attrs**: edit `OTEL_SERVICE_NAME` or `OTEL_RESOURCE_ATTRIBUTES`. The defaults bake `gen_ai.agent.name=<agent>,gen_ai.agent.role=<role>,service.namespace=macf` for cross-agent dashboarding.
+- **Add a custom resource attr**: append to `OTEL_RESOURCE_ATTRIBUTES` (e.g., `${OTEL_RESOURCE_ATTRIBUTES},host.role=development`). Survives `macf update` since this file is operator-managed.
 
 ### `env.tmux` — operator-managed
 

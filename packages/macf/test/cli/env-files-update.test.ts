@@ -112,6 +112,25 @@ describe('refreshEnvFiles', () => {
     expect(existsSync(join(tmpRoot, '.claude', '.macf', 'env.tmux'))).toBe(true);
   });
 
+  it('bootstrap-writes env.telemetry with MACF_VERSION baked from config (macf#357 version-refresh-on-update)', () => {
+    // When env.telemetry is absent at refresh time (e.g., operator
+    // intentionally deleted it for a fresh bake, or workspace migrating
+    // from monolithic claude.sh to multi-file env layout for the first
+    // time), the bootstrap-write picks up the workspace's pinned macf
+    // CLI version from config.versions.cli. This is the "version-refresh
+    // on update" path from macf#357 AC.
+    const result = refreshEnvFiles(tmpRoot, baseConfig);
+    expect(result.bootstrapped).toContain('env.telemetry');
+    const telemetry = readFileSync(
+      join(tmpRoot, '.claude', '.macf', 'env.telemetry'),
+      'utf-8',
+    );
+    // baseConfig.versions.cli is '0.1.0' in the test fixture.
+    expect(telemetry).toContain(`export MACF_VERSION="${baseConfig.versions!.cli}"`);
+    expect(telemetry).toContain('service.namespace=${MACF_PROJECT}');
+    expect(telemetry).toContain('macf.framework=macf');
+  });
+
   it('preserves operator-managed env.telemetry when present (operator edits intact)', () => {
     mkdirSync(join(tmpRoot, '.claude', '.macf'), { recursive: true });
     const customTelemetry =
