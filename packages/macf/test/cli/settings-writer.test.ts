@@ -387,18 +387,19 @@ describe('installPluginSkillPermissions (macf#189 sub-item 2)', () => {
     rmSync(tmpRoot, { recursive: true, force: true });
   });
 
-  it('creates .claude/settings.json with the 4 skill + 2 MCP tool patterns when missing', () => {
+  it('creates .claude/settings.json with all skill + MCP tool patterns when missing', () => {
     installPluginSkillPermissions(tmpRoot);
 
     expect(existsSync(settingsPath)).toBe(true);
     const s = JSON.parse(readFileSync(settingsPath, 'utf-8'));
     // Post-#349: skill patterns + MCP tool patterns installed in lockstep.
     expect(s.permissions.allow).toEqual([...PLUGIN_SKILL_PERMISSIONS, ...PLUGIN_MCP_TOOL_PERMISSIONS]);
-    // Spot-check the 4 skills.
+    // Spot-check the 5 skills (macf#350 added macf-notify-peer).
     expect(s.permissions.allow).toContain('Skill(macf-agent:macf-status)');
     expect(s.permissions.allow).toContain('Skill(macf-agent:macf-issues)');
     expect(s.permissions.allow).toContain('Skill(macf-agent:macf-peers)');
     expect(s.permissions.allow).toContain('Skill(macf-agent:macf-ping)');
+    expect(s.permissions.allow).toContain('Skill(macf-agent:macf-notify-peer)');
     // Spot-check the 2 MCP tools (macf#349).
     expect(s.permissions.allow).toContain('mcp__plugin_macf-agent_macf-agent__notify_peer');
     expect(s.permissions.allow).toContain('mcp__plugin_macf-agent_macf-agent__checkpoint_to_memory');
@@ -1114,13 +1115,14 @@ describe('end-to-end: macf update preserves operator-authored allow entries (mac
     expect(allow).toContain('Agent');
     expect(allow).toContain('mcp__*');
 
-    // MACF-managed: 4 specific Skill entries installed:
+    // MACF-managed: 5 specific Skill entries installed (macf#350 added macf-notify-peer):
     expect(allow).toContain('Skill(macf-agent:macf-status)');
     expect(allow).toContain('Skill(macf-agent:macf-issues)');
     expect(allow).toContain('Skill(macf-agent:macf-peers)');
     expect(allow).toContain('Skill(macf-agent:macf-ping)');
+    expect(allow).toContain('Skill(macf-agent:macf-notify-peer)');
 
-    // MACF-managed: legacy wildcard dropped (current pattern is 4 specific
+    // MACF-managed: legacy wildcard dropped (current pattern is N specific
     // entries — wildcard would auto-approve future-added skills without
     // operator review). See packages/macf/src/cli/settings-writer.ts:138.
     expect(allow).not.toContain('Skill(macf-agent:*)');

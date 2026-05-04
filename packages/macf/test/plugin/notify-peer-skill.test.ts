@@ -1,0 +1,68 @@
+/**
+ * SKILL.md presence + shape regression for `macf-notify-peer` (macf#350).
+ *
+ * The slash-command's runtime entry point is a SKILL.md file in
+ * `packages/macf/plugin/skills/macf-notify-peer/`. Its frontmatter
+ * binds the skill name (`macf-agent:macf-notify-peer`), the allowed-
+ * tools surface (must include the `notify_peer` MCP tool), and the
+ * argument hint exposed in autocomplete.
+ *
+ * If any of these drift, the skill silently fails at runtime: a wrong
+ * `name` prevents Claude Code from registering it; missing the MCP-
+ * tool entry in `allowed-tools` makes every invocation block on
+ * interactive permission prompt; missing the `argument-hint` degrades
+ * operator UX. None of these surfaces produce a unit-test failure
+ * elsewhere — the test below pins them.
+ *
+ * Lockstep with `PLUGIN_SKILL_PERMISSIONS` in `settings-writer.ts`
+ * (asserted in `cli/settings-writer.test.ts`); the two together
+ * guarantee end-to-end pre-approval works.
+ */
+import { describe, it, expect } from 'vitest';
+import { existsSync, readFileSync } from 'node:fs';
+import { join, dirname } from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+const repoRoot = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
+const skillPath = join(repoRoot, 'plugin', 'skills', 'macf-notify-peer', 'SKILL.md');
+
+describe('macf-notify-peer SKILL.md (macf#350)', () => {
+  it('exists at packages/macf/plugin/skills/macf-notify-peer/SKILL.md', () => {
+    expect(existsSync(skillPath)).toBe(true);
+  });
+
+  const content = readFileSync(skillPath, 'utf-8');
+
+  it('has frontmatter with name=macf-notify-peer', () => {
+    expect(content).toMatch(/^---\n(?:.*\n)*?name: macf-notify-peer\n(?:.*\n)*?---/);
+  });
+
+  it('declares the notify_peer MCP tool in allowed-tools', () => {
+    // Required for the MCP tool invocation; without it, every call
+    // would gate on interactive approval (sister to macf#349).
+    expect(content).toMatch(/allowed-tools:.*mcp__plugin_macf-agent_macf-agent__notify_peer/);
+  });
+
+  it('has an argument-hint covering peer + message', () => {
+    // Operator UX: shows the expected positional shape in autocomplete.
+    expect(content).toMatch(/argument-hint:.*<peer>.*<message>/);
+  });
+
+  it('directs the LLM to respond with one line by default (context-cost discipline)', () => {
+    // Per macf#350 refined AC (science-agent comment 2026-05-04):
+    // verbosity is a context-token concern, not aesthetics. The prompt
+    // template MUST direct one-line response by default.
+    expect(content).toMatch(/ONE LINE|one[-\s]line/i);
+  });
+
+  it('mentions the verbose opt-in flag for debug use', () => {
+    expect(content).toMatch(/--verbose/);
+  });
+
+  it('mentions the no-wake opt-out flag', () => {
+    // Operator-driven default = wake true; --no-wake flips to false
+    // (preserves Pattern E for cases where operator wants notify
+    // without a TUI wake).
+    expect(content).toMatch(/--no-wake/);
+  });
+});
