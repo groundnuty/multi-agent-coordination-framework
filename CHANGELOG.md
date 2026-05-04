@@ -9,6 +9,93 @@ Plugin + routing-workflow changes ship from separate repos
 [`groundnuty/macf-actions`](https://github.com/groundnuty/macf-actions))
 and are not included here — pin them explicitly in each workspace.
 
+## [0.2.20] — 2026-05-04
+
+Three-piece operator-driven cross-agent messaging bundle. Closes the
+ergonomic gap surfaced 2026-05-04 (PPAM 2026 deployment): operator
+invokes `notify_peer` against a peer agent, the receiver doesn't
+visibly wake, and the verbose default output consumes coordination
+context-tokens. The bundle addresses all three sub-problems in lockstep
+(approval friction + wake semantics + output verbosity).
+
+### Added
+- **`/macf-agent:notify-peer` slash-command
+  ([#354], closes [#350])** — operator-driven counterpart to the
+  autonomous Stop-hook `notify_peer` invocation. New SKILL.md at
+  `packages/macf/plugin/skills/macf-notify-peer/` directs the LLM to:
+  invoke `notify_peer` with `wake: true` by default (cancels Pattern E
+  for that one call so the receiver TUI visibly wakes), respond with
+  EXACTLY ONE LINE (`→ <peer> [<event>] delivered=<bool>`),
+  and explicitly NOT restate the JSON result or the tool's input
+  schema. The one-line discipline addresses the load-bearing concern
+  surfaced by the operator: not visual brevity, but token-budget
+  preservation across N turns of operator-driven coordination
+  (verbose-by-default would erode the budget for actual coordination
+  content). Opt-outs: `--no-wake` preserves Pattern E (quiet
+  observational delivery); `--verbose` opts back into full JSON
+  result for debug. `Skill(macf-agent:macf-notify-peer)` added as the
+  5th `PLUGIN_SKILL_PERMISSIONS` entry — slash-command itself
+  pre-approved alongside the underlying MCP tool (sister to #349
+  which pre-approved the tool).
+
+- **Wake-on-receipt opt-in for `notify_peer`
+  ([#353], closes [#351])** — `wake?: boolean` field on
+  `NotifyPeerInputSchema` (channel-server). Default `false` preserves
+  Pattern E (Stop-hook autonomous flows omit the field → cross-agent
+  Stop-hook loop prevention intact). Operator-driven invocations
+  (the `/macf-agent:notify-peer` slash-command above) opt in by
+  passing `wake: true`. Receiver-side discriminator extracted as
+  pure helper at `packages/macf-channel-server/src/wake-decision.ts`
+  (`decideWake()`); was inline in server.ts main(). New log event
+  `peer_notification_wake_opt_in` distinct from downstream
+  `tmux_wake_delivered` so operators can grep for the cause. Outbound
+  POST omits `wake` when false/undefined (wire shape-compatible with
+  pre-#351 receivers; no unknown-field surface). `formatNotifyContent`
+  already supports `peer_notification` content shape — no formatter
+  changes needed. hooks.json verified: no Stop-hook entry passes
+  wake → Pattern E preserved → no regression to cross-agent loop
+  prevention.
+
+### Reliability
+- **MCP tool pre-approval gap closed
+  ([#352], closes [#349])** — `installPluginSkillPermissions` now
+  installs `mcp__plugin_macf-agent_macf-agent__*` patterns
+  (`notify_peer` + `checkpoint_to_memory`) in lockstep with the
+  channel-server's `mcp.mcp.registerTool(...)` calls. Previously,
+  every first invocation of `notify_peer` (autonomous Stop-hook AND
+  operator-driven coordination) fired an interactive approval dialog
+  on each fresh workspace — blocking the DR-023 UC-1 + UC-3 autonomy
+  contract. Sister to macf#189 sub-item 2 (skill pre-approval) but
+  for the MCP-tool surface the original install-time pre-approval
+  missed. Operator-witnessed 2026-05-04 on PPAM 2026 macbook;
+  cross-agent `notify_peer` worked but each fresh workspace prompted
+  "Yes, and don't ask again for plugin:macf-agent:macf-agent -
+  notify_peer commands" before delivery.
+
+  Pattern: `mcp__plugin_<plugin-name>_<server-key>__<tool-name>`.
+  New `PLUGIN_MCP_TOOL_PERMISSIONS` constant + new
+  `MACF_MCP_TOOL_PATTERN_PREFIX` for stale-entry cleanup on refresh
+  (lockstep semantic: drop-and-replace so a since-removed tool's
+  pre-approval doesn't linger). Operator-authored `mcp__*` wildcards
+  preserved verbatim. Path-2 promotion: future channel-server tools =
+  one-line constant addition + CLI version bump.
+
+  7 regression tests in `test/cli/settings-writer.test.ts` (constant
+  shape, install on fresh workspace, lockstep with skill perms,
+  operator-wildcard preservation, idempotency, stale-cleanup).
+
+### Plugin
+- 5 skills now (was 4): adds `/macf-agent:macf-notify-peer`. See
+  Added → slash-command above. Marketplace mirror PR follows
+  separately per established convention.
+
+[#349]: https://github.com/groundnuty/macf/issues/349
+[#350]: https://github.com/groundnuty/macf/issues/350
+[#351]: https://github.com/groundnuty/macf/issues/351
+[#352]: https://github.com/groundnuty/macf/pull/352
+[#353]: https://github.com/groundnuty/macf/pull/353
+[#354]: https://github.com/groundnuty/macf/pull/354
+
 ## [0.2.19] — 2026-05-03
 
 Single hotfix release for a v0.2.18 wiring regression that silently
