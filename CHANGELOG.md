@@ -9,6 +9,58 @@ Plugin + routing-workflow changes ship from separate repos
 [`groundnuty/macf-actions`](https://github.com/groundnuty/macf-actions))
 and are not included here — pin them explicitly in each workspace.
 
+## [0.2.21] — 2026-05-04
+
+Fast-follow refactor for v0.2.20. Removes the `wake?: boolean` field
+from sender-side schemas. Receiver-side `decideWake()` now reads
+`payload.event` directly: `event === 'custom'` (operator-driven slash
+command) → wake; autonomous events (`session-end` / `turn-complete` /
+`error` from Stop-hook flows) → skip wake (Pattern E preserved).
+
+The previous design (#351) leaked Pattern E loop-prevention logic
+into every sender's API surface via a per-call boolean. The cleaner
+design discriminates at the receiver from a property already there
+for other reasons (`event`) — single source of truth, smaller agent-
+facing API.
+
+### Refactored
+- **Wake discriminator: event-based ([#356], closes [#355])** — receiver
+  `decideWake()` is now a 3-rule pure function:
+  1. `peer_notification` + `event: 'custom'` → WAKE
+  2. `peer_notification` + autonomous events → SKIP
+  3. Other NotifyTypes → WAKE (unchanged)
+
+  Schemas:
+  - Dropped `wake` from `NotifyPeerInputSchema` (channel-server)
+  - Dropped `wake` from `NotifyPayloadSchema` + `PeerNotificationPayloadSchema` (macf-core)
+
+  Slash-command:
+  - Dropped `--no-wake` from `/macf-agent:macf-notify-peer` argument-hint + body
+  - Receiver decides from `event` alone
+
+  Log event renames:
+  - `peer_notification_observational` → `peer_notification_autonomous_event`
+  - `peer_notification_wake_opt_in` → `peer_notification_custom_event`
+
+  Source-level invariants pin the cleaner shape:
+  - `PeerNotificationPayloadSchema.shape` MUST NOT contain `wake`
+  - `NotifyPayloadSchema.shape` MUST NOT contain `wake`
+  - SKILL.md MUST NOT mention `--no-wake`
+  - SKILL.md MUST NOT instruct passing `wake: true|false`
+
+  Backward-compatibility: v0.2.20 shipped ~30 minutes before #355
+  was filed; no external consumers had time to adopt the wake field.
+  v0.2.21 fast-follow removes it cleanly without a deprecation cycle.
+
+  Documentation: `silent-fallback-hazards.md` Instance 6 updated to
+  reflect Pattern E refinement (event-based vs flag-based discrimination);
+  `docs/features.md` slash-command subsection updated.
+
+  1284 tests green (815 macf + 173 channel-server + 296 core).
+
+[#355]: https://github.com/groundnuty/macf/issues/355
+[#356]: https://github.com/groundnuty/macf/pull/356
+
 ## [0.2.20] — 2026-05-04
 
 Three-piece operator-driven cross-agent messaging bundle. Closes the
