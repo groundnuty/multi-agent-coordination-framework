@@ -8,7 +8,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, rmSync, statSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { installGhTokenHook, MACF_HOOK_COMMAND, MACF_MENTION_HOOK_COMMAND, MACF_LGTM_HOOK_COMMAND, installPluginSkillPermissions, PLUGIN_SKILL_PERMISSIONS, installSandboxFdAllowRead, SANDBOX_FD_READ_PATTERN, installSandboxExcludedCommands, SANDBOX_EXCLUDED_COMMANDS, getSandboxExcludedCommands, getPermissionsAllow, getPermissionsDeny } from '../../src/cli/settings-writer.js';
+import { installGhTokenHook, MACF_HOOK_COMMAND, MACF_MENTION_HOOK_COMMAND, MACF_LGTM_HOOK_COMMAND, installPluginSkillPermissions, PLUGIN_SKILL_PERMISSIONS, PLUGIN_MCP_TOOL_PERMISSIONS, installSandboxFdAllowRead, SANDBOX_FD_READ_PATTERN, installSandboxExcludedCommands, SANDBOX_EXCLUDED_COMMANDS, getSandboxExcludedCommands, getPermissionsAllow, getPermissionsDeny } from '../../src/cli/settings-writer.js';
 
 describe('installGhTokenHook', () => {
   let tmpRoot: string;
@@ -387,17 +387,21 @@ describe('installPluginSkillPermissions (macf#189 sub-item 2)', () => {
     rmSync(tmpRoot, { recursive: true, force: true });
   });
 
-  it('creates .claude/settings.json with the 4 skill patterns when missing', () => {
+  it('creates .claude/settings.json with the 4 skill + 2 MCP tool patterns when missing', () => {
     installPluginSkillPermissions(tmpRoot);
 
     expect(existsSync(settingsPath)).toBe(true);
     const s = JSON.parse(readFileSync(settingsPath, 'utf-8'));
-    expect(s.permissions.allow).toEqual(PLUGIN_SKILL_PERMISSIONS);
-    // Spot-check the 4 skills we care about.
+    // Post-#349: skill patterns + MCP tool patterns installed in lockstep.
+    expect(s.permissions.allow).toEqual([...PLUGIN_SKILL_PERMISSIONS, ...PLUGIN_MCP_TOOL_PERMISSIONS]);
+    // Spot-check the 4 skills.
     expect(s.permissions.allow).toContain('Skill(macf-agent:macf-status)');
     expect(s.permissions.allow).toContain('Skill(macf-agent:macf-issues)');
     expect(s.permissions.allow).toContain('Skill(macf-agent:macf-peers)');
     expect(s.permissions.allow).toContain('Skill(macf-agent:macf-ping)');
+    // Spot-check the 2 MCP tools (macf#349).
+    expect(s.permissions.allow).toContain('mcp__plugin_macf-agent_macf-agent__notify_peer');
+    expect(s.permissions.allow).toContain('mcp__plugin_macf-agent_macf-agent__checkpoint_to_memory');
   });
 
   it('preserves non-MACF permissions.allow entries', () => {
@@ -469,6 +473,90 @@ describe('installPluginSkillPermissions (macf#189 sub-item 2)', () => {
     // Unrelated keys preserved.
     expect(s.hooks.PreToolUse).toHaveLength(1);
     expect(s.env.SOME_OPERATOR_VAR).toBe('1');
+  });
+
+  describe('MCP tool permissions (macf#349)', () => {
+    // Without these pre-approvals, every first invocation of notify_peer
+    // (or checkpoint_to_memory) fires an interactive approval dialog —
+    // blocking the Stop-hook autonomy contract from DR-023 UC-1 + UC-3.
+    // PPAM 2026 macbook hit it 2026-05-04.
+
+    it('PLUGIN_MCP_TOOL_PERMISSIONS exports the channel-server tool list', () => {
+      // Lockstep with channel-server's `mcp.mcp.registerTool(...)` calls
+      // in `packages/macf-channel-server/src/server.ts`. When a new tool
+      // is added, this list must be updated + CLI version bumped.
+      expect(PLUGIN_MCP_TOOL_PERMISSIONS).toContain('mcp__plugin_macf-agent_macf-agent__notify_peer');
+      expect(PLUGIN_MCP_TOOL_PERMISSIONS).toContain('mcp__plugin_macf-agent_macf-agent__checkpoint_to_memory');
+    });
+
+    it('installs MCP tool permissions on a fresh workspace', () => {
+      installPluginSkillPermissions(tmpRoot);
+      const s = JSON.parse(readFileSync(settingsPath, 'utf-8'));
+      const allow: readonly string[] = s.permissions.allow;
+      expect(allow).toContain('mcp__plugin_macf-agent_macf-agent__notify_peer');
+      expect(allow).toContain('mcp__plugin_macf-agent_macf-agent__checkpoint_to_memory');
+    });
+
+    it('installs both skill + MCP tool permissions in lockstep', () => {
+      installPluginSkillPermissions(tmpRoot);
+      const s = JSON.parse(readFileSync(settingsPath, 'utf-8'));
+      const allow: readonly string[] = s.permissions.allow;
+      // 4 skills + 2 MCP tools
+      for (const skill of PLUGIN_SKILL_PERMISSIONS) {
+        expect(allow).toContain(skill);
+      }
+      for (const tool of PLUGIN_MCP_TOOL_PERMISSIONS) {
+        expect(allow).toContain(tool);
+      }
+    });
+
+    it('preserves operator-authored mcp__* wildcard alongside our specific entries', () => {
+      // Operator may have set a wildcard via "yes and don't ask again";
+      // our specific entries are additive. Both end up in permissions.allow.
+      mkdirSync(join(tmpRoot, '.claude'), { recursive: true });
+      writeFileSync(settingsPath, JSON.stringify({
+        permissions: { allow: ['mcp__*', 'Bash(*)'] },
+      }, null, 2));
+
+      installPluginSkillPermissions(tmpRoot);
+
+      const allow = JSON.parse(readFileSync(settingsPath, 'utf-8')).permissions.allow;
+      expect(allow).toContain('mcp__*');                                                     // operator
+      expect(allow).toContain('Bash(*)');                                                    // operator
+      expect(allow).toContain('mcp__plugin_macf-agent_macf-agent__notify_peer');             // ours
+      expect(allow).toContain('mcp__plugin_macf-agent_macf-agent__checkpoint_to_memory');    // ours
+    });
+
+    it('drops stale MCP tool entries (e.g. tool removed in newer plugin) on refresh', () => {
+      mkdirSync(join(tmpRoot, '.claude'), { recursive: true });
+      writeFileSync(settingsPath, JSON.stringify({
+        permissions: {
+          allow: [
+            'mcp__plugin_macf-agent_macf-agent__since_removed_tool',  // stale ours
+            'mcp__plugin_macf-agent_macf-agent__notify_peer',         // current
+            'Bash(*)',                                                 // operator — preserved
+          ],
+        },
+      }, null, 2));
+
+      installPluginSkillPermissions(tmpRoot);
+
+      const allow = JSON.parse(readFileSync(settingsPath, 'utf-8')).permissions.allow;
+      expect(allow).not.toContain('mcp__plugin_macf-agent_macf-agent__since_removed_tool');  // dropped
+      expect(allow).toContain('mcp__plugin_macf-agent_macf-agent__notify_peer');             // current re-installed
+      expect(allow).toContain('Bash(*)');                                                    // operator preserved
+    });
+
+    it('idempotent: repeated calls don\'t duplicate MCP tool entries', () => {
+      installPluginSkillPermissions(tmpRoot);
+      installPluginSkillPermissions(tmpRoot);
+      installPluginSkillPermissions(tmpRoot);
+      const allow = JSON.parse(readFileSync(settingsPath, 'utf-8')).permissions.allow;
+      const notifyCount = allow.filter((e: string) => e === 'mcp__plugin_macf-agent_macf-agent__notify_peer').length;
+      const checkpointCount = allow.filter((e: string) => e === 'mcp__plugin_macf-agent_macf-agent__checkpoint_to_memory').length;
+      expect(notifyCount).toBe(1);
+      expect(checkpointCount).toBe(1);
+    });
   });
 });
 

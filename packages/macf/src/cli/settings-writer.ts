@@ -159,6 +159,38 @@ export const PLUGIN_SKILL_PERMISSIONS: readonly string[] = [
 ];
 
 /**
+ * Permission patterns pre-approving the MCP tools that
+ * `@groundnuty/macf-channel-server` registers on the plugin's
+ * `macf-agent` MCP server. Without these, every first invocation of
+ * `notify_peer` or `checkpoint_to_memory` (autonomous agent calls AND
+ * operator-driven coordination) fires an interactive approval dialog,
+ * blocking the Stop-hook autonomy contract from DR-023 UC-1 + UC-3.
+ *
+ * macf#349: operator-witnessed 2026-05-04 on PPAM 2026 macbook —
+ * cross-agent `notify_peer` worked but each fresh workspace prompted
+ * "Yes, and don't ask again for plugin:macf-agent:macf-agent -
+ * notify_peer commands" before delivery. Sister-bug to macf#189
+ * sub-item 2 (skill pre-approval) but for the MCP-tool surface that
+ * the original install-time pre-approval missed.
+ *
+ * Pattern format: `mcp__plugin_<plugin-name>_<server-key>__<tool-name>`.
+ * Plugin name = `macf-agent` (per `packages/macf/plugin/.claude-plugin/
+ * plugin.json` `name` field). Server key = `macf-agent` (per same file's
+ * `mcpServers.macf-agent` map key). Tool names match the channel-server's
+ * `mcp.mcp.registerTool(...)` first-arg in
+ * `packages/macf-channel-server/src/server.ts`.
+ *
+ * Keep in lockstep with the channel-server's tool registration list.
+ * When a new tool is added to the channel-server, add its pattern here
+ * + bump CLI version. Operators on older CLIs gate the new tool on
+ * one-time approval until they `macf update`.
+ */
+export const PLUGIN_MCP_TOOL_PERMISSIONS: readonly string[] = [
+  'mcp__plugin_macf-agent_macf-agent__notify_peer',
+  'mcp__plugin_macf-agent_macf-agent__checkpoint_to_memory',
+];
+
+/**
  * Sandbox filesystem read-allow pattern for Claude Code's Bash-tool
  * harness. Every Bash invocation's spawned shell reads `/proc/self/fd/3`
  * (or higher fds in future builds) for stdin / command-input passed
@@ -523,11 +555,38 @@ export function getSandboxExcludedCommands(workspaceDir: string): readonly strin
 const MACF_SKILL_PATTERN_PREFIX = 'Skill(macf-agent:';
 
 /**
- * Install (or refresh) the MACF plugin-skill pre-approval entries in
- * `.claude/settings.json`'s `permissions.allow` array. Idempotent:
- * stale entries (e.g. from a prior CLI version that listed a since-
- * removed skill) are dropped + replaced with the current set.
- * Non-MACF entries in `permissions.allow` are preserved.
+ * Pattern that identifies MACF-managed MCP-tool-permission entries on
+ * refresh (macf#349). Any pattern starting with this prefix is
+ * considered ours; mismatches are preserved verbatim. Same lockstep
+ * semantic as `MACF_SKILL_PATTERN_PREFIX`: drop-and-replace on each
+ * `installPluginSkillPermissions` call so a since-removed channel-server
+ * tool's pre-approval doesn't linger.
+ */
+const MACF_MCP_TOOL_PATTERN_PREFIX = 'mcp__plugin_macf-agent_macf-agent__';
+
+/**
+ * Install (or refresh) the MACF plugin-skill + MCP-tool pre-approval
+ * entries in `.claude/settings.json`'s `permissions.allow` array.
+ * Idempotent: stale entries (e.g. from a prior CLI version that listed
+ * a since-removed skill or MCP tool) are dropped + replaced with the
+ * current set. Non-MACF entries in `permissions.allow` are preserved.
+ *
+ * Two pre-approval surfaces installed in lockstep:
+ *
+ * 1. **Skill permissions** (`PLUGIN_SKILL_PERMISSIONS`) — pre-trust the
+ *    4 plugin slash-commands (macf-status / macf-issues / macf-peers /
+ *    macf-ping). See macf#189 sub-item 2.
+ *
+ * 2. **MCP tool permissions** (`PLUGIN_MCP_TOOL_PERMISSIONS`) — pre-trust
+ *    the 2 channel-server MCP tools (notify_peer / checkpoint_to_memory).
+ *    See macf#349. Without this, every first invocation of `notify_peer`
+ *    fires an interactive approval dialog — blocking the Stop-hook
+ *    autonomy contract from DR-023 UC-1 + UC-3.
+ *
+ * Both surfaces are MACF-managed: stale entries from prior CLI
+ * versions get cleaned up via prefix-match drop. Operator-authored
+ * patterns (like a wildcard `mcp__*` set up via Claude Code's "yes
+ * and don't ask again" flow) are preserved verbatim.
  *
  * Creates the `.claude/` directory + settings.json if missing.
  */
@@ -543,14 +602,21 @@ export function installPluginSkillPermissions(workspaceDir: string): void {
     ? ((settings['permissions'] as { allow: readonly string[] }).allow)
     : [];
 
-  // Drop any prior Skill(macf-agent:*) entries so we install the
-  // current list fresh (handles "skill was removed in plugin v0.1.N"
+  // Drop any prior MACF-managed entries so we install the current list
+  // fresh (handles "skill or MCP tool was removed in plugin v0.1.N"
   // case — otherwise the stale pre-approval lingers forever).
-  const preserved = existingAllow.filter(
-    (entry) => typeof entry !== 'string' || !entry.startsWith(MACF_SKILL_PATTERN_PREFIX),
-  );
+  const preserved = existingAllow.filter((entry) => {
+    if (typeof entry !== 'string') return true;
+    if (entry.startsWith(MACF_SKILL_PATTERN_PREFIX)) return false;
+    if (entry.startsWith(MACF_MCP_TOOL_PATTERN_PREFIX)) return false;
+    return true;
+  });
 
-  const allow: string[] = [...preserved, ...PLUGIN_SKILL_PERMISSIONS];
+  const allow: string[] = [
+    ...preserved,
+    ...PLUGIN_SKILL_PERMISSIONS,
+    ...PLUGIN_MCP_TOOL_PERMISSIONS,
+  ];
 
   const existingPermissions = (settings['permissions'] as Record<string, unknown> | undefined) ?? {};
   const updated: Settings = {
