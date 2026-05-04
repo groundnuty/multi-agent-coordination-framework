@@ -113,37 +113,44 @@ describe('PeerNotificationPayloadSchema (macf#256, DR-023 UC-1)', () => {
     expect(wide.event).toBe('session-end');
   });
 
-  it('accepts wake=true (macf#351 opt-in)', () => {
+  // macf#355 source-level invariant: PeerNotificationPayloadSchema must NOT
+  // declare a `wake` field. Wake-decision logic is keyed off `event` at the
+  // receiver alone (per `wake-decision.ts:decideWake`). Re-introducing
+  // `wake` would leak Pattern E loop-prevention logic back into the
+  // sender-side API surface. Catches regressions at unit-test time.
+  it('does NOT declare a `wake` field (macf#355 — receiver discriminates by event)', () => {
+    // Zod v4 schemas expose `.shape` for ZodObject; the field set is
+    // the keys of that record. `wake` MUST NOT be present.
+    const shape = PeerNotificationPayloadSchema.shape;
+    expect(Object.keys(shape)).not.toContain('wake');
+  });
+
+  it('drops a wake key from the parse result (macf#355 — field not in data model)', () => {
+    // Defensive: zod's default for ZodObject silently strips unknown keys.
+    // After macf#355, `wake` is NOT a known key — so a parse result must
+    // not surface it on the typed object regardless of what the wire
+    // sender did. Guards downstream code from accidentally observing a
+    // ghost `wake` value via `result.wake` (TypeScript would catch the
+    // direct read at compile time, but bracket-access via `as never` or
+    // dynamic dispatch can route around the type — this asserts the
+    // runtime stripping holds).
     const result = PeerNotificationPayloadSchema.parse({
       type: 'peer_notification',
       source: 'operator',
       event: 'custom',
       wake: true,
-    });
-    expect(result.wake).toBe(true);
+    } as never);
+    expect('wake' in result).toBe(false);
   });
 
-  it('omits wake when absent — Pattern E preserved (macf#351)', () => {
-    // Regression: hooks.json's Stop entry never sets `wake`. The schema
-    // MUST accept the omission AND return the parsed object without
-    // synthesizing a default value. Receiver-side `decideWake` treats
-    // `wake !== true` as skip → loop prevention preserved.
-    const result = PeerNotificationPayloadSchema.parse({
-      type: 'peer_notification',
-      source: 'macf-tester-1-agent',
-      event: 'session-end',
-    });
-    expect(result.wake).toBeUndefined();
-  });
-
-  it('parses wake field via wider NotifyPayloadSchema (macf#351)', () => {
-    const wide = NotifyPayloadSchema.parse({
-      type: 'peer_notification',
-      source: 'operator',
-      event: 'custom',
-      wake: true,
-    });
-    expect(wide.wake).toBe(true);
+  it('NotifyPayloadSchema (wider) also has no `wake` field (macf#355)', () => {
+    // The wider variant covers all NotifyTypes' optional fields; it
+    // should NOT carry `wake` either. Sister-invariant to the narrower
+    // schema check above; both schemas are sources of truth in different
+    // call paths (receivers parse the wide one; producers validate the
+    // narrow one).
+    const shape = NotifyPayloadSchema.shape;
+    expect(Object.keys(shape)).not.toContain('wake');
   });
 });
 

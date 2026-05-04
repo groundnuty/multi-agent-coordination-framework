@@ -1,67 +1,81 @@
 /**
- * Tests for `decideWake` (macf#351) — pure-function discriminator that
- * tells the receiver-side `/notify` handler whether to call wakeViaTmux.
+ * Tests for `decideWake` (macf#351 → simplified macf#355) — pure-function
+ * discriminator that tells the receiver-side `/notify` handler whether to
+ * call wakeViaTmux.
  *
  * The two security-load-bearing properties under test:
  *
  *   1. **Pattern E preservation.** Stop-hook autonomous flows post a
- *      peer_notification WITHOUT `wake` (or with `wake: false`). The
- *      decision MUST be `skip` so receivers don't fire a fresh turn,
- *      which would re-trigger their own Stop hooks → cross-agent loop
- *      (macf#267 Option d).
+ *      peer_notification with `event` ∈ `{session-end, turn-complete,
+ *      error}`. The decision MUST be `skip` so receivers don't fire a
+ *      fresh turn, which would re-trigger their own Stop hooks →
+ *      cross-agent loop (macf#267 Option d).
  *
- *   2. **Wake opt-in for operator-driven flows (macf#351).** When a
- *      peer_notification arrives with `wake: true`, the decision MUST
- *      be `wake`. Operator-driven invocations (slash-command in
- *      macf#350) need the receiver TUI to show the notification
- *      visibly without a context switch.
+ *   2. **Operator-driven wake.** When a peer_notification arrives with
+ *      `event: 'custom'`, the decision MUST be `wake`. Operator-driven
+ *      invocations (slash-command in macf#350) need the receiver TUI
+ *      to show the notification visibly without a context switch.
+ *      `event: 'custom'` originates only from operator-driven flows
+ *      (the Stop-hook hooks.json entry hard-codes one of the autonomous
+ *      events; agents-and-operators communication channels follow
+ *      the same convention).
  *
- * A regression test pins the no-`wake`-field case (the on-the-wire
- * form Stop-hook hooks produce — `wake` field omitted entirely from
- * the POST body) so any future refactor that conflates "field absent"
- * with "field=true" trips this test.
+ * macf#355 history note: the previous design (#351) keyed wake-decision
+ * off a `wake?: boolean` field on the payload (the sender opted in
+ * per-call). That leaked Pattern E loop-prevention logic into the
+ * agent-facing API and was removed in v0.2.21 — discriminating by
+ * `event` alone keeps the policy at the receiver while shrinking the
+ * sender-side API surface by one optional flag.
  */
 import { describe, it, expect } from 'vitest';
 import { decideWake } from '../src/wake-decision.js';
 
-describe('decideWake (macf#351)', () => {
-  describe('peer_notification — Pattern E (default skip)', () => {
-    it('skips wake when wake field is absent (Stop-hook autonomous flow)', () => {
-      // Regression test: hooks.json `Stop` entry never sets `wake` —
-      // this is the on-the-wire form for the autonomous flow. MUST be
-      // `skip` to keep cross-agent Stop-hook loop prevention intact.
+describe('decideWake (macf#355)', () => {
+  describe('peer_notification — Pattern E (autonomous events skip)', () => {
+    it('skips wake for event: session-end (Stop-hook autonomous flow)', () => {
+      // Regression test: hooks.json `Stop` entry posts peer_notification
+      // with event=session-end. MUST be `skip` to keep cross-agent
+      // Stop-hook loop prevention intact.
       const decision = decideWake({
         type: 'peer_notification',
         source: 'tester-1',
         event: 'session-end',
       });
       expect(decision.action).toBe('skip');
-      expect(decision.reason).toBe('peer_notification_observational');
+      expect(decision.reason).toBe('peer_notification_autonomous_event');
     });
 
-    it('skips wake when wake is explicitly false', () => {
+    it('skips wake for event: turn-complete (autonomous flow)', () => {
       const decision = decideWake({
         type: 'peer_notification',
         source: 'tester-1',
-        event: 'session-end',
-        wake: false,
+        event: 'turn-complete',
       });
       expect(decision.action).toBe('skip');
-      expect(decision.reason).toBe('peer_notification_observational');
+      expect(decision.reason).toBe('peer_notification_autonomous_event');
+    });
+
+    it('skips wake for event: error (autonomous flow)', () => {
+      const decision = decideWake({
+        type: 'peer_notification',
+        source: 'tester-1',
+        event: 'error',
+      });
+      expect(decision.action).toBe('skip');
+      expect(decision.reason).toBe('peer_notification_autonomous_event');
     });
   });
 
-  describe('peer_notification — wake opt-in (macf#351)', () => {
-    it('wakes when wake is explicitly true', () => {
+  describe('peer_notification — operator-driven wake', () => {
+    it('wakes for event: custom (operator-driven slash-command)', () => {
       const decision = decideWake({
         type: 'peer_notification',
         source: 'operator',
         event: 'custom',
         message: 'operator typed: notify code-agent that ...',
-        wake: true,
       });
       expect(decision.action).toBe('wake');
-      expect(decision.reason).toBe('peer_notification_wake_opt_in');
+      expect(decision.reason).toBe('peer_notification_custom_event');
     });
   });
 
@@ -112,20 +126,6 @@ describe('decideWake (macf#351)', () => {
         type: 'startup_check',
         message: 'pending issues found',
       });
-      expect(decision.action).toBe('wake');
-      expect(decision.reason).toBe('standard_notify_type');
-    });
-
-    it('ignores wake field on non-peer types (no spillover)', () => {
-      // Pin: `wake` is peer_notification-only. If a non-peer payload
-      // happens to carry wake=false, it MUST still wake (the field is
-      // not part of those variants' contract). This guards against a
-      // future refactor that treats wake==false as a global skip.
-      const decision = decideWake({
-        type: 'issue_routed',
-        issue_number: 42,
-        wake: false,
-      } as never);
       expect(decision.action).toBe('wake');
       expect(decision.reason).toBe('standard_notify_type');
     });

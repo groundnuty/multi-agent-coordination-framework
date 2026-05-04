@@ -146,14 +146,15 @@ async function main(): Promise<void> {
     // startup_check, ci_completion) preserve existing wake-on-receipt
     // behavior.
     //
-    // macf#351: operator-driven invocations (slash command in macf#350)
-    // can opt in to tmux wake by setting `wake: true` on the payload.
-    // The cross-agent loop hazard does NOT apply when the trigger is a
-    // human typing into one TUI — the loop fires only on Stop-hook
-    // chains where receiver's wake → fresh turn → receiver's Stop hook
-    // → echo back. Operator-driven calls have a non-recurring trigger.
-    // Stop-hook autonomous flows continue to omit `wake` (default false)
-    // → loop prevention preserved.
+    // macf#355: receiver-side wake policy reads `event` field directly.
+    // `event: 'custom'` (operator-driven slash-command per macf#350)
+    // wakes the receiver TUI; autonomous events (`session-end` /
+    // `turn-complete` / `error` from Stop-hook flows) skip wake to keep
+    // cross-agent Stop-hook loop prevention intact (Pattern E). Previous
+    // design (#351) used a `wake?: boolean` field on the payload; that
+    // leaked Pattern E implementation detail into every sender's API
+    // and was removed in v0.2.21 (#355) — the `event` field already
+    // encoded the same intent.
     const wakeDecision = decideWake(payload);
     if (wakeDecision.action === 'skip') {
       logger.info('tmux_wake_skipped', {
@@ -161,13 +162,14 @@ async function main(): Promise<void> {
         detail: 'macf#267 Option d — peer notifications skip tmux wake to prevent cross-agent Stop-hook loop',
       });
     } else if (config.workspaceDir !== undefined) {
-      // macf#351: surface the wake-opt-in path explicitly when a
-      // peer_notification arrives with wake=true. The downstream
-      // wakeViaTmux call already logs `tmux_wake_delivered` on success,
-      // but that event is identical for routed-issue / mention / opt-in
-      // calls — this annotation makes the opt-in cause visible.
-      if (wakeDecision.reason === 'peer_notification_wake_opt_in') {
-        logger.info('peer_notification_wake_opt_in', {
+      // macf#355: surface the operator-driven wake path explicitly when
+      // a peer_notification with event=custom arrives. The downstream
+      // wakeViaTmux call logs `tmux_wake_delivered` on success, but
+      // that event is identical for routed-issue / mention / custom-
+      // event calls — this annotation makes the custom-event cause
+      // visible.
+      if (wakeDecision.reason === 'peer_notification_custom_event') {
+        logger.info('peer_notification_custom_event', {
           source: payload.source ?? 'unknown',
           event: payload.event ?? 'unknown',
         });

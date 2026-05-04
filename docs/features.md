@@ -54,7 +54,7 @@ Distributed via [`groundnuty/macf-marketplace`](https://github.com/groundnuty/ma
 
 Pre-approved in `.claude/settings.json` per `installPluginSkillPermissions` so first-invocation doesn't fire an interactive permission prompt. Implementation: `packages/macf/src/plugin/`. Backing CLI: `macf-plugin-cli` binary.
 
-`/macf-notify-peer` is the operator-driven counterpart to the autonomous Stop-hook `notify_peer` invocation: it defaults `wake: true` (cancels Pattern E for that one call so the receiver TUI visibly wakes) and emits a one-line confirmation (`→ <peer> [<event>] delivered=<bool>`). Use `--no-wake` to skip the wake (preserves Pattern E); use `--verbose` to opt back into the full JSON result for debugging.
+`/macf-notify-peer` is the operator-driven counterpart to the autonomous Stop-hook `notify_peer` invocation. The receiver discriminates wake-on-receipt by `event` type alone (macf#355): `event: 'custom'` (the slash-command's default) wakes the receiver TUI; autonomous events (`session-end` / `turn-complete` / `error` from Stop-hook flows) are observational-only (Pattern E preserves cross-agent Stop-hook loop prevention). The slash-command emits a one-line confirmation (`→ <peer> [<event>] delivered=<bool>`); use `--verbose` to opt into the full JSON result for debugging.
 
 ### 7 agent identity templates
 
