@@ -208,6 +208,8 @@ Three independent telemetry-signal gates — ALL required for the corresponding 
 { service.name="macf-agent-science-agent", service.namespace="ppam-2026" }
 ```
 
+**`MACF_VERSION` drift after CLI bump**: `MACF_VERSION` is baked at the bootstrap-write of `env.telemetry`. Running `macf update` to bump the workspace's pinned CLI version (`.macf/macf-agent.json` `versions.cli`) does NOT refresh the baked value — `env.telemetry` is operator-managed per macf#342, so it's preserved unconditionally once written. To refresh `MACF_VERSION` after a CLI bump, either delete `env.telemetry` and re-run `macf update` (regenerates with the new pinned version) or hand-edit the `export MACF_VERSION="x.y.z"` line directly. Trade-off accepted: the operator-managed contract trumps automatic version refresh; the runtime `${MACF_VERSION:-unknown}` fallback ensures the label stays well-formed in any case.
+
 **Common operator edits**:
 
 - **Customize the OTLP endpoint**: edit `MACF_OTEL_ENDPOINT` (e.g., `export MACF_OTEL_ENDPOINT="https://your-collector.example.com/v1/traces"`). Survives `macf update`.

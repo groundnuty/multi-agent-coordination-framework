@@ -471,10 +471,10 @@ export function generateEnvRegistry(config: MacfAgentConfig): string {
  * uses shell-variable expansion (`${MACF_PROJECT}`, `${MACF_AGENT_NAME}`,
  * etc.) rather than baked literals, because env.identity + env.registry
  * source FIRST per the alphabetical glob in claude.sh (`env._helpers` →
- * `env.certs` → `env.github` → `env.identity` → `env.registry` → `env.tmux`
- * → `env.telemetry`). All identity / registry-mode vars are already
- * exported when this file sources, so the `${VAR}` expansions resolve at
- * export-time.
+ * `env.certs` → `env.github` → `env.identity` → `env.registry` →
+ * `env.telemetry` → `env.tmux` — `te` < `tm` on the second char). All
+ * identity / registry-mode vars are already exported when this file
+ * sources, so the `${VAR}` expansions resolve at export-time.
  *
  * `MACF_VERSION` is the only baked-as-literal value: it's the macf CLI
  * version pinned in `.macf/macf-agent.json` `versions.cli` at this
