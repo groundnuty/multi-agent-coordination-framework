@@ -59,10 +59,21 @@ describe('macf-notify-peer SKILL.md (macf#350)', () => {
     expect(content).toMatch(/--verbose/);
   });
 
-  it('mentions the no-wake opt-out flag', () => {
-    // Operator-driven default = wake true; --no-wake flips to false
-    // (preserves Pattern E for cases where operator wants notify
-    // without a TUI wake).
-    expect(content).toMatch(/--no-wake/);
+  // macf#355: source-level invariant — SKILL.md must NOT mention
+  // `--no-wake` or pass a `wake` field. The receiver-side discriminator
+  // keys off `event` alone (operator-driven `event: custom` wakes;
+  // autonomous events skip wake / Pattern E). A re-introduction of the
+  // wake flag would silently work against the architectural cleanup.
+  it('does NOT mention --no-wake (macf#355 — receiver discriminates by event, not sender flag)', () => {
+    expect(content).not.toMatch(/--no-wake/);
+  });
+
+  it('does NOT instruct passing `wake` field to notify_peer (macf#355)', () => {
+    // The prompt template should call notify_peer with `to`, `event`,
+    // `message` only — no `wake` field. Receiver decides from `event`.
+    // Catches a future refactor that might re-introduce `wake: true`
+    // as a "safer default" when in fact the architectural cleanup is
+    // event-only discrimination.
+    expect(content).not.toMatch(/\bwake:\s*(true|false)\b/);
   });
 });

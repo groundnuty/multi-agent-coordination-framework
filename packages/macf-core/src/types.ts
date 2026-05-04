@@ -72,16 +72,16 @@ export const NotifyPayloadSchema = z.object({
   // only send other variants. Producers (the channel-server's
   // `notify_peer` MCP tool) construct + validate against the narrower
   // PeerNotificationPayloadSchema below before POST.
+  // macf#355: `event` field IS the wake-policy discriminator. Receiver-
+  // side `decideWake()` reads `event === 'custom'` → wake; autonomous
+  // events (session-end / turn-complete / error) → skip wake (Pattern E,
+  // macf#267 Option d cross-agent Stop-hook loop prevention). The
+  // previously-shipped `wake?: boolean` field was removed in v0.2.21
+  // (one-release-cycle window post-v0.2.20) — it leaked Pattern E
+  // implementation detail into the agent-facing API; the cleaner
+  // design discriminates at the receiver from a property already there
+  // for other reasons.
   event: z.enum(['session-end', 'turn-complete', 'error', 'custom']).optional(),
-  // `wake` (macf#351) — opt-in flag for receiver-side tmux wake on
-  // peer_notification. Default behavior (`undefined` / `false`) preserves
-  // Pattern E (macf#267 Option d): peer notifications are observational
-  // only — MCP-pushed but no tmux wake — to prevent the cross-agent
-  // Stop-hook ping-pong loop autonomous Stop-hook flows trigger.
-  // Operator-driven invocations (slash command in macf#350) opt in by
-  // setting wake=true; the loop hazard does not apply when the trigger
-  // is a human typing into one TUI, not an agent's Stop hook.
-  wake: z.boolean().optional(),
   // pr_review_state variant fields (macf-actions#39, v3.3.0). Optional
   // at the top level to preserve backward-compat. Producers (the
   // route-by-pr-review-state job) construct + validate against the
@@ -139,9 +139,10 @@ export const PeerNotificationPayloadSchema = z.object({
   event: z.enum(['session-end', 'turn-complete', 'error', 'custom']),
   message: z.string().optional(),
   context: z.record(z.string(), z.unknown()).optional(),
-  // macf#351: opt-in tmux wake at receiver. Default (omitted) preserves
-  // Pattern E observational-only delivery.
-  wake: z.boolean().optional(),
+  // macf#355: receiver-side wake policy reads `event === 'custom'` only.
+  // No flag-on-the-wire — Pattern E (cross-agent Stop-hook loop
+  // prevention) is enforced by the receiver's `decideWake()` from
+  // `event` alone, removing per-call sender-side wake leakage.
 });
 
 export type PeerNotificationPayload = z.infer<typeof PeerNotificationPayloadSchema>;

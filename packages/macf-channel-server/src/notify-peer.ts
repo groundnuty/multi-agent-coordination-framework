@@ -43,13 +43,11 @@ export const NotifyPeerInputSchema = {
   to: z.string().optional()
     .describe('Peer agent name to notify. If omitted, broadcasts to all registered peers in the project.'),
   event: z.enum(['session-end', 'turn-complete', 'error', 'custom'])
-    .describe('Event type triggering the notification.'),
+    .describe('Event type triggering the notification. Receiver-side wake policy keys off this field (macf#355): `custom` (operator-driven) wakes the receiver TUI; `session-end` / `turn-complete` / `error` (Stop-hook autonomous) are observational-only — Pattern E preserves cross-agent Stop-hook loop prevention.'),
   message: z.string().optional()
     .describe('Optional human-readable message body.'),
   context: z.record(z.string(), z.unknown()).optional()
     .describe('Optional structured context payload (string-keyed object).'),
-  wake: z.boolean().optional()
-    .describe('If true, request the receiver tmux wake on receipt (cancels Pattern E skip-wake for this call). Default: false (preserve Pattern E for Stop-hook-driven flows; prevents cross-agent Stop-hook loops).'),
 } as const;
 
 export const NotifyPeerOutputSchema = {
@@ -77,13 +75,6 @@ export interface NotifyPeerInput {
   readonly event: 'session-end' | 'turn-complete' | 'error' | 'custom';
   readonly message?: string;
   readonly context?: Record<string, unknown>;
-  /**
-   * macf#351: when true, the receiver wakes its tmux TUI in addition to
-   * the MCP push (cancels Pattern E skip-wake). Default false preserves
-   * Pattern E for Stop-hook autonomous flows so cross-agent Stop-hook
-   * loops stay structurally prevented.
-   */
-  readonly wake?: boolean;
 }
 
 export interface NotifyPeerResult {
@@ -259,12 +250,6 @@ export async function notifyPeer(
           event: input.event,
           ...(input.message !== undefined ? { message: input.message } : {}),
           ...(input.context !== undefined ? { context: input.context } : {}),
-          // macf#351: forward `wake` only when caller set it explicitly.
-          // Omitting the field on the wire when undefined keeps the
-          // POST body shape-compatible with pre-#351 receivers (they
-          // ignore unknown fields per Zod's default `.passthrough()`-off
-          // behavior — the schema reads but doesn't preserve unknowns).
-          ...(input.wake === true ? { wake: true } : {}),
         };
 
         const results = await Promise.all(

@@ -174,14 +174,17 @@ describe('notify_peer tool', () => {
       expect(body.event).toBe('turn-complete');
       expect('message' in body).toBe(false);
       expect('context' in body).toBe(false);
-      // macf#351: `wake` defaults to absent on the wire when caller
-      // didn't set it (preserves Pattern E for Stop-hook autonomous flows).
-      expect('wake' in body).toBe(false);
     });
   });
 
-  describe('wake opt-in (macf#351)', () => {
-    it('forwards wake=true on outbound POST when caller sets it', async () => {
+  describe('wake field absent (macf#355)', () => {
+    // After macf#355, sender NEVER sets `wake` on the wire — receiver-side
+    // `decideWake()` reads `event` directly. Pin: outbound POST body must
+    // not carry `wake` regardless of the call shape (operator-driven
+    // event=custom, autonomous event=session-end, or anything else).
+
+    it('omits wake on outbound POST for event: custom (operator-driven)', async () => {
+      // macf#355: receiver wakes on event=custom alone; no wake flag needed.
       const reg = makeRegistry({
         get: { host: '127.0.0.1', port: 9000, type: 'permanent', instance_id: 'a', started: 't' },
       });
@@ -190,35 +193,15 @@ describe('notify_peer tool', () => {
         to: 'peer-a',
         event: 'custom',
         message: 'operator-driven notify',
-        wake: true,
-      });
-      const body = JSON.parse(lastPostedBody!);
-      expect(body.wake).toBe(true);
-    });
-
-    it('omits wake on outbound POST when caller passes wake=false', async () => {
-      // Explicit-false is treated the same as omitted on the wire — both
-      // map to receiver-side "preserve Pattern E" default. This keeps the
-      // wire shape backward-compatible with pre-#351 receivers (no extra
-      // field they'd see as unknown).
-      const reg = makeRegistry({
-        get: { host: '127.0.0.1', port: 9000, type: 'permanent', instance_id: 'a', started: 't' },
-      });
-      nextHttpsRespondsWith(200);
-      await notifyPeer(makeDeps(reg), {
-        to: 'peer-a',
-        event: 'session-end',
-        wake: false,
       });
       const body = JSON.parse(lastPostedBody!);
       expect('wake' in body).toBe(false);
     });
 
-    it('omits wake on outbound POST when caller does not pass it (Pattern E preserved)', async () => {
-      // Regression test pinning the Stop-hook autonomous flow: hooks.json
-      // never passes `wake`, so the receiver MUST see no `wake` field
-      // and continue Pattern E observational-only delivery → cross-agent
-      // Stop-hook loop stays structurally prevented.
+    it('omits wake on outbound POST for event: session-end (Pattern E preserved)', async () => {
+      // Regression: hooks.json's Stop entry posts event=session-end.
+      // Receiver MUST discriminate by event alone (skip wake →
+      // cross-agent Stop-hook loop stays structurally prevented).
       const reg = makeRegistry({
         get: { host: '127.0.0.1', port: 9000, type: 'permanent', instance_id: 'a', started: 't' },
       });
