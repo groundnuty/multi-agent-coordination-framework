@@ -391,16 +391,127 @@ describe('generateEnvTelemetry', () => {
     );
   });
 
-  it('exports OTEL_SERVICE_NAME = macf-agent-<agent_name>', () => {
+  it('exports OTEL_SERVICE_NAME using shell-var expansion (macf#357 — picks up settings.local.json overrides)', () => {
+    // Pre-#357: literal "macf-agent-<config.agent_name>" baked.
+    // Post-#357: shell-var "macf-agent-${MACF_AGENT_NAME}" — env.identity
+    // sources first per alphabetical glob and applies the 3-layer
+    // settings-driven priority (env > settings.local.json > baked
+    // default), so this expansion picks up operator overrides.
     expect(generateEnvTelemetry(baseConfig, cleanEnv)).toContain(
-      'export OTEL_SERVICE_NAME="macf-agent-code-agent"',
+      'export OTEL_SERVICE_NAME="macf-agent-${MACF_AGENT_NAME}"',
     );
   });
 
-  it('exports OTEL_RESOURCE_ATTRIBUTES with gen_ai.agent.name + role + namespace', () => {
-    expect(generateEnvTelemetry(baseConfig, cleanEnv)).toContain(
-      'export OTEL_RESOURCE_ATTRIBUTES="gen_ai.agent.name=code-agent,gen_ai.agent.role=code-agent,service.namespace=macf"',
-    );
+  // ---------------------------------------------------------------------
+  // OTEL_RESOURCE_ATTRIBUTES — macf#357 attribute set
+  // ---------------------------------------------------------------------
+
+  describe('OTEL_RESOURCE_ATTRIBUTES (macf#357)', () => {
+    it('carries service.namespace from MACF_PROJECT (was: literal `macf`)', () => {
+      // Distinguishes papers/ppam-2026 from VM substrate so Tempo / Loki
+      // queries can filter by project rather than collapsing all macf
+      // agents into one service.namespace bucket.
+      const out = generateEnvTelemetry(baseConfig, cleanEnv);
+      expect(out).toContain('service.namespace=${MACF_PROJECT}');
+      // Pin: the OLD shape (literal `service.namespace=macf`) is gone.
+      expect(out).not.toMatch(/service\.namespace=macf\b/);
+    });
+
+    it('carries service.version with ${MACF_VERSION:-unknown} fallback', () => {
+      // service.version enables release-cadence correlation queries
+      // (e.g. behavior pre-/post-v0.2.20). The :-unknown fallback keeps
+      // the label well-formed when MACF_VERSION isn't exported (legacy
+      // env.telemetry without the bake line).
+      const out = generateEnvTelemetry(baseConfig, cleanEnv);
+      expect(out).toContain('service.version=${MACF_VERSION:-unknown}');
+    });
+
+    it('bakes MACF_VERSION literal from config.versions.cli', () => {
+      // Per macf#357 AC: macf init / macf update resolve the workspace's
+      // pinned macf CLI version (.macf/macf-agent.json `versions.cli`)
+      // and write it as a literal export. Workspace's pinned version
+      // ≠ runtime's installed CLI — same workspace can be used by
+      // multiple operators on different CLI versions; the pinned one
+      // is what was canonicalized at the last `macf init`/`update`.
+      const out = generateEnvTelemetry(baseConfig, cleanEnv);
+      expect(out).toContain('export MACF_VERSION="0.1.0"');
+    });
+
+    it('falls back to MACF_VERSION="unknown" when config.versions absent (substrate / legacy)', () => {
+      // Pre-P6 / hand-configured workspaces may lack the `versions`
+      // block entirely (it's `.optional()` on the schema). Those
+      // workspaces should still produce a well-formed env.telemetry
+      // — just with an "unknown" version label rather than
+      // synthesizing a random release pin.
+      const legacyConfig: MacfAgentConfig = {
+        ...baseConfig,
+        versions: undefined,
+      };
+      const out = generateEnvTelemetry(legacyConfig, cleanEnv);
+      expect(out).toContain('export MACF_VERSION="unknown"');
+    });
+
+    it('carries service.instance.id = <project>-<agent>@<host>', () => {
+      // Distinguishes same-named agents on different hosts (PPAM macbook
+      // vs VM substrate). Uses `hostname -s` for the short form
+      // consistent with the convention OTel resource detectors emit.
+      const out = generateEnvTelemetry(baseConfig, cleanEnv);
+      expect(out).toContain(
+        'service.instance.id=${MACF_PROJECT}-${MACF_AGENT_NAME}@$(hostname -s)',
+      );
+    });
+
+    it('carries host.name=$(hostname -s) for VM-vs-macbook distinction', () => {
+      const out = generateEnvTelemetry(baseConfig, cleanEnv);
+      expect(out).toContain('host.name=$(hostname -s)');
+    });
+
+    it('carries macf.framework=macf as the designed all-macf-agents filter', () => {
+      // Replaces the accidental reliance on `service.namespace=macf` (now
+      // correctly carries the project) for a "give me all macf
+      // telemetry" filter. Designed single-label, low-cardinality.
+      const out = generateEnvTelemetry(baseConfig, cleanEnv);
+      expect(out).toContain('macf.framework=macf');
+    });
+
+    it('carries macf.agent.type from MACF_AGENT_TYPE (permanent vs worker)', () => {
+      const out = generateEnvTelemetry(baseConfig, cleanEnv);
+      expect(out).toContain('macf.agent.type=${MACF_AGENT_TYPE}');
+    });
+
+    it('carries macf.registry.type from MACF_REGISTRY_TYPE (local vs github-mode)', () => {
+      // env.registry sources before env.telemetry per alphabetical glob,
+      // so this expansion resolves at export time.
+      const out = generateEnvTelemetry(baseConfig, cleanEnv);
+      expect(out).toContain('macf.registry.type=${MACF_REGISTRY_TYPE}');
+    });
+
+    it('preserves gen_ai.agent.name + gen_ai.agent.role attrs (existing)', () => {
+      // Pre-#357 shape used config-baked literals; post-#357 uses shell
+      // expansion to honor settings.local.json overrides per env.identity.
+      const out = generateEnvTelemetry(baseConfig, cleanEnv);
+      expect(out).toContain('gen_ai.agent.name=${MACF_AGENT_NAME}');
+      expect(out).toContain('gen_ai.agent.role=${MACF_AGENT_ROLE}');
+    });
+
+    it('NOT touch gen_ai.system (Claude Code SDK auto-sets it for the LLM provider)', () => {
+      // Per macf#357 "NOT adding": `gen_ai.system` is the LLM provider
+      // (anthropic / openai), already auto-set by Claude Code's SDK.
+      // Overwriting would mislabel telemetry; we don't.
+      const out = generateEnvTelemetry(baseConfig, cleanEnv);
+      expect(out).not.toMatch(/gen_ai\.system=/);
+    });
+
+    it('emits all 9 attributes in a single comma-separated value (one export)', () => {
+      // Pin: OTEL_RESOURCE_ATTRIBUTES is one comma-separated string per
+      // OTel SDK contract. Multiple exports would be silently overwriten.
+      const out = generateEnvTelemetry(baseConfig, cleanEnv);
+      const exportLine = out.split('\n').find(l => l.startsWith('export OTEL_RESOURCE_ATTRIBUTES='));
+      expect(exportLine).toBeDefined();
+      // 9 attrs → 8 commas inside the value.
+      const value = exportLine!.replace(/^export OTEL_RESOURCE_ATTRIBUTES="/, '').replace(/"$/, '');
+      expect(value.split(',')).toHaveLength(9);
+    });
   });
 
   it('rejects shell-unsafe characters in MACF_OTEL_ENDPOINT', () => {
@@ -564,14 +675,18 @@ describe('cross-concern invariants', () => {
     }
   });
 
-  it('non-overlap: env.telemetry only emits OTEL_* / CLAUDE_CODE_* / MACF_OTEL_*', () => {
+  it('non-overlap: env.telemetry only emits OTEL_* / CLAUDE_CODE_* / MACF_OTEL_* / MACF_VERSION', () => {
+    // macf#357 added MACF_VERSION as a telemetry-class export (it's
+    // semantically tied to OTel resource attribute service.version, not
+    // identity). All other identity / cert / registry vars stay in their
+    // own files; this regex pins the boundary.
     const telemetry = generateEnvTelemetry(baseConfig, {});
     const exportLines = telemetry
       .split('\n')
       .filter(l => l.startsWith('export '));
     for (const line of exportLines) {
       expect(line).toMatch(
-        /export (OTEL_|CLAUDE_CODE_|MACF_OTEL_)/,
+        /export (OTEL_|CLAUDE_CODE_|MACF_OTEL_|MACF_VERSION)/,
       );
     }
   });

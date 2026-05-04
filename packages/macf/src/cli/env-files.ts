@@ -456,16 +456,32 @@ export function generateEnvRegistry(config: MacfAgentConfig): string {
 /**
  * Generate `.claude/.macf/env.telemetry` content.
  *
- * The 3 OTel mandatory gates + per-signal exporters + endpoint resolution.
- * Mirrors `claude-sh.ts`'s `otelTelemetryLines` (including the same
- * shell-unsafe-char rejection on MACF_OTEL_ENDPOINT and the same default
- * endpoint `http://localhost:14318` per macf-devops-toolkit canonical k3d
- * topology).
+ * The 3 OTel mandatory gates + per-signal exporters + endpoint resolution
+ * + identity-bearing OTel resource attributes (macf#357). Mirrors
+ * `claude-sh.ts`'s `otelTelemetryLines` (including the same shell-unsafe-
+ * char rejection on MACF_OTEL_ENDPOINT and the same default endpoint
+ * `http://localhost:14318` per macf-devops-toolkit canonical k3d topology).
  *
  * **Minimal placeholder when `MACF_OTEL_DISABLED=1`** (operator opt-out at
  * template-time per macf#197). Body shrinks to header + schema_version +
  * a comment explaining the opt-out — no OTel exports emitted, so sourcing
  * the file is a no-op.
+ *
+ * **Resource-attribute composition (macf#357).** OTEL_RESOURCE_ATTRIBUTES
+ * uses shell-variable expansion (`${MACF_PROJECT}`, `${MACF_AGENT_NAME}`,
+ * etc.) rather than baked literals, because env.identity + env.registry
+ * source FIRST per the alphabetical glob in claude.sh (`env._helpers` →
+ * `env.certs` → `env.github` → `env.identity` → `env.registry` → `env.tmux`
+ * → `env.telemetry`). All identity / registry-mode vars are already
+ * exported when this file sources, so the `${VAR}` expansions resolve at
+ * export-time.
+ *
+ * `MACF_VERSION` is the only baked-as-literal value: it's the macf CLI
+ * version pinned in `.macf/macf-agent.json` `versions.cli` at this
+ * workspace's last `macf init` / `macf update`. Substrate / hand-
+ * configured workspaces (no `versions` block) get `MACF_VERSION=unknown`
+ * so OTEL_RESOURCE_ATTRIBUTES gets a clean label rather than an empty
+ * string.
  *
  * @param env — defaults to `process.env`; tests inject a fake.
  */
@@ -498,12 +514,42 @@ export function generateEnvTelemetry(
     );
   }
 
+  // macf#357: bake the macf CLI version pinned for this workspace. Reads
+  // `versions.cli` from `.macf/macf-agent.json` (resolved at `macf init`
+  // / `macf update`). Falls back to literal "unknown" if the workspace
+  // is pre-P6 / hand-configured / lacks the versions block — keeps the
+  // OTel resource attribute well-formed (no empty-string label that
+  // Prometheus / Tempo would render as missing-but-not-absent).
+  const macfVersion = config.versions?.cli ?? 'unknown';
+
+  // OTEL_RESOURCE_ATTRIBUTES — the new attribute set per macf#357.
+  // Shell-var expansion at export time pulls identity from env.identity +
+  // registry-mode from env.registry (both source before this file per
+  // alphabetical glob). `host.name` uses `hostname -s` for the short
+  // form (consistent with the convention OTel resource detectors emit).
+  // `service.instance.id` is `<project>-<agent>@<host>` — distinguishes
+  // same-named agents on different hosts (PPAM macbook vs VM substrate).
+  // `macf.framework=macf` is the designed "all macf agents" single-label
+  // filter; replaces the accidental reliance on `service.namespace=macf`
+  // (which now correctly carries the project, not the framework).
+  const resourceAttrs = [
+    'service.namespace=${MACF_PROJECT}',
+    'service.version=${MACF_VERSION:-unknown}',
+    'service.instance.id=${MACF_PROJECT}-${MACF_AGENT_NAME}@$(hostname -s)',
+    'host.name=$(hostname -s)',
+    'gen_ai.agent.name=${MACF_AGENT_NAME}',
+    'gen_ai.agent.role=${MACF_AGENT_ROLE}',
+    'macf.framework=macf',
+    'macf.agent.type=${MACF_AGENT_TYPE}',
+    'macf.registry.type=${MACF_REGISTRY_TYPE}',
+  ].join(',');
+
   const body = [
     '# Generator: generateEnvTelemetry (env-files.ts)',
     '#',
     '# Claude Code native OTEL telemetry → observability stack',
-    '# (macf#197 + macf#245). Three telemetry signal gates — each',
-    '# independent, ALL required for the corresponding signal to emit:',
+    '# (macf#197 + macf#245 + macf#357). Three telemetry signal gates —',
+    '# each independent, ALL required for the corresponding signal to emit:',
     '#   CLAUDE_CODE_ENABLE_TELEMETRY        — master telemetry gate',
     '#   CLAUDE_CODE_ENHANCED_TELEMETRY_BETA — additional gate for traces',
     '#   OTEL_TRACES_EXPORTER=otlp           — emit traces',
@@ -518,20 +564,32 @@ export function generateEnvTelemetry(
     '#     `macf update` bakes a different default into this file',
     '#   - Run-time: OTEL_EXPORTER_OTLP_ENDPOINT=<url> in the shell',
     '#     BEFORE invoking ./claude.sh overrides the baked default',
+    '#',
+    '# OTEL_RESOURCE_ATTRIBUTES (macf#357): identity-bearing labels keyed',
+    '# off env.identity + env.registry exports. service.namespace carries',
+    '# the project (not the framework — reserve macf.framework=macf for',
+    '# the "all macf agents" filter). service.version baked from',
+    '# .macf/macf-agent.json `versions.cli` at template-write time;',
+    '# unknown when the workspace is pre-P6.',
     'export CLAUDE_CODE_ENABLE_TELEMETRY=1',
     'export CLAUDE_CODE_ENHANCED_TELEMETRY_BETA=1',
     'export OTEL_TRACES_EXPORTER=otlp',
     'export OTEL_METRICS_EXPORTER=otlp',
     'export OTEL_LOGS_EXPORTER=otlp',
     // 4-layer endpoint resolution chain (macf#313). Requires
-    // macf_settings_get to be defined upstream — env.identity defines it,
-    // and PR-B's claude.sh sources env.identity before env.telemetry.
+    // macf_settings_get to be defined upstream — env._helpers defines it,
+    // and PR-B's claude.sh sources env._helpers before env.telemetry.
     `MACF_OTEL_ENDPOINT="\${MACF_OTEL_ENDPOINT:-$(macf_settings_get MACF_OTEL_ENDPOINT)}"`,
     `MACF_OTEL_ENDPOINT="\${MACF_OTEL_ENDPOINT:-${endpoint}}"`,
     'export OTEL_EXPORTER_OTLP_ENDPOINT="${OTEL_EXPORTER_OTLP_ENDPOINT:-$MACF_OTEL_ENDPOINT}"',
     'export OTEL_EXPORTER_OTLP_PROTOCOL=http/protobuf',
-    `export OTEL_SERVICE_NAME="macf-agent-${config.agent_name}"`,
-    `export OTEL_RESOURCE_ATTRIBUTES="gen_ai.agent.name=${config.agent_name},gen_ai.agent.role=${config.agent_role},service.namespace=macf"`,
+    // macf#357: MACF_VERSION baked literal — workspace's pinned CLI
+    // version. Falls back to "unknown" via ${MACF_VERSION:-unknown} in
+    // the resource-attrs string so substrate workspaces produce a
+    // well-formed label even without re-running macf update.
+    `export MACF_VERSION="${macfVersion}"`,
+    `export OTEL_SERVICE_NAME="macf-agent-\${MACF_AGENT_NAME}"`,
+    `export OTEL_RESOURCE_ATTRIBUTES="${resourceAttrs}"`,
   ];
   return assemble(operatorHeaderLines('generateEnvTelemetry'), body);
 }
