@@ -148,13 +148,21 @@ COMMENT_AUTHOR=$(gh issue view N --json comments --jq '.comments[-1].author.logi
 
 ### Pattern B — Pre-flight state validation
 
-Before the operation, validate that the precondition for the good path holds:
+Before the operation, validate that the precondition for the good path holds. **Validate the full shape of the state, not just a coarse prefix** — coarse-grained checks admit malformed-but-prefix-conformant values that satisfy the gate but violate the actual contract.
 
 ```bash
-# Token prefix check before gh ops
+# WRONG: prefix-only check — admits values like "ghs_; rm -rf x" through
 [[ "$GH_TOKEN" == ghs_* ]] || { echo "FATAL: bad token"; exit 1; }
 gh ...
+
+# RIGHT: shape validation — restricts to the actual installation-token alphabet
+[[ "$GH_TOKEN" =~ ^ghs_[A-Za-z0-9_]+$ ]] || { echo "FATAL: bad token shape"; exit 1; }
+gh ...
 ```
+
+**Why this matters:** the §4.4 failure-injection sprint (paper-research §27) found that the deployed `check-gh-token.sh` PreToolUse hook used a substring prefix check (`${GH_TOKEN_VALUE:0:4} == ghs_`), which admitted the injection `GH_TOKEN=ghs_; rm -rf <sentinel>` (first-4-char check passes; full shape contains shell metacharacters). End-to-end attribution was still caught at the gh API boundary (HTTP 401 on a malformed token), so production behavior was unaffected — but Pattern B's specific contract (block-at-the-boundary) was bypassed for that injection class. The hardened regex above (or equivalent full-shape validation) restores the contract.
+
+**Coverage-gap classification:** defense-pattern coverage gaps inside the deployed boundary are themselves a sub-class of silent-fallback hazard, distinct from the designed-defense gap the pattern targets. The Pattern B example above is the canonical instance; sister observations may surface in other patterns where coarse-grained checks substitute for full-shape validation. Reviewers extending this catalog should test their patterns' deployed implementations against shape-violation injections, not just contract-violation injections.
 
 ### Pattern C — Heartbeat / activity invariant
 
