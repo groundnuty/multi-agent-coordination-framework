@@ -9,6 +9,60 @@ Plugin + routing-workflow changes ship from separate repos
 [`groundnuty/macf-actions`](https://github.com/groundnuty/macf-actions))
 and are not included here — pin them explicitly in each workspace.
 
+## [0.2.24] — 2026-05-18
+
+A2A integration Phase 1 — adds a well-known AgentCard discovery
+endpoint to `macf-channel-server` per A2A Protocol v1.0 § 14.3 + § 4.4.1.
+Purely additive discovery; **zero behavior change** to existing
+endpoints (`/notify`, `/macf/sign`, `/health`). Bumps existing MACF
+agents to a state where external A2A-spec clients can discover them
+without per-vendor configuration.
+
+### Added
+- **AgentCard endpoint at `/.well-known/agent-card.json`
+  ([#375], closes [#370])** — serves a spec-compliant A2A v1.0
+  AgentCard JSON over the existing mTLS channel. Fields populated
+  from MACF identity (`agentName`, `agentRole`, `project`) +
+  channel-server `PACKAGE_VERSION`:
+
+  - `id`: `<project>-<agentName>` (e.g. `macf-code-agent`)
+  - `name`: `<agentName>`
+  - `url`: `https://<advertiseHost>:<port>`
+  - `version`: channel-server PACKAGE_VERSION
+  - `provider`: `{organization: "groundnuty/macf (<project>)", url: "https://github.com/groundnuty/macf"}`
+  - `securitySchemes.mutual_tls.type`: `"mutualTls"` (per spec § 4.5.6)
+  - `security`: `[{mutual_tls: []}]` (default requirement)
+  - `skills`: `[]` (Phase 1; populated as A2A task lifecycle surfaces materialize in Phase 2+)
+  - `capabilities`: `{}` (Phase 1; populated when inbound A2A JSON-RPC `message/send` lands)
+
+  Hand-rolled Zod schema (`packages/macf-channel-server/src/agent-card.ts`)
+  instead of `@a2a-js/sdk` because the npm SDK is v0.3.13 implementing
+  A2A v0.3, not v1.0 (v1.0 still alpha on `epic/1.0_breaking_changes`
+  branch). Phase 1's narrow scope makes ~120 lines of Zod the minimal
+  correct surface; will swap to `@a2a-js/sdk` v1.0 when stable. Schema
+  cites spec § 4.4.1 / § 4.4.5 / § 4.5.6 / § 14.3 (verified live
+  2026-05-18 via a2a-protocol.org).
+
+  Phase 1 **mTLS-only stance**. `securitySchemes` field uses an
+  mTLS-discriminated `z.record`; Phase 2+ widening to a
+  `z.discriminatedUnion` for OAuth/OIDC is noted as an extension point
+  in a code comment.
+
+  **#371 Path 2 lockstep**: `/macf/sign` is intentionally NOT
+  advertised in the AgentCard. Live cryptographic attestation stays
+  MACF-only per DR-010 Path 2. Both unit-level and E2E-level invariants
+  pin this — neither `/macf/sign` nor `/sign` appears anywhere in the
+  served JSON.
+
+  20 unit tests + 8 E2E tests pass (196/197 in channel-server suite;
+  +21 over the v0.2.23 baseline). Python A2A SDK reference-client
+  integration test deferred to follow-up [#376] (cross-implementation
+  triangulation; non-blocking; gates Phase 3 outbound-A2A work).
+
+[#370]: https://github.com/groundnuty/macf/issues/370
+[#375]: https://github.com/groundnuty/macf/pull/375
+[#376]: https://github.com/groundnuty/macf/issues/376
+
 ## [0.2.23] — 2026-05-18
 
 A2A integration Phase 0 — OTel GenAI semconv alignment for the
