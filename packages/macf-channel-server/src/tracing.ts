@@ -41,12 +41,43 @@ export const SpanNames = {
   // visibility for Phase D / Claim 1b cell-effect measurement +
   // parent-child relationship to receiver's NotifyReceived span via
   // W3C traceparent propagation.
+  //
+  // **DEPRECATED literal as of macf#369 (A2A Phase 0)**: the sender-
+  // side outbound span has been renamed to `invoke_agent {gen_ai.agent.name}`
+  // per OTel GenAI Agent Spans semconv (CLIENT-kind variant; see
+  // https://opentelemetry.io/docs/specs/semconv/gen-ai/gen-ai-agent-spans/).
+  // The legacy literal `macf.tool.notify_peer` is kept here ONLY for
+  // grep-traceability + as a Tempo dashboard reference during the
+  // transition; it is NOT emitted as a span name anymore. New emission
+  // sites should use `buildInvokeAgentSpanName(target)` below.
   ToolNotifyPeer: 'macf.tool.notify_peer',
   // macf#271: PreCompact-driven checkpoint_to_memory span. INTERNAL-kind
   // (purely local filesystem write). Attributes: trigger (manual|auto),
   // written (bool), deduplicated (bool). DR-023 §UC-3 telemetry pattern.
   ToolCheckpointToMemory: 'macf.tool.checkpoint_to_memory',
 } as const;
+
+/**
+ * Build the span name for an outbound `invoke_agent` operation per OTel
+ * GenAI Agent Spans semconv (CLIENT-kind variant).
+ *
+ * Spec: "Span name SHOULD be `invoke_agent {gen_ai.agent.name}` if
+ * available, else `invoke_agent`."
+ * (https://opentelemetry.io/docs/specs/semconv/gen-ai/gen-ai-agent-spans/)
+ *
+ * The `{gen_ai.agent.name}` placeholder is the TARGET agent (the one
+ * being invoked) — not the emitting agent. For MACF's `notify_peer`,
+ * single-peer mode passes `input.to`; broadcast mode (no target peer)
+ * falls back to the bare `invoke_agent` form.
+ *
+ * macf#369 — A2A Phase 0 (OTel GenAI semconv alignment).
+ */
+export function buildInvokeAgentSpanName(target?: string): string {
+  if (target !== undefined && target.length > 0) {
+    return `invoke_agent ${target}`;
+  }
+  return 'invoke_agent';
+}
 
 /** MACF-specific attribute keys (not covered by OTEL semconv). */
 export const Attr = {
@@ -84,6 +115,15 @@ export const GenAiAttr = {
  * Map NotifyPayload.type to the experimental GenAI `operation.name`
  * vocabulary. If the type isn't one we've classified, returns
  * `'notify'` as a catch-all so the span still has a reasonable value.
+ *
+ * **Scope (post-macf#369)**: this mapping is for the RECEIVER-side
+ * incoming-span operation only (SERVER-kind `NotifyReceived` span in
+ * https.ts onNotify). The SENDER-side outbound `invoke_agent` span
+ * (CLIENT-kind, notify-peer.ts) hard-codes `operation.name='invoke_agent'`
+ * per OTel GenAI Agent Spans semconv — sender and receiver carry
+ * different GenAI operation semantics, and that's correct under the
+ * spec (the CLIENT span IS the invoke; the SERVER span is the
+ * receive-and-process).
  */
 export function operationNameForNotifyType(type: NotifyPayload['type']): string {
   switch (type) {

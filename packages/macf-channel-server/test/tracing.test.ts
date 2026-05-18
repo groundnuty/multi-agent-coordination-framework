@@ -14,6 +14,7 @@ import {
   Attr,
   GenAiAttr,
   operationNameForNotifyType,
+  buildInvokeAgentSpanName,
 } from '../src/tracing.js';
 import type { NotifyPayload } from '@groundnuty/macf-core';
 
@@ -84,6 +85,38 @@ describe('span name + attribute constants', () => {
   it('exports GenAI semconv keys under gen_ai.* prefix', () => {
     for (const [, key] of Object.entries(GenAiAttr)) {
       expect(key).toMatch(/^gen_ai\./);
+    }
+  });
+});
+
+describe('buildInvokeAgentSpanName (macf#369 — A2A Phase 0)', () => {
+  // Per OTel GenAI Agent Spans semconv:
+  // "Span name SHOULD be `invoke_agent {gen_ai.agent.name}` if
+  // available, else `invoke_agent`."
+  // Source: https://opentelemetry.io/docs/specs/semconv/gen-ai/gen-ai-agent-spans/
+
+  it('returns "invoke_agent <target>" when target is non-empty', () => {
+    expect(buildInvokeAgentSpanName('code-agent')).toBe('invoke_agent code-agent');
+    expect(buildInvokeAgentSpanName('science-agent')).toBe('invoke_agent science-agent');
+  });
+
+  it('returns bare "invoke_agent" when target is undefined (broadcast fallback)', () => {
+    expect(buildInvokeAgentSpanName(undefined)).toBe('invoke_agent');
+  });
+
+  it('returns bare "invoke_agent" when target is empty string', () => {
+    // Defensive: empty-string target shouldn't yield "invoke_agent "
+    // (trailing space). Spec's "if available" clause covers this.
+    expect(buildInvokeAgentSpanName('')).toBe('invoke_agent');
+  });
+
+  it('starts with "invoke_agent" prefix (regression — Tempo TraceQL prefix match)', () => {
+    // TraceQL `{ name =~ "^invoke_agent" }` is the canonical
+    // cross-target query for all invoke_agent spans. The prefix MUST
+    // stay literal; breaking this regresses devops-agent's snapshot
+    // queries.
+    for (const target of ['code-agent', 'science-agent', undefined, '']) {
+      expect(buildInvokeAgentSpanName(target)).toMatch(/^invoke_agent/);
     }
   });
 });
