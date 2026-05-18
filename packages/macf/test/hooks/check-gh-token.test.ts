@@ -362,6 +362,76 @@ describe('check-gh-token.sh (hook)', () => {
     });
   });
 
+  // Token-shape regression — tightens prefix-only `${var:0:4} == ghs_`
+  // to full-shape regex `^ghs_[A-Za-z0-9_]+$`. The §4.4 failure-injection
+  // sprint surfaced the prefix-only weakness as Pattern B's 1/10 anomaly
+  // (paper-research §27): `GH_TOKEN='ghs_; rm -rf <sentinel>'` satisfied
+  // the prefix check (first 4 chars match) but smuggled shell
+  // metacharacters past the boundary. The regex tightening (#364
+  // canonical-rule, #365 deployed-impl) restores Pattern B's contract.
+  describe('shape-validation regex (#365 — tightens prefix-only to full-shape)', () => {
+    it('blocks the §27 meta-injection variant (GH_TOKEN with embedded shell metacharacters)', () => {
+      // The exact injection class that bypassed the prefix-only check
+      // in the §4.4 sprint. First 4 chars are `ghs_` but the value
+      // continues with `;` + shell command. Pre-fix: ALLOWED; now: blocks.
+      const r = runHook({
+        command: 'gh issue close 42',
+        env: { GH_TOKEN: 'ghs_; rm -rf /tmp/sentinel' },
+      });
+      expect(r.status).toBe(2);
+    });
+
+    it('blocks GH_TOKEN with command-substitution payload (shape escape)', () => {
+      const r = runHook({
+        command: 'gh pr create',
+        env: { GH_TOKEN: 'ghs_$(echo evil)' },
+      });
+      expect(r.status).toBe(2);
+    });
+
+    it('blocks GH_TOKEN with whitespace after the prefix (shape escape)', () => {
+      const r = runHook({
+        command: 'gh issue list',
+        env: { GH_TOKEN: 'ghs_token with space' },
+      });
+      expect(r.status).toBe(2);
+    });
+
+    it('blocks GH_TOKEN with hyphen in body (regex tolerates [A-Za-z0-9_] only)', () => {
+      const r = runHook({
+        command: 'gh api user',
+        env: { GH_TOKEN: 'ghs_token-with-dash' },
+      });
+      expect(r.status).toBe(2);
+    });
+
+    it('blocks bare `ghs_` with no body (`+` quantifier requires ≥1 body char)', () => {
+      const r = runHook({
+        command: 'gh issue view 1',
+        env: { GH_TOKEN: 'ghs_' },
+      });
+      expect(r.status).toBe(2);
+    });
+
+    it('allows GH_TOKEN with underscore in body (regex tolerates [A-Za-z0-9_])', () => {
+      // Conservative: underscores are valid in the token shape; only
+      // shell metacharacters trigger the block.
+      const r = runHook({
+        command: 'gh issue view 1',
+        env: { GH_TOKEN: 'ghs_token_with_underscore_123' },
+      });
+      expect(r.status).toBe(0);
+    });
+
+    it('allows minimal valid token (ghs_ + single body char)', () => {
+      const r = runHook({
+        command: 'gh issue view 1',
+        env: { GH_TOKEN: 'ghs_a' },
+      });
+      expect(r.status).toBe(0);
+    });
+  });
+
   describe('error message quality', () => {
     it('block message points at macf-gh-token.sh helper', () => {
       const r = runHook({

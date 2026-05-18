@@ -65,7 +65,12 @@ if [[ "$COMMAND" =~ (^|[[:space:];|&])(sudo[[:space:]]+|env[[:space:]]+([A-Za-z_
   exit 0
 fi
 
-# Check GH_TOKEN: must be present AND start with ghs_ (bot token).
+# Check GH_TOKEN: must be present AND match the bot-token shape
+# ^ghs_[A-Za-z0-9_]+$. Prefix-only check (`${GH_TOKEN:0:4} == ghs_`)
+# was bypassable by `GH_TOKEN='ghs_; rm -rf <sentinel>'` — the first
+# four chars matched, the rest never validated. Surfaced as Pattern B's
+# 1/10 anomaly in the §4.4 failure-injection sprint (paper-research §27);
+# canonical-rule update in #364, this script in #365.
 # ghp_/gho_/ghu_ are user tokens; empty falls through to stored
 # `gh auth login` (user). Either case fires the trap.
 # Note: `${GH_TOKEN:-}` expansion is mandatory under `set -u`; a bare
@@ -73,7 +78,7 @@ fi
 # is unset, which is exactly the case we need to handle.
 GH_TOKEN_VALUE="${GH_TOKEN:-}"
 TOKEN_PREFIX="${GH_TOKEN_VALUE:0:4}"
-if [[ -z "$GH_TOKEN_VALUE" ]] || [[ "$TOKEN_PREFIX" != "ghs_" ]]; then
+if [[ -z "$GH_TOKEN_VALUE" ]] || [[ ! "$GH_TOKEN_VALUE" =~ ^ghs_[A-Za-z0-9_]+$ ]]; then
   cat >&2 <<ERR
 BLOCKED by MACF attribution-trap hook: this command would post as the USER, not the BOT.
 
