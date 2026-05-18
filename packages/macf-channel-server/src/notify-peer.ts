@@ -36,7 +36,7 @@ import { z } from 'zod';
 // the per-call CLIENT span. See @opentelemetry/api 1.x propagation
 // API (canonical, verified at impl time).
 import { context, propagation, SpanKind, SpanStatusCode, trace } from '@opentelemetry/api';
-import { SpanNames, Attr, GenAiAttr } from './tracing.js';
+import { buildInvokeAgentSpanName, Attr, GenAiAttr } from './tracing.js';
 import { getNotifyPeerCounter, MetricAttr } from './metrics.js';
 
 export const NotifyPeerInputSchema = {
@@ -204,7 +204,9 @@ function postToPeer(
  * which cut off mid-receiver-wake; comfortable margin even after
  * Finding 2's Option (d) makes /notify return ~5ms for peer_notification).
  *
- * macf#267 Finding 3: wraps in OTel CLIENT span (`macf.tool.notify_peer`)
+ * macf#267 Finding 3: wraps in OTel CLIENT span (post-macf#369:
+ * `invoke_agent {target}` per OTel GenAI Agent Spans semconv; was
+ * `macf.tool.notify_peer` pre-#369)
  * with attributes (target, event, peers_attempted, peers_delivered) so
  * sender-side latency + outcome are visible in Phase D / Claim 1b traces.
  *
@@ -217,13 +219,35 @@ export async function notifyPeer(
   input: NotifyPeerInput,
 ): Promise<NotifyPeerResult> {
   const tracer = trace.getTracer('macf');
+  // macf#369 (A2A Phase 0): outbound CLIENT-kind span follows OTel
+  // GenAI Agent Spans semconv for `invoke_agent` operations. Span name
+  // is dynamic per target peer (`invoke_agent <target>` for single-peer
+  // mode; bare `invoke_agent` for broadcast per spec fallback). The
+  // per-span `gen_ai.agent.name` attribute carries the TARGET peer
+  // (distinct from the per-resource `gen_ai.agent.name` set by
+  // env.telemetry — which is the EMITTING agent). TraceQL queries
+  // disambiguate via `resource.` vs `span.` prefix (devops-agent
+  // 2026-05-18 confirmation on #369; observability-snapshot.sh
+  // queries get dual-scope examples post-merge).
+  //
+  // Receiver-side incoming-span operation name (peer_notify) is set
+  // independently in https.ts onNotify via operationNameForNotifyType()
+  // — sender-side and receiver-side spans carry different GenAI
+  // operation semantics and that's correct under the spec.
   return tracer.startActiveSpan(
-    SpanNames.ToolNotifyPeer,
+    buildInvokeAgentSpanName(input.to),
     {
       kind: SpanKind.CLIENT,
       attributes: {
         [GenAiAttr.System]: 'macf',
-        [GenAiAttr.OperationName]: 'peer_notify',
+        [GenAiAttr.OperationName]: 'invoke_agent',
+        // Per-span gen_ai.agent.name = the TARGET peer being invoked.
+        // Omitted entirely on broadcast (no single target). See OTel
+        // GenAI Agent Spans spec § "Span name" + § "Recommended
+        // attributes" (conditionally required).
+        ...(input.to !== undefined && input.to.length > 0
+          ? { [GenAiAttr.AgentName]: input.to }
+          : {}),
         [Attr.NotifyType]: 'peer_notification',
         [Attr.NotifyEvent]: input.event,
         [Attr.NotifyTarget]: input.to ?? 'broadcast',
