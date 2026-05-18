@@ -76,6 +76,60 @@ function httpsRequest(
   });
 }
 
+/**
+ * Same as httpsRequest but also returns response headers. Used by the
+ * macf#371 308-redirect tests which must assert `Location: /macf/sign`.
+ * Uses `node:https`'s default redirect-following behavior — explicitly
+ * does NOT follow the redirect (we want to inspect the 308 itself,
+ * not the canonical-path response).
+ */
+function httpsRequestRaw(
+  port: number,
+  options: {
+    method: string;
+    path: string;
+    body?: string;
+    headers?: Record<string, string>;
+  },
+): Promise<{ status: number; body: string; headers: Record<string, string> }> {
+  return new Promise((resolve, reject) => {
+    const req = request(
+      {
+        hostname: '127.0.0.1',
+        port,
+        method: options.method,
+        path: options.path,
+        headers: options.headers,
+        cert: readFileSync(certs.agentCert),
+        key: readFileSync(certs.agentKey),
+        ca: readFileSync(certs.caCert),
+        rejectUnauthorized: true,
+      },
+      (res) => {
+        const chunks: Buffer[] = [];
+        res.on('data', (chunk: Buffer) => chunks.push(chunk));
+        res.on('end', () => {
+          // Normalize headers to a plain Record<string, string> — Node's
+          // IncomingHttpHeaders allows string | string[] | undefined.
+          const headers: Record<string, string> = {};
+          for (const [k, v] of Object.entries(res.headers)) {
+            if (Array.isArray(v)) headers[k] = v.join(', ');
+            else if (typeof v === 'string') headers[k] = v;
+          }
+          resolve({
+            status: res.statusCode ?? 0,
+            body: Buffer.concat(chunks).toString('utf-8'),
+            headers,
+          });
+        });
+      },
+    );
+    req.on('error', reject);
+    if (options.body !== undefined) req.write(options.body);
+    req.end();
+  });
+}
+
 interface ServerOpts {
   readonly onSign?: (req: SignRequest) => Promise<Record<string, unknown>>;
 }
@@ -114,7 +168,7 @@ describe('POST /sign E2E (DR-010, #137)', () => {
       try {
         const res = await httpsRequest(port, {
           method: 'POST',
-          path: '/sign',
+          path: '/macf/sign',
           body: JSON.stringify({ csr: 'dummy-csr', agent_name: 'code-agent' }),
           headers: { 'Content-Type': 'application/json' },
         });
@@ -140,7 +194,7 @@ describe('POST /sign E2E (DR-010, #137)', () => {
       try {
         const res = await httpsRequest(port, {
           method: 'POST',
-          path: '/sign',
+          path: '/macf/sign',
           body: JSON.stringify({
             csr: 'dummy-csr',
             agent_name: 'code-agent',
@@ -171,7 +225,7 @@ describe('POST /sign E2E (DR-010, #137)', () => {
       try {
         const res = await httpsRequest(port, {
           method: 'POST',
-          path: '/sign',
+          path: '/macf/sign',
           body: JSON.stringify({
             csr: 'x',
             agent_name: 'code-agent',
@@ -194,7 +248,7 @@ describe('POST /sign E2E (DR-010, #137)', () => {
       try {
         const res = await httpsRequest(port, {
           method: 'POST',
-          path: '/sign',
+          path: '/macf/sign',
           body: JSON.stringify({ csr: 'x', agent_name: 'code-agent' }),
           headers: { 'Content-Type': 'application/json' },
         });
@@ -215,7 +269,7 @@ describe('POST /sign E2E (DR-010, #137)', () => {
       try {
         const res = await httpsRequest(port, {
           method: 'POST',
-          path: '/sign',
+          path: '/macf/sign',
           body: JSON.stringify({ csr: 'x', agent_name: 'code-agent' }),
           headers: { 'Content-Type': 'application/json' },
         });
@@ -236,7 +290,7 @@ describe('POST /sign E2E (DR-010, #137)', () => {
       try {
         const res = await httpsRequest(port, {
           method: 'POST',
-          path: '/sign',
+          path: '/macf/sign',
           body: JSON.stringify({ csr: 'x', agent_name: 'code-agent' }),
           headers: { 'Content-Type': 'application/json' },
         });
@@ -254,7 +308,7 @@ describe('POST /sign E2E (DR-010, #137)', () => {
       try {
         const res = await httpsRequest(port, {
           method: 'POST',
-          path: '/sign',
+          path: '/macf/sign',
           body: '{}',
           headers: { 'Content-Type': 'text/plain' },
         });
@@ -272,7 +326,7 @@ describe('POST /sign E2E (DR-010, #137)', () => {
       try {
         const res = await httpsRequest(port, {
           method: 'POST',
-          path: '/sign',
+          path: '/macf/sign',
           body: '{ not valid',
           headers: { 'Content-Type': 'application/json' },
         });
@@ -291,7 +345,7 @@ describe('POST /sign E2E (DR-010, #137)', () => {
       try {
         const res = await httpsRequest(port, {
           method: 'POST',
-          path: '/sign',
+          path: '/macf/sign',
           body: JSON.stringify({ agent_name: 'code-agent' }),
           headers: { 'Content-Type': 'application/json' },
         });
@@ -310,7 +364,7 @@ describe('POST /sign E2E (DR-010, #137)', () => {
       try {
         const res = await httpsRequest(port, {
           method: 'POST',
-          path: '/sign',
+          path: '/macf/sign',
           body: JSON.stringify({ csr: 'x' }),
           headers: { 'Content-Type': 'application/json' },
         });
@@ -329,7 +383,7 @@ describe('POST /sign E2E (DR-010, #137)', () => {
       try {
         const res = await httpsRequest(port, {
           method: 'POST',
-          path: '/sign',
+          path: '/macf/sign',
           body: JSON.stringify({
             csr: 'x',
             agent_name: 'code-agent',
@@ -353,7 +407,7 @@ describe('POST /sign E2E (DR-010, #137)', () => {
       try {
         const res = await httpsRequest(port, {
           method: 'POST',
-          path: '/sign',
+          path: '/macf/sign',
           body: JSON.stringify({
             csr: 'x',
             agent_name: 'code-agent',
@@ -382,7 +436,7 @@ describe('POST /sign E2E (DR-010, #137)', () => {
         try {
           const res = await httpsRequest(port, {
             method: 'POST',
-            path: '/sign',
+            path: '/macf/sign',
             body: JSON.stringify({ csr: largeCsr, agent_name: 'code-agent' }),
             headers: { 'Content-Type': 'application/json' },
           });
@@ -396,14 +450,58 @@ describe('POST /sign E2E (DR-010, #137)', () => {
       }
     });
 
-    it('rejects GET /sign — POST only', async () => {
-      // /sign is write-semantic; GET falls through the method guards.
+    it('rejects GET /macf/sign — POST only', async () => {
+      // /macf/sign is write-semantic; GET falls through the method guards.
       const onSign = vi.fn();
       const { port, stop } = await startServer({ onSign });
 
       try {
-        const res = await httpsRequest(port, { method: 'GET', path: '/sign' });
+        const res = await httpsRequest(port, { method: 'GET', path: '/macf/sign' });
         expect(res.status).toBe(404);
+        expect(onSign).not.toHaveBeenCalled();
+      } finally {
+        await stop();
+      }
+    });
+  });
+
+  describe('macf#371 legacy /sign 308 redirect', () => {
+    // 308 (Permanent Redirect) — preserves method per RFC 7538, critical
+    // because /sign is POST-only with a JSON body. The handler fires the
+    // 308 for any method (POST, GET, PUT, ...) at /sign; canonical path
+    // /macf/sign retains its own method gate.
+    it('POST /sign returns 308 with Location: /macf/sign', async () => {
+      const onSign = vi.fn();
+      const { port, stop } = await startServer({ onSign });
+
+      try {
+        const res = await httpsRequestRaw(port, {
+          method: 'POST',
+          path: '/sign',
+          body: JSON.stringify({ csr: 'x', agent_name: 'code-agent' }),
+          headers: { 'Content-Type': 'application/json' },
+        });
+        expect(res.status).toBe(308);
+        expect(res.headers['location']).toBe('/macf/sign');
+        // onSign must NOT be invoked — the redirect short-circuits before
+        // any handler logic. Migration is the operator's responsibility.
+        expect(onSign).not.toHaveBeenCalled();
+      } finally {
+        await stop();
+      }
+    });
+
+    it('GET /sign also returns 308 (method-agnostic redirect)', async () => {
+      // Method-agnostic redirect — even a misbehaving GET at the legacy
+      // path is steered to the canonical path. The canonical-path handler
+      // will then reject the GET with 404 (write-semantic guard).
+      const onSign = vi.fn();
+      const { port, stop } = await startServer({ onSign });
+
+      try {
+        const res = await httpsRequestRaw(port, { method: 'GET', path: '/sign' });
+        expect(res.status).toBe(308);
+        expect(res.headers['location']).toBe('/macf/sign');
         expect(onSign).not.toHaveBeenCalled();
       } finally {
         await stop();

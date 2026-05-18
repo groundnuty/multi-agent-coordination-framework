@@ -65,7 +65,7 @@ export function createChallenge(config: {
     challengeId: rec.challengeId,
     instruction:
       `Write registry variable ${varName} = '${rec.expectedValue}'. ` +
-      `Then POST /sign again with { challenge_done: true, challenge_id: '${rec.challengeId}' }.`,
+      `Then POST /macf/sign again with { challenge_done: true, challenge_id: '${rec.challengeId}' }.`,
   };
 }
 

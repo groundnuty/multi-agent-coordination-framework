@@ -137,12 +137,13 @@ describe('clientAuth EKU gate E2E (#121, #137 Chunk 3)', () => {
       }
     });
 
-    it('POST /sign with no-EKU cert → 403 (gate fires BEFORE /sign-specific checks)', async () => {
+    it('POST /macf/sign with no-EKU cert → 403 (gate fires BEFORE /macf/sign-specific checks)', async () => {
       // Even though this server configures onSign (signing is available),
       // the EKU gate runs at the top of handleRequest and rejects before
-      // reaching the /sign dispatch. Asserts the gate isn't route-specific —
-      // a regression that moved it into /health only would break /sign's
-      // rejection too.
+      // reaching the /macf/sign dispatch. Asserts the gate isn't
+      // route-specific — a regression that moved it into /health only
+      // would break /macf/sign's rejection too. Path renamed from /sign
+      // to /macf/sign per macf#371 (DR-010 Path-2 research-niche labeling).
       const onSign = vi.fn();
       const { port, stop } = await startServer({ onSign });
       try {
@@ -152,7 +153,7 @@ describe('clientAuth EKU gate E2E (#121, #137 Chunk 3)', () => {
           port,
           {
             method: 'POST',
-            path: '/sign',
+            path: '/macf/sign',
             body: JSON.stringify({ csr: 'x', agent_name: 'code-agent' }),
             headers: { 'Content-Type': 'application/json' },
           },

@@ -48,6 +48,21 @@ export const MetricNames = {
    * Pairs with `NotifyReceivedTotal` for end-to-end counter correlation.
    */
   NotifyPeerTotal: 'macf.notify_peer_total',
+  /**
+   * Server-side counter incremented per inbound `/macf/sign` request
+   * (after EKU gate + method/URL dispatch, before schema validation).
+   * Empirical basis for the DR-010 Path-2 "12-month zero-call removal
+   * trigger" per macf#371: if this counter shows 0 calls for 12
+   * consecutive months from the namespace-rename PR's merge date, we
+   * file a follow-up issue to remove the endpoint entirely (and defer
+   * live attestation to a future A2A spec extension per Path 1). The
+   * canonical-path counter only — legacy `/sign` hits are logged via
+   * `sign_redirect_legacy` (counted separately as a redirect log event,
+   * not on this counter; the 308 response steers callers to the
+   * canonical path which then records here). Labels: `agent` (this
+   * server's agent name).
+   */
+  SignCallsTotal: 'macf.sign_calls_total',
 } as const;
 
 /** Metric attribute keys — separate from span attributes (`Attr` in tracing.ts). */
@@ -71,6 +86,7 @@ export const MetricAttr = {
  */
 let cachedNotifyReceivedCounter: Counter | undefined;
 let cachedNotifyPeerCounter: Counter | undefined;
+let cachedSignCallsCounter: Counter | undefined;
 
 /**
  * Get the cached `macf.notify_received_total` counter, creating it
@@ -98,6 +114,22 @@ export function getNotifyPeerCounter(): Counter {
 }
 
 /**
+ * Get the cached `macf.sign_calls_total` counter, creating it on
+ * first access. Same lazy-create pattern as `getNotifyReceivedCounter`.
+ * Empirical basis for DR-010 Path-2 12-month removal trigger
+ * (macf#371). Increments fire on every `/macf/sign` hit (canonical
+ * path only — legacy `/sign` redirects do NOT increment here, they
+ * log `sign_redirect_legacy` instead).
+ */
+export function getSignCallsCounter(): Counter {
+  cachedSignCallsCounter ??= getMeter().createCounter(MetricNames.SignCallsTotal, {
+    description: 'Inbound /macf/sign requests received (empirical basis for DR-010 Path-2 12-month removal trigger, macf#371)',
+    unit: '1',
+  });
+  return cachedSignCallsCounter;
+}
+
+/**
  * Reset cached instruments. ONLY for use in tests that need to swap in
  * a fresh MeterProvider between cases. Do not call from production
  * code — the cache is correct under any normal lifecycle.
@@ -105,4 +137,5 @@ export function getNotifyPeerCounter(): Counter {
 export function resetMetricsCacheForTesting(): void {
   cachedNotifyReceivedCounter = undefined;
   cachedNotifyPeerCounter = undefined;
+  cachedSignCallsCounter = undefined;
 }
