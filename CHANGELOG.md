@@ -9,6 +9,58 @@ Plugin + routing-workflow changes ship from separate repos
 [`groundnuty/macf-actions`](https://github.com/groundnuty/macf-actions))
 and are not included here — pin them explicitly in each workspace.
 
+## [0.2.25] — 2026-05-18
+
+`/sign` namespace move to `/macf/sign` per DR-010 Path 2 (research-niche
+labeling). MACF live cryptographic attestation now lives under the
+`/macf/` prefix to signal it as a MACF-only extension that A2A-spec
+clients SHOULD NOT depend on. **Zero functional change** to the
+challenge-response protocol; existing flows redirect 308 → canonical
+path. Parallel-with the A2A integration arc (#370 Phase 1).
+
+### Refactored
+- **`POST /sign` → `POST /macf/sign` + 308 redirect + 12-month
+  removal trigger ([#373], closes [#371])** — channel-server's
+  live-attestation endpoint moved under `/macf/` namespace. Legacy
+  `/sign` returns HTTP 308 Permanent Redirect (NOT 301/302 —
+  preserves POST method per RFC 7538) with `Location: /macf/sign`
+  header; emits `sign_redirect_legacy` log event for observability
+  of migration progress.
+
+  New `macf.sign_calls_total{agent}` OTel counter on the canonical
+  path drives a **telemetry-based removal trigger** (sister to
+  #374's trigger pattern): if the counter reads zero for 12
+  consecutive months from this PR merge date, file a follow-up
+  issue to remove the endpoint entirely. Calendar-based trigger
+  was deliberately rejected in favor of observed-state trigger
+  (the principle from #374 review pushback: a clock that ticks
+  on cluster idleness proves nothing about migration progress).
+
+  DR-010 updated with "Path 2: research-niche labeling" section
+  covering the Path 2 framing, removal trigger, AgentCard
+  exclusion lockstep with #370 / PR #375, and Path 1 deferred-work
+  pointer (advocate live-attestation as A2A spec extension after
+  Phase 4 lands).
+
+  Cross-repo audit confirmed 0 true HTTP callers across
+  `groundnuty/macf{,-actions,-marketplace}` plus CV agents
+  (`cv-project-archaeologist`, `academic-resume`); the 16 test
+  fixtures + 1 user-visible error string updated to canonical path.
+  External-caller concern explicitly cleared.
+
+  **#370 AgentCard lockstep**: `/macf/sign` is NOT advertised in
+  the AgentCard returned by `/.well-known/agent-card.json` (Phase 1
+  / PR #375). Both unit-level + E2E-level invariants in #370's
+  tests pin this so a future skill-array addition can't accidentally
+  re-include the endpoint.
+
+  175/175 + 49/49 channel-server tests pass; 2 pre-existing flakes
+  (init-test GitHub anon-API rate-limit timeouts) explicitly
+  identified as unrelated to this PR.
+
+[#371]: https://github.com/groundnuty/macf/issues/371
+[#373]: https://github.com/groundnuty/macf/pull/373
+
 ## [0.2.24] — 2026-05-18
 
 A2A integration Phase 1 — adds a well-known AgentCard discovery
