@@ -14,6 +14,8 @@ import { createLogger } from '@groundnuty/macf-core';
 import { createMcpChannel } from './mcp.js';
 import { createHealthState } from './health.js';
 import { createHttpsServer } from './https.js';
+import { buildAgentCard } from './agent-card.js';
+import { PACKAGE_VERSION } from './package-version.js';
 import { createRegistry, createRegistryFromConfig } from '@groundnuty/macf-core';
 import { checkCollision, CollisionError } from './collision.js';
 import { registerShutdownHandler } from './shutdown.js';
@@ -349,6 +351,18 @@ async function main(): Promise<void> {
     return { cert: certPem };
   };
 
+  // A2A v1.0 AgentCard built at startup; served at
+  // /.well-known/agent-card.json. Static across the channel-server
+  // process lifetime per spec § 4.4.1 (AgentCard version-pinned).
+  // groundnuty/macf#370 — A2A Phase 1.
+  const agentCard = buildAgentCard({
+    agentName: config.agentName,
+    agentRole: config.agentRole,
+    project: config.project,
+    url: `https://${config.advertiseHost}:${config.port}`,
+    version: PACKAGE_VERSION,
+  });
+
   const httpsServer = createHttpsServer({
     caCertPath: config.caCertPath,
     agentCertPath: config.agentCertPath,
@@ -356,6 +370,7 @@ async function main(): Promise<void> {
     onNotify,
     onHealth: () => health.getHealth(),
     onSign,
+    agentCard,
     logger,
   });
 
