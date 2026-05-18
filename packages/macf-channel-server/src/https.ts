@@ -7,7 +7,7 @@ import { NotifyPayloadSchema, SignRequestSchema } from '@groundnuty/macf-core';
 import type { NotifyPayload, SignRequest, HealthResponse, HttpsServer, Logger } from '@groundnuty/macf-core';
 import { PortExhaustedError, PortUnavailableError, HttpsServerError, HttpError } from '@groundnuty/macf-core';
 import { getTracer, SpanNames, Attr, GenAiAttr, operationNameForNotifyType } from './tracing.js';
-import { getNotifyReceivedCounter, MetricAttr } from './metrics.js';
+import { getNotifyReceivedCounter, getSignCallsCounter, MetricAttr } from './metrics.js';
 
 const MAX_BODY_BYTES = 64 * 1024; // 64KB
 export const PORT_RANGE_START = 8800;
@@ -294,7 +294,44 @@ export function createHttpsServer(config: {
       return;
     }
 
-    if (method === 'POST' && url === '/sign') {
+    // macf#371: legacy `/sign` path returns 308 Permanent Redirect to
+    // `/macf/sign`. 308 (not 301/302) preserves the POST method per
+    // RFC 7538 — critical because /sign is POST-only with a JSON body.
+    // We log every legacy-path hit as `sign_redirect_legacy` so the
+    // 12-month removal trigger can observe redirect traffic going to
+    // zero as callers migrate (separate signal from the canonical-path
+    // counter `macf_sign_calls_total`).
+    if (url === '/sign') {
+      const legacyClientCn = (req.socket as import('node:tls').TLSSocket)
+        .getPeerCertificate()?.subject?.CN ?? 'unknown';
+      logger.info('sign_redirect_legacy', {
+        from_cn: legacyClientCn,
+        method: method ?? 'unknown',
+      });
+      res.writeHead(308, {
+        Location: '/macf/sign',
+        'Content-Type': 'application/json',
+      });
+      res.end(JSON.stringify({
+        error: 'Endpoint moved to /macf/sign (DR-010 Path 2, macf#371). Update your client.',
+      }));
+      return;
+    }
+
+    // NOTE: /macf/sign is intentionally NOT advertised in the A2A AgentCard
+    // returned by /.well-known/agent-card.json (Phase 1, groundnuty/macf#370).
+    // Live-attestation is MACF-only per DR-010 Path 2; external A2A clients
+    // SHOULD NOT depend on this endpoint. See groundnuty/macf#371.
+    if (method === 'POST' && url === '/macf/sign') {
+      // macf#371: empirical-basis counter for DR-010 Path-2 12-month
+      // removal trigger. Increments BEFORE the onSign-missing 503 gate
+      // so any call (successful, schema-rejected, or onSign-absent) is
+      // counted — the trigger is about "is anyone trying to use this?",
+      // not "is anyone successfully using this?".
+      getSignCallsCounter().add(1, {
+        [MetricAttr.Agent]: process.env['MACF_AGENT_NAME'] ?? 'unknown',
+      });
+
       if (!onSign) {
         sendJson(res, 503, { error: 'Signing not available on this agent' });
         return;
@@ -328,7 +365,7 @@ export function createHttpsServer(config: {
         return;
       }
 
-      // macf#194: /sign SERVER span. Audit-trail value — every cert
+      // macf#194: /macf/sign SERVER span. Audit-trail value — every cert
       // issuance gets a trace entry correlatable to the requester
       // (cn + agent_name) + the trace-parent (who kicked off the
       // rotation?).

@@ -25,6 +25,7 @@ import {
   getMeter,
   getNotifyReceivedCounter,
   getNotifyPeerCounter,
+  getSignCallsCounter,
   resetMetricsCacheForTesting,
   MetricNames,
   MetricAttr,
@@ -97,6 +98,13 @@ describe('metrics module', () => {
     it('getNotifyPeerCounter returns the same instance on repeated calls', () => {
       const a = getNotifyPeerCounter();
       const b = getNotifyPeerCounter();
+      expect(a).toBe(b);
+    });
+
+    it('getSignCallsCounter returns the same instance on repeated calls', () => {
+      // macf#371: empirical-basis counter for DR-010 Path-2 removal trigger.
+      const a = getSignCallsCounter();
+      const b = getSignCallsCounter();
       expect(a).toBe(b);
     });
 
@@ -195,10 +203,51 @@ describe('metrics module', () => {
     });
   });
 
+  describe('macf#371 sign_calls_total counter', () => {
+    it('records sign_calls_total increments with agent label', async () => {
+      // Empirical basis for DR-010 Path-2 12-month zero-call removal
+      // trigger. Verifies the counter is wired to the global MeterProvider
+      // and records `.add(1, { agent })` calls correctly.
+      const exporter = new InMemoryMetricExporter();
+      const sdkMetrics = await import('@opentelemetry/sdk-metrics');
+      const reader = new sdkMetrics.PeriodicExportingMetricReader({
+        exporter,
+        exportIntervalMillis: 60_000,
+      });
+      const provider = new MeterProvider({ readers: [reader] });
+      metrics.setGlobalMeterProvider(provider);
+
+      const counter = getSignCallsCounter();
+      counter.add(1, { [MetricAttr.Agent]: 'tester-1' });
+      counter.add(1, { [MetricAttr.Agent]: 'tester-1' });
+      counter.add(1, { [MetricAttr.Agent]: 'tester-2' });
+
+      await reader.forceFlush();
+
+      const lastBatch = exporter.batches.at(-1);
+      expect(lastBatch).toBeDefined();
+      const metric = lastBatch?.scopeMetrics
+        .flatMap((sm) => sm.metrics)
+        .find((m) => m.descriptor.name === MetricNames.SignCallsTotal);
+      expect(metric).toBeDefined();
+      // 2 distinct agent labels → 2 data points (tester-1×2 + tester-2×1).
+      expect(metric?.dataPoints.length).toBe(2);
+
+      const total = (metric?.dataPoints ?? []).reduce(
+        (sum, dp) => sum + (dp.value as number),
+        0,
+      );
+      expect(total).toBe(3);
+
+      await provider.shutdown();
+    });
+  });
+
   describe('instrument names + attributes', () => {
     it('exposes canonical metric names matching documented conventions', () => {
       expect(MetricNames.NotifyReceivedTotal).toBe('macf.notify_received_total');
       expect(MetricNames.NotifyPeerTotal).toBe('macf.notify_peer_total');
+      expect(MetricNames.SignCallsTotal).toBe('macf.sign_calls_total');
     });
 
     it('exposes canonical attribute keys', () => {
