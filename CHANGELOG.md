@@ -9,6 +9,47 @@ Plugin + routing-workflow changes ship from separate repos
 [`groundnuty/macf-actions`](https://github.com/groundnuty/macf-actions))
 and are not included here — pin them explicitly in each workspace.
 
+## [0.2.26] — 2026-05-18
+
+Republish of v0.2.25 due to a sigstore-provenance race condition in
+the npm publish workflow. **Same content as v0.2.25** (no code
+changes); the 0.2.25 split-publish on npm is recovered by bumping
+to a fresh version.
+
+### What happened (operator-facing)
+
+- v0.2.25 publish workflow first run hit two pre-existing test
+  flakes (5s vitest timeouts in `init.test.ts` + `check-lgtm-gate.test.ts`)
+  and aborted before the npm publish step. Retry by tag-recreate
+  passed the test step, but on `@groundnuty/macf-channel-server`
+  publish hit `TLOG_CREATE_ENTRY_ERROR (409)` from sigstore — the
+  previous run had already submitted a transparency-log entry,
+  blocking the retry's attestation. Result: `@groundnuty/macf-core@0.2.25`
+  + `@groundnuty/macf@0.2.25` published; `@groundnuty/macf-channel-server@0.2.25`
+  did not. `@groundnuty/macf@0.2.25` declares a dep on the
+  non-existent channel-server@0.2.25 — broken consumer install path.
+
+### Recovery
+
+- v0.2.26 republishes all three packages with the same content as
+  the intended v0.2.25 (the actual content from PR #373 / #371).
+- Orphaned npm versions `@groundnuty/macf@0.2.25` and
+  `@groundnuty/macf-core@0.2.25` are deprecated via the
+  `npm-deprecate.yml` workflow post-publish, with the deprecation
+  message pointing at v0.2.26.
+- A separate follow-up issue will track the sigstore-retry hazard
+  + propose vitest `testTimeout` lift to make the pre-existing
+  flakes more resilient.
+
+### Content (identical to intended v0.2.25; see [#371] / [#373])
+
+- `/sign` → `/macf/sign` namespace move with 308 redirect; full
+  details in v0.2.25 changelog entry below (kept for historical
+  reference even though that version is broken-on-npm).
+
+[#371]: https://github.com/groundnuty/macf/issues/371
+[#373]: https://github.com/groundnuty/macf/pull/373
+
 ## [0.2.25] — 2026-05-18
 
 `/sign` namespace move to `/macf/sign` per DR-010 Path 2 (research-niche
