@@ -9,6 +9,53 @@ Plugin + routing-workflow changes ship from separate repos
 [`groundnuty/macf-actions`](https://github.com/groundnuty/macf-actions))
 and are not included here — pin them explicitly in each workspace.
 
+## [0.2.23] — 2026-05-18
+
+A2A integration Phase 0 — OTel GenAI semconv alignment for the
+outbound-invocation span. Aligns MACF's `notify_peer` CLIENT span to
+the OTel GenAI Agent Spans semconv so standard observability vendors
+(Datadog, Grafana Cloud AI Observability, etc.) auto-instrument MACF
+traces without per-vendor configuration after the upcoming A2A Phase 1
+(AgentCard endpoint).
+
+### Refactored
+- **`notify_peer` span renamed to `invoke_agent {target}` per OTel
+  GenAI Agent Spans semconv ([#372], closes [#369])** — sender-side
+  CLIENT-kind span now uses the spec-compliant dynamic name. Per-span
+  `gen_ai.agent.name` attribute carries the TARGET peer (distinct
+  from the per-resource `gen_ai.agent.name` set by env.telemetry =
+  the EMITTING agent). TraceQL queries disambiguate via `resource.`
+  vs `span.` prefix.
+
+  Inventory audit confirmed only 1-of-10 spans maps to invoke_agent
+  semantics (sender-side outbound CLIENT call); the other 9 are
+  receiver-side / local / cert / registry operations and stay as
+  `macf.*` literals. Receiver-side `NotifyReceived` operation name
+  (`peer_notify`) preserved — sender and receiver carry different
+  GenAI op-semantics by design.
+
+  `SpanNames.ToolNotifyPeer = 'macf.tool.notify_peer'` constant kept
+  as an exported-but-unemitted reference for grep-traceability + the
+  Tempo-dashboard migration window. Cleanup tracked at [#374] —
+  removes the constant once devops-agent confirms Tempo dashboards
+  are migrated to the new form (≥7 days clean `invoke_agent` traces,
+  zero legacy hits).
+
+  Tests: 4 new in `tracing.test.ts` covering target-present,
+  undefined fallback, empty-string fallback, and the `^invoke_agent`
+  prefix-regression invariant for Tempo TraceQL prefix queries.
+
+  Devops-agent (cross-checked on #369 thread): no Collector processors
+  in macf-devops-toolkit depend on the old span name; all 3
+  trace-pipeline processors (k8sattributes, resource/paper-dims,
+  transform/genai-semconv) are span-name-agnostic. Dual-scope TraceQL
+  examples for `observability-snapshot.sh` ship as
+  `groundnuty/macf-devops-toolkit#71`.
+
+[#369]: https://github.com/groundnuty/macf/issues/369
+[#372]: https://github.com/groundnuty/macf/pull/372
+[#374]: https://github.com/groundnuty/macf/issues/374
+
 ## [0.2.22] — 2026-05-04
 
 OTel resource-attribute identity plumbing. Replaces the literal
