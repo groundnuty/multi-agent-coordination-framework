@@ -109,9 +109,17 @@ export function createHttpsServer(config: {
   readonly onNotify: (payload: NotifyPayload) => Promise<void>;
   readonly onHealth: () => HealthResponse;
   readonly onSign?: (request: SignRequest) => Promise<Record<string, unknown>>;
+  /**
+   * A2A v1.0 AgentCard served at `/.well-known/agent-card.json` per
+   * spec § 4.4.1 + § 14.3. Optional — channel-servers running pre-#370
+   * skip the endpoint and return 404 (existing route-not-found path).
+   * Phase 1 (groundnuty/macf#370): pure additive discovery; zero
+   * behavior change to existing endpoints.
+   */
+  readonly agentCard?: unknown;
   readonly logger: Logger;
 }): HttpsServer {
-  const { onNotify, onHealth, onSign, logger } = config;
+  const { onNotify, onHealth, onSign, agentCard, logger } = config;
 
   const tlsOptions = {
     key: readFileSync(config.agentKeyPath),
@@ -167,6 +175,33 @@ export function createHttpsServer(config: {
         .getPeerCertificate()?.subject?.CN;
       logger.info('health_pinged', { from_cn: clientCn ?? 'unknown' });
       sendJson(res, 200, health as unknown as Record<string, unknown>);
+      return;
+    }
+
+    // A2A v1.0 AgentCard discovery endpoint (groundnuty/macf#370).
+    // Per spec § 14.3, the well-known URL is `/.well-known/agent-card.json`.
+    // Returns the AgentCard JSON built at channel-server startup (cached
+    // for process lifetime; AgentCard is static between restarts per
+    // spec § 4.4.1).
+    //
+    // Like /health + /notify + /sign, this endpoint is gated by mTLS +
+    // EKU above. A2A's discovery model typically expects unauthenticated
+    // public access, but MACF's threat model assumes mTLS-only peers
+    // (per-project CA); a public AgentCard would require bypassing the
+    // TLS gate uniformly which we don't do today. Future spec-divergence
+    // worth tracking — Phase 2+ may add a separate unauthenticated
+    // discovery surface if external A2A clients need it.
+    if (method === 'GET' && url === '/.well-known/agent-card.json') {
+      if (agentCard === undefined) {
+        // Channel-server config didn't pass an AgentCard. Return 404
+        // (route-not-found path), same as any unhandled URL.
+        sendJson(res, 404, { error: 'AgentCard discovery not configured on this channel-server' });
+        return;
+      }
+      const clientCn = (req.socket as import('node:tls').TLSSocket)
+        .getPeerCertificate()?.subject?.CN;
+      logger.info('agent_card_served', { from_cn: clientCn ?? 'unknown' });
+      sendJson(res, 200, agentCard as Record<string, unknown>);
       return;
     }
 
