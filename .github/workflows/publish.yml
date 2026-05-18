@@ -113,6 +113,57 @@ jobs:
           done
           echo "All three packages at v${EXPECTED}, matches tag."
 
+      # Sigstore's transparency log is append-only; once an entry is
+      # submitted, retrying the same tarball content gets 409
+      # TLOG_CREATE_ENTRY_ERROR. A prior partially-failed publish run
+      # can leave one or two packages on npm at the target version
+      # while a third never made it (the third's TLOG entry was
+      # registered, but the npm publish failed downstream). Retrying
+      # the same tag THEN trips the 409 on the previously-failed
+      # package — producing a structurally broken split-publish.
+      # Catch this BEFORE any publish step runs: query npm for each
+      # package's current latest version; if any matches the target,
+      # fail loud and require a human to bump + retag. Recovery
+      # procedure documented in DR-022 Amendment L. Witness incident:
+      # v0.2.25 -> v0.2.26 cycle on 2026-05-18 (macf#377).
+      # Skipped on dry-run (no real publish happens; pre-flight check
+      # would block valid dry-run iteration on existing versions).
+      - name: Pre-flight registry collision check (sigstore TLOG race defense)
+        if: steps.version.outputs.tag_driven == 'true' && github.event.inputs.dry-run != 'true'
+        env:
+          EXPECTED: ${{ steps.version.outputs.version }}
+        run: |
+          set -e
+          ANY_COLLISION=0
+          for pkg in macf-core macf macf-channel-server; do
+            FULL="@groundnuty/${pkg}"
+            URL="https://registry.npmjs.org/${FULL}"
+            CURRENT=""
+            for try in 1 2 3; do
+              if META=$(curl -sfL "$URL" 2>/dev/null); then
+                CURRENT=$(echo "$META" | jq -r '.["dist-tags"].latest // empty')
+                break
+              fi
+              sleep 2
+            done
+            if [[ -z "$CURRENT" ]]; then
+              echo "OK ${FULL}: never-published (no current latest)"
+              continue
+            fi
+            if [[ "$CURRENT" == "$EXPECTED" ]]; then
+              echo "::error::${FULL}@${EXPECTED} is ALREADY at the target version on npm -- refusing to retry."
+              echo "::error::Likely cause: a prior publish run partially succeeded (sigstore TLOG race during retry-by-tag-recreate)."
+              echo "::error::Recovery: bump all three packages to the next patch version + re-tag + push. See DR-022 Amendment L."
+              ANY_COLLISION=1
+            else
+              echo "OK ${FULL}: current latest=${CURRENT}, target=${EXPECTED} (no collision)"
+            fi
+          done
+          if [[ "$ANY_COLLISION" == "1" ]]; then
+            exit 1
+          fi
+          echo "Pre-flight clean -- no version collisions; safe to publish v${EXPECTED}."
+
       - name: Install + check + build
         run: |
           devbox run -- npm ci

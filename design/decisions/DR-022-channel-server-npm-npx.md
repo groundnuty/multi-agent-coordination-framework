@@ -403,3 +403,46 @@ Cross-ref:
 
 - DR-015 amendment (two surface types: HTTP endpoints + MCP tools)
 - DR-023 (full mcp_tool hook architecture)
+
+### Amendment L — Sigstore TLOG race recovery + pre-flight collision check (added 2026-05-18)
+
+The `v0.2.25` publish on 2026-05-18 surfaced a structural failure mode in the multi-package publish-with-provenance workflow: **sigstore's transparency log (TLOG) is append-only**, so retrying a failed publish at the same tag/version produces a `TLOG_CREATE_ENTRY_ERROR (409)` on any package whose attestation entry was already submitted in the failed run. Witness chain:
+
+1. **First run** aborted on pre-existing test flakes (5s vitest timeouts in `update.test.ts` + `check-lgtm-gate.test.ts`; intermittent GitHub anon-API rate-limit during plugin-version resolution).
+2. **Retry by tag-recreate** (`git push origin :refs/tags/v0.2.25` + retag + push) — tests passed (confirming the flakes), but the sigstore TLOG entries from the prior run's `npm publish --provenance` step blocked the retry's attestation on `@groundnuty/macf-channel-server@0.2.25` with a 409. `@groundnuty/macf-core@0.2.25` + `@groundnuty/macf@0.2.25` had already published cleanly in the retry's first two steps before the 409.
+3. **Result**: a structurally broken split-publish — `@groundnuty/macf@0.2.25` on npm declares dep on the non-existent `@groundnuty/macf-channel-server@0.2.25`. Consumer `npm install -g @groundnuty/macf@0.2.25` fails on dep resolution.
+4. **Recovery**: bump to `v0.2.26` (identical content; just a different version-string tag) → re-publish all three → clean. Orphan `0.2.25` versions deprecated via the operator-side `npm-deprecate.yml` workflow dispatch.
+
+**Why retry-by-tag-recreate is structurally broken**: sigstore's TLOG is a [Rekor](https://github.com/sigstore/rekor)-based transparency log; entries are append-only by design. The same tarball content (same hash → same attestation payload) produces the same TLOG entry; the second attempt to write it gets a 409 duplicate-rejection. There is no operator action that "clears" the prior TLOG entry within useful timescales — Rekor entries persist indefinitely.
+
+**Structural defense (lands with this amendment via macf#377)**: the `publish.yml` workflow now includes a **pre-flight registry collision check** that runs after the per-package `package.json` version check and BEFORE any `npm publish` step. It queries the npm registry for each package's current `dist-tags.latest`; if any of the three matches the about-to-publish target version, the workflow fails with an actionable error message:
+
+```
+::error::@groundnuty/macf-channel-server@0.2.25 is ALREADY at the target version on npm — refusing to retry.
+::error::Likely cause: a prior publish run partially succeeded (sigstore TLOG race during retry-by-tag-recreate).
+::error::Recovery: bump all three packages to the next patch version + re-tag + push.
+```
+
+This catches partial-publish recovery cleanly: the workflow refuses to enter the publish steps if the registry is already mid-state for the requested version. Dry-run is exempt (no real publish would happen; the check would otherwise block valid dry-run iteration on the current released version).
+
+**Recovery procedure (canonical, codified):**
+
+When a publish workflow fails partway through AND any of the three packages successfully published before the failure (you'll see this when the pre-flight check fires the next time, OR when consumer install paths break):
+
+1. **Don't retry by tag-recreate** — the sigstore 409 blocks it for any package that submitted its TLOG entry in the failed run, structurally.
+2. **Bump all three `package.json` versions** to the next patch (e.g. `0.2.25` → `0.2.26`). Content is otherwise identical to the broken release.
+3. **Update the cross-package dep refs** — `@groundnuty/macf` + `@groundnuty/macf-channel-server` both declare a dep on `@groundnuty/macf-core` at the lock-step version (per Amendment D); bump those declared versions too.
+4. **Update CHANGELOG** documenting the bump-recovery (operator-facing transparency). Pattern: a section noting the sigstore-TLOG-race causality + content-identical republish + cross-link to the broken intermediate version's deprecation status.
+5. **Commit + new tag (e.g. `v0.2.26`) + push** — pre-flight check passes (no collision; the new version isn't on npm); publish proceeds cleanly across all three.
+6. **Verify all three published**: `curl -sfL https://registry.npmjs.org/@groundnuty/<pkg> | jq -r '.["dist-tags"].latest'` for each.
+7. **Deprecate orphaned partially-published versions** via the operator-side `npm-deprecate.yml` workflow_dispatch (App lacks `actions: write` until DR-019 Amendment A lands; operator runs the dispatch by hand). Skip the package(s) that DIDN'T publish in the broken cycle — there's nothing to deprecate.
+8. **Mirror the new version to `macf-marketplace`** — skip the broken intermediate.
+
+**Sibling test-flake stabilization** (also macf#377): the first-run failure that triggered the entire recovery chain was caused by pre-existing test flakes in CI's publish workflow. Two specific test files reproduce 5s vitest timeouts intermittently — `packages/macf/test/cli/update.test.ts` (`returns 1 when config has no versions section (legacy)`) + `packages/macf/test/hooks/check-lgtm-gate.test.ts` (`allows merge when gh is not on PATH (worst-case missing tool)`). Root-cause hypothesis: GitHub anon-API rate-limit (60 req/h shared across all CI runs in the org) during plugin-version resolution. The fix lifts the per-test timeout from the global 5s to 30s for the affected cases; root-cause stabilization (mocking the version-resolution path) tracked separately for follow-up.
+
+**Cross-references:**
+
+- Incident witness: macf#371 (the /sign rename PR whose release hit this), macf#377 (the follow-up hazard tracking issue this amendment closes)
+- Failed runs: `gh run view 26062478419` (first attempt; test flake) + `gh run view 26062643159` (retry; sigstore 409)
+- Recovery run: `gh run view 26062830815` (v0.2.26 publish; clean)
+- Memory: `reference_sigstore_tlog_recovery.md` + `feedback_sigstore_tlog_race_on_retry.md`
