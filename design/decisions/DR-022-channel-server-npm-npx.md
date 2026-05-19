@@ -446,3 +446,33 @@ When a publish workflow fails partway through AND any of the three packages succ
 - Failed runs: `gh run view 26062478419` (first attempt; test flake) + `gh run view 26062643159` (retry; sigstore 409)
 - Recovery run: `gh run view 26062830815` (v0.2.26 publish; clean)
 - Memory: `reference_sigstore_tlog_recovery.md` + `feedback_sigstore_tlog_race_on_retry.md`
+
+### Amendment M — AgentCard schema proto-alignment (added 2026-05-19)
+
+Phase 1 (`groundnuty/macf#370` / v0.2.24) shipped the AgentCard discovery endpoint with a Zod schema hand-rolled from the spec docs page (a2a-protocol.org). Phase 2c (`groundnuty/macf#393`) re-verified against the canonical proto source (`a2aproject/A2A:specification/a2a.proto` per spec § 1.4 — "the single authoritative normative definition") and surfaced structural drift between Phase 1's lenient parse-friendly shape and the proto-canonical required-field set.
+
+**Structural changes shipped in v0.2.30 (Phase 2c release):**
+
+- **REMOVED top-level `id`** — proto has no `AgentCard.id` field. Phase 1 emitted `${project}-${agentName}` as a synthesized id; canonical clients don't expect it.
+- **REMOVED top-level `url`** — proto has no `AgentCard.url`. The endpoint URL relocates to `supportedInterfaces[0].url` per the canonical `message AgentInterface` model.
+- **ADDED `description` as required** (was optional in Phase 1; proto says `[REQUIRED]`).
+- **ADDED `supportedInterfaces` as required** (`repeated AgentInterface` per proto field 3 `[REQUIRED]`). Each entry: `url`, `protocolBinding` (`"JSONRPC"` for MACF), optional `tenant`, `protocolVersion` (`"1.0"`).
+- **ADDED `defaultInputModes` + `defaultOutputModes` as required** (proto fields 10+11 `[REQUIRED]`, `repeated string`). MACF advertises the conservative pair `["text/plain", "application/json"]`.
+- **AgentSkill: `description` + `tags` upgraded from optional to required** per proto fields 3+4 `[REQUIRED]`. All MACF skills already populated these fields in Phase 2a; just enforcing in the schema.
+
+**Why the proto is the source of truth, not the docs page:** the spec text says "spec/a2a.proto is the single authoritative normative definition of all protocol data objects and request/response messages" (§ 1.4). The docs page (a2a-protocol.org) is a surveyed/summarized view that can drift from the canonical proto — Phase 1's research-step trusted the docs page and missed the required-field set. The Phase 2c verification re-pulled the proto directly.
+
+**Migration risk (consumer-facing):**
+
+- Pre-flight grep on 2026-05-19 across `macf-{code,science,devops}-agent` + `macf-testbed` workspaces confirmed ZERO external consumers of Phase 1's AgentCard shape — Phase 1 shipped ~24h prior (v0.2.24 on 2026-05-18); no integration window for downstream parsers to lock in to the old shape.
+- The strict-validation regression test (`test/integration/a2a-python-sdk.test.ts:"strict-validation: all proto-required AgentCard fields present on SDK-parsed shape"`) pins the canonical-shape invariant against the real Python `a2a-sdk` v1.0.3 parser; future drift fails loud at CI time, not at runtime against external clients.
+
+**`/macf/sign` exclusion invariant preserved:** Phase 1's DR-010 Path 2 invariant — `/macf/sign` MUST NOT appear in the AgentCard `skills` list — survives Phase 2c. Live cryptographic attestation stays MACF-only; A2A-spec clients SHOULD NOT depend on it. Source-level test continues passing.
+
+**Cross-references:**
+
+- Phase 2c driver: macf#393 (this work)
+- Phase 1 (drift source): macf#370 + PR #375 (v0.2.24)
+- Phase 2a (immediate prior): macf#390 + PR #391 (v0.2.29)
+- Canonical proto: `a2aproject/A2A:specification/a2a.proto`
+- Memory: `feedback_map_design_proposals_to_spec_sections.md` (proto-vs-docs source-of-truth principle)
