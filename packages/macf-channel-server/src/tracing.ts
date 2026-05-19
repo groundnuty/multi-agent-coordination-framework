@@ -36,21 +36,6 @@ export const SpanNames = {
   TmuxWakeDeliver: 'macf.tmux_wake.deliver',
   CertsVerifyChallenge: 'macf.certs.verify_challenge',
   CertsSign: 'macf.certs.sign',
-  // macf#267: outbound notify_peer span. CLIENT-kind (sender side).
-  // Wraps the httpsRequest call in notify-peer.ts; per-call OTel
-  // visibility for Phase D / Claim 1b cell-effect measurement +
-  // parent-child relationship to receiver's NotifyReceived span via
-  // W3C traceparent propagation.
-  //
-  // **DEPRECATED literal as of macf#369 (A2A Phase 0)**: the sender-
-  // side outbound span has been renamed to `invoke_agent {gen_ai.agent.name}`
-  // per OTel GenAI Agent Spans semconv (CLIENT-kind variant; see
-  // https://opentelemetry.io/docs/specs/semconv/gen-ai/gen-ai-agent-spans/).
-  // The legacy literal `macf.tool.notify_peer` is kept here ONLY for
-  // grep-traceability + as a Tempo dashboard reference during the
-  // transition; it is NOT emitted as a span name anymore. New emission
-  // sites should use `buildInvokeAgentSpanName(target)` below.
-  ToolNotifyPeer: 'macf.tool.notify_peer',
   // macf#271: PreCompact-driven checkpoint_to_memory span. INTERNAL-kind
   // (purely local filesystem write). Attributes: trigger (manual|auto),
   // written (bool), deduplicated (bool). DR-023 §UC-3 telemetry pattern.
