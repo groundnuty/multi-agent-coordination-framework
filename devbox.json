@@ -3,7 +3,8 @@
   "packages": [
     "nodejs@22",
     "nodePackages.npm@10.8.3",
-    "openssl@latest"
+    "openssl@latest",
+    "python@3.12"
   ],
   "shell": {
     "init_hook": [

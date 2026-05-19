@@ -18,7 +18,10 @@ export default defineConfig({
     globals: true,
     setupFiles: ['test/setup.ts'],
     include: ['test/**/*.test.ts'],
-    exclude: ['test/e2e/**'],
+    // Integration tests require a Python venv with a2a-sdk installed
+    // (macf#376) — gated behind `npm run test:integration` so the
+    // default `make check` flow stays fast + devbox-Python-free.
+    exclude: ['test/e2e/**', 'test/integration/**'],
     coverage: {
       provider: 'v8',
       include: ['src/**/*.ts'],
