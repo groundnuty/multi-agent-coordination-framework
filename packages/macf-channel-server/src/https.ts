@@ -66,13 +66,35 @@ function sendJson(
   res: import('node:http').ServerResponse,
   status: number,
   body: Record<string, unknown>,
+  extraHeaders: Record<string, string> = {},
 ): void {
   const json = JSON.stringify(body);
   res.writeHead(status, {
     'Content-Type': 'application/json',
     'Content-Length': Buffer.byteLength(json),
+    ...extraHeaders,
   });
   res.end(json);
+}
+
+/**
+ * Headers required on A2A v1.0 protocol responses (macf#390 Phase 2a;
+ * spec § 3.6). `A2A-Version` advertises the protocol version the server
+ * implements; standard A2A clients read it for negotiation. Absence is
+ * a spec-compliance gap that doesn't break v1.0 interop today but
+ * becomes load-bearing when v1.1+ clients need to negotiate.
+ */
+const A2A_RESPONSE_HEADERS: Record<string, string> = {
+  'A2A-Version': '1.0',
+};
+
+/** sendJson variant that always emits the A2A v1.0 spec § 3.6 response headers. */
+function sendA2aJson(
+  res: import('node:http').ServerResponse,
+  status: number,
+  body: Record<string, unknown>,
+): void {
+  sendJson(res, status, body, A2A_RESPONSE_HEADERS);
 }
 
 function readBody(
@@ -453,13 +475,13 @@ export function createHttpsServer(config: {
     // stuffing reserved for Phase 4 (external gateway scenarios).
     if (method === 'POST' && url === A2A_ENDPOINT_PATH) {
       if (taskStore === undefined) {
-        sendJson(res, 404, { error: 'A2A endpoint not configured on this channel-server' });
+        sendA2aJson(res, 404, { error: 'A2A endpoint not configured on this channel-server' });
         return;
       }
 
       const contentType = req.headers['content-type'] ?? '';
       if (!contentType.includes('application/json')) {
-        sendJson(res, 415, { error: 'Content-Type must be application/json' });
+        sendA2aJson(res, 415, { error: 'Content-Type must be application/json' });
         return;
       }
 
@@ -467,7 +489,7 @@ export function createHttpsServer(config: {
       try {
         body = await readBody(req);
       } catch {
-        sendJson(res, 413, { error: 'Body too large (max 64KB)' });
+        sendA2aJson(res, 413, { error: 'Body too large (max 64KB)' });
         return;
       }
 
@@ -477,7 +499,7 @@ export function createHttpsServer(config: {
       try {
         parsed = JSON.parse(body);
       } catch {
-        sendJson(res, 200, {
+        sendA2aJson(res, 200, {
           jsonrpc: '2.0',
           id: null,
           error: {
@@ -494,7 +516,7 @@ export function createHttpsServer(config: {
       if (!envelope.success) {
         // Best-effort id extraction from the raw body for the error envelope.
         const rawId = (parsed as { id?: string | number }).id ?? null;
-        sendJson(res, 200, {
+        sendA2aJson(res, 200, {
           jsonrpc: '2.0',
           id: rawId,
           error: {
@@ -510,7 +532,7 @@ export function createHttpsServer(config: {
       // A2A methods (`tasks/get`, `tasks/cancel`, `message/stream`) →
       // -32601 Method not found. They land in Phase 2b/2.5/3.
       if (envelope.data.method !== A2A_METHOD_MESSAGE_SEND) {
-        sendJson(res, 200, {
+        sendA2aJson(res, 200, {
           jsonrpc: '2.0',
           id: envelope.data.id,
           error: {
@@ -524,7 +546,7 @@ export function createHttpsServer(config: {
 
       const params = MessageSendParamsSchema.safeParse(envelope.data.params);
       if (!params.success) {
-        sendJson(res, 200, {
+        sendA2aJson(res, 200, {
           jsonrpc: '2.0',
           id: envelope.data.id,
           error: {
@@ -578,7 +600,7 @@ export function createHttpsServer(config: {
             span.setAttribute('macf.a2a.task_id', task.id);
             span.setAttribute('macf.a2a.task_state', task.status.state);
             span.setStatus({ code: SpanStatusCode.OK });
-            sendJson(res, 200, {
+            sendA2aJson(res, 200, {
               jsonrpc: '2.0',
               id: envelope.data.id,
               result: task,
@@ -592,7 +614,7 @@ export function createHttpsServer(config: {
               code: SpanStatusCode.ERROR,
               message: err instanceof Error ? err.message : String(err),
             });
-            sendJson(res, 200, {
+            sendA2aJson(res, 200, {
               jsonrpc: '2.0',
               id: envelope.data.id,
               error: {

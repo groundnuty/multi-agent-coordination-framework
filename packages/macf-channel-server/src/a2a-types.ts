@@ -64,30 +64,82 @@ export const RoleSchema = z.enum(['ROLE_USER', 'ROLE_AGENT']);
 export type Role = z.infer<typeof RoleSchema>;
 
 // ---------------------------------------------------------------------------
-// Part — § 4.1.5 (OneOf semantics; v1.0 removed `kind` discriminator)
+// Part — § 4.1.5 + canonical proto (spec/a2a.proto)
 // ---------------------------------------------------------------------------
+//
+// Per the canonical proto (single authoritative source per spec § 1.4 —
+// "spec/a2a.proto is the single authoritative normative definition"):
+//
+//   message Part {
+//     oneof content {
+//       string text = 1;
+//       bytes raw = 2;
+//       string url = 3;
+//       google.protobuf.Value data = 4;
+//     }
+//     google.protobuf.Struct metadata = 5;
+//     string filename = 6;
+//     string media_type = 7;
+//   }
+//
+// Four `oneof content` variants (text / raw / url / data) — exactly one
+// present. Optional top-level `metadata` + `filename` + `mediaType`
+// (NOT inside a nested FilePart wrapper; v1.0 flattened the v0.3 shape).
+//
+// JSON wire-form names per protobuf-to-JSON canonical mapping:
+// - `media_type` (proto snake_case) → `mediaType` (JSON camelCase)
+// - `filename` → `filename` (single word, no transform)
+// - `raw` is `bytes` in the proto → base64-encoded string on JSON wire
+// - `data` is `google.protobuf.Value` → arbitrary JSON value
+//
+// Encoded as `z.union` of 4 separate variants (matching the proto's
+// oneof discipline) rather than a single object with refine — clearer
+// type discrimination for downstream consumers.
+//
+// Phase 2a only exercises the text variant; declaring the full proto
+// shape so Phase 2b / Phase 3 don't need to refactor.
 
-// Phase 2a: text variant exercised; file + data declared for shape-completeness.
-// Per spec § 4.1.5, exactly one of these top-level keys is present on a Part.
+/** Shared optional fields present on all Part variants per proto §§ 5–7. */
+const PartCommonFields = {
+  metadata: z.record(z.string(), z.unknown()).optional(),
+  filename: z.string().optional(),
+  mediaType: z.string().optional(),
+} as const;
+
 const TextPartSchema = z.object({
   text: z.string(),
+  ...PartCommonFields,
 });
 
-const FilePartSchema = z.object({
-  file: z.object({
-    name: z.string().optional(),
-    mimeType: z.string().optional(),
-    bytes: z.string().optional(),
-    uri: z.string().optional(),
-  }),
+const RawPartSchema = z.object({
+  raw: z.string(), // base64-encoded bytes per proto3 JSON mapping
+  ...PartCommonFields,
 });
 
-const DataPartSchema = z.object({
-  data: z.record(z.string(), z.unknown()),
+const UrlPartSchema = z.object({
+  url: z.string(),
+  ...PartCommonFields,
 });
 
-/** Part is a discriminated-by-shape union — Zod evaluates against each variant. */
-export const PartSchema = z.union([TextPartSchema, FilePartSchema, DataPartSchema]);
+// `data: z.unknown()` would accept undefined (Zod treats z.unknown as
+// also-undefined), making empty objects pass DataPartSchema spuriously.
+// The refine pins the key-presence requirement so the union correctly
+// rejects `{}` + `{ filename: '...' }`-only inputs.
+const DataPartSchema = z
+  .object({
+    data: z.unknown(),
+    ...PartCommonFields,
+  })
+  .refine((obj) => Object.prototype.hasOwnProperty.call(obj, 'data'), {
+    message: 'Part: `data` property must be present (oneof discriminator)',
+  });
+
+export const PartSchema = z.union([
+  TextPartSchema,
+  RawPartSchema,
+  UrlPartSchema,
+  DataPartSchema,
+]);
 export type Part = z.infer<typeof PartSchema>;
 
 // ---------------------------------------------------------------------------

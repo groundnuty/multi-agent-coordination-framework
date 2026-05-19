@@ -80,25 +80,52 @@ describe('RoleSchema (§ 4.1.4)', () => {
   });
 });
 
-describe('PartSchema (§ 4.1.5 OneOf semantics)', () => {
+describe('PartSchema (§ 4.1.5 + proto oneof; 4 content variants)', () => {
+  // Verified 2026-05-19 against canonical spec/a2a.proto (the authoritative
+  // normative source per § 1.4). Proto has 4 oneof variants — text / raw /
+  // url / data — plus top-level optional metadata / filename / media_type.
   it('accepts a text part', () => {
     expect(PartSchema.safeParse({ text: 'hello' }).success).toBe(true);
   });
 
-  it('accepts a file part', () => {
-    expect(PartSchema.safeParse({ file: { name: 'a.png', mimeType: 'image/png' } }).success).toBe(true);
+  it('accepts a raw (bytes-as-base64) part', () => {
+    expect(PartSchema.safeParse({ raw: 'aGVsbG8=' }).success).toBe(true);
   });
 
-  it('accepts a data part with arbitrary key-value content', () => {
+  it('accepts a url part (proto field 3)', () => {
+    expect(PartSchema.safeParse({ url: 'https://example.com/file.png' }).success).toBe(true);
+  });
+
+  it('accepts a data part with arbitrary value', () => {
     expect(PartSchema.safeParse({ data: { foo: 'bar', count: 5 } }).success).toBe(true);
   });
 
-  it('rejects an empty Part', () => {
+  it('accepts top-level metadata + filename + mediaType alongside content variant', () => {
+    expect(PartSchema.safeParse({
+      raw: 'aGVsbG8=',
+      filename: 'hello.txt',
+      mediaType: 'text/plain',
+    }).success).toBe(true);
+  });
+
+  it('rejects an empty Part (no oneof variant set)', () => {
     expect(PartSchema.safeParse({}).success).toBe(false);
   });
 
-  it('rejects a Part with no text+file+data keys (only metadata-ish keys)', () => {
-    expect(PartSchema.safeParse({ unknownField: 'x' }).success).toBe(false);
+  it('rejects a Part with no content variant (only metadata-ish keys)', () => {
+    // Per proto: at least one of text/raw/url/data must be present.
+    // Filename without a content variant is not a valid Part.
+    expect(PartSchema.safeParse({ filename: 'orphan.txt' }).success).toBe(false);
+  });
+
+  it('mediaType is camelCase (proto media_type → JSON canonical mapping)', () => {
+    // Per protobuf-to-JSON canonical mapping, proto `media_type` becomes
+    // JSON `mediaType`. The schema accepts mediaType only; snake_case
+    // media_type would fail.
+    expect(PartSchema.safeParse({
+      text: 'hello',
+      mediaType: 'text/plain',
+    }).success).toBe(true);
   });
 });
 
