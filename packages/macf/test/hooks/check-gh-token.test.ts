@@ -774,6 +774,93 @@ describe('check-gh-token.sh (hook)', () => {
         expect(content).toMatch(/Known instrumentation gaps|non-Bash subprocess/);
       });
     });
+
+    // macf#388 — resource-attrs population follow-up to #381.
+    // Hook emits with resource.attributes populated from claude.sh's
+    // OTEL_SERVICE_NAME + OTEL_RESOURCE_ATTRIBUTES env exports (canonical
+    // convention per observability-wiring.md). Graceful degradation when
+    // env vars are unset (hook running outside claude.sh wrapped session,
+    // e.g., devops's direct-invocation smoke).
+    describe('resource.attributes population (#388 — claude.sh env passthrough)', () => {
+      it('exits 0 with full OTel env passthrough (claude.sh-wrapped session shape)', () => {
+        // Real-shape env: OTEL_SERVICE_NAME + OTEL_RESOURCE_ATTRIBUTES per
+        // claude.sh export. Endpoint is set so the audit branch hits emit
+        // paths; non-listening port → curl silently fails → hook still
+        // exits 0 (graceful, observational-only contract).
+        const r = runHook({
+          command: 'gh workflow run npm-deprecate.yml --repo groundnuty/macf',
+          env: {
+            GH_TOKEN: VALID_TOKEN,
+            OTEL_EXPORTER_OTLP_ENDPOINT: 'http://127.0.0.1:1/v1',
+            OTEL_SERVICE_NAME: 'macf-agent-code-agent',
+            OTEL_RESOURCE_ATTRIBUTES:
+              'gen_ai.agent.name=code-agent,gen_ai.agent.role=code-agent,service.namespace=macf',
+          },
+        });
+        expect(r.status).toBe(0);
+      });
+
+      it('exits 0 when OTel env unset (graceful degradation outside claude.sh)', () => {
+        // devops's direct-invocation smoke shape: endpoint set but no
+        // OTEL_SERVICE_NAME / OTEL_RESOURCE_ATTRIBUTES. The helper
+        // returns the empty resource-attrs array; emission JSON is
+        // structurally valid (resource.attributes: []) — same shape as
+        // pre-#388. Hook does not error on the missing env.
+        const r = runHook({
+          command: 'gh run cancel 1234 --repo groundnuty/macf',
+          env: {
+            GH_TOKEN: VALID_TOKEN,
+            OTEL_EXPORTER_OTLP_ENDPOINT: 'http://127.0.0.1:1/v1',
+          },
+        });
+        expect(r.status).toBe(0);
+      });
+
+      it('exits 0 with OTEL_SERVICE_NAME only (partial env shape)', () => {
+        // Edge: claude.sh always exports both together, but some
+        // partial-bootstrap workspaces could in theory have only
+        // OTEL_SERVICE_NAME (e.g., legacy claude.sh shapes pre-#357).
+        // Helper handles the partial case — service.name attr present,
+        // gen_ai.* absent. Hook still exits 0.
+        const r = runHook({
+          command: 'gh workflow run npm-deprecate.yml --repo groundnuty/macf',
+          env: {
+            GH_TOKEN: VALID_TOKEN,
+            OTEL_EXPORTER_OTLP_ENDPOINT: 'http://127.0.0.1:1/v1',
+            OTEL_SERVICE_NAME: 'macf-agent-code-agent',
+          },
+        });
+        expect(r.status).toBe(0);
+      });
+
+      it('exits 0 with OTEL_RESOURCE_ATTRIBUTES containing malformed pairs', () => {
+        // Defensive: OTEL_RESOURCE_ATTRIBUTES that includes empty entries
+        // or non-key=value tokens (e.g., trailing comma) must not break
+        // emission. Helper filters out empty + key-less entries.
+        const r = runHook({
+          command: 'gh run rerun 5678 --repo groundnuty/macf --failed',
+          env: {
+            GH_TOKEN: VALID_TOKEN,
+            OTEL_EXPORTER_OTLP_ENDPOINT: 'http://127.0.0.1:1/v1',
+            OTEL_RESOURCE_ATTRIBUTES: ',gen_ai.agent.name=code-agent,,bad-no-eq,service.namespace=macf,',
+          },
+        });
+        expect(r.status).toBe(0);
+      });
+
+      it('script contains the resource-attrs helper + claude.sh env references', async () => {
+        // Source-shape regression: pin the helper presence + the two
+        // env-var sources it reads from. Catches accidental rename /
+        // removal in future refactors.
+        const fs = await import('node:fs');
+        const content = fs.readFileSync(HOOK_SCRIPT, 'utf-8');
+        expect(content).toContain('_macf_audit_build_resource_attrs_json');
+        expect(content).toContain('OTEL_SERVICE_NAME');
+        expect(content).toContain('OTEL_RESOURCE_ATTRIBUTES');
+        // Both curl emit paths (span + metric) wire the helper in.
+        expect(content).toMatch(/resource:\s*\{\s*attributes:\s*\$resource_attrs\s*\}/);
+      });
+    });
   });
 
   describe('error message quality', () => {
