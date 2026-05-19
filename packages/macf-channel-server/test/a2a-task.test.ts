@@ -13,6 +13,8 @@ import {
   TaskStore,
   isTransitionAllowed,
   InvalidTaskTransitionError,
+  TaskNotFoundError,
+  TaskNotResumableError,
 } from '../src/a2a-task.js';
 import type { Message } from '../src/a2a-types.js';
 
@@ -182,5 +184,126 @@ describe('TaskStore', () => {
     expect(store.size()).toBe(1);
     store.create(makeMessage(), { nowIso: NOW });
     expect(store.size()).toBe(2);
+  });
+});
+
+// macf#392 Phase 2b — resume + reject coverage
+describe('TaskStore.resume (macf#392 Phase 2b)', () => {
+  let store: TaskStore;
+
+  beforeEach(() => {
+    store = new TaskStore();
+  });
+
+  function setupInputRequiredTask(): { taskId: string } {
+    const created = store.create(makeMessage(), { nowIso: NOW });
+    store.transition(created.id, 'TASK_STATE_WORKING', { nowIso: NOW });
+    store.transition(created.id, 'TASK_STATE_INPUT_REQUIRED', { nowIso: NOW });
+    return { taskId: created.id };
+  }
+
+  it('resumes a task from INPUT_REQUIRED → WORKING with ROLE_USER message', () => {
+    const { taskId } = setupInputRequiredTask();
+    const resumeMsg = makeMessage({
+      messageId: 'resume-1',
+      role: 'ROLE_USER',
+      parts: [{ text: 'follow-up input' }],
+      taskId,
+    });
+    const resumed = store.resume(taskId, resumeMsg, { nowIso: NOW });
+    expect(resumed.status.state).toBe('TASK_STATE_WORKING');
+    expect(resumed.history).toHaveLength(2);
+    expect(resumed.history?.[1]?.messageId).toBe('resume-1');
+  });
+
+  it('resumes a task from AUTH_REQUIRED → WORKING', () => {
+    const created = store.create(makeMessage(), { nowIso: NOW });
+    store.transition(created.id, 'TASK_STATE_WORKING', { nowIso: NOW });
+    store.transition(created.id, 'TASK_STATE_AUTH_REQUIRED', { nowIso: NOW });
+    const resumeMsg = makeMessage({
+      messageId: 'resume-auth-1',
+      role: 'ROLE_USER',
+      taskId: created.id,
+    });
+    const resumed = store.resume(created.id, resumeMsg, { nowIso: NOW });
+    expect(resumed.status.state).toBe('TASK_STATE_WORKING');
+  });
+
+  it('throws TaskNotFoundError when taskId is unknown', () => {
+    expect(() => store.resume('nonexistent', makeMessage(), { nowIso: NOW }))
+      .toThrow(TaskNotFoundError);
+  });
+
+  it('throws TaskNotResumableError when from-state is SUBMITTED (not yet WORKING)', () => {
+    const created = store.create(makeMessage(), { nowIso: NOW });
+    // SUBMITTED is not in INTERRUPTED_TASK_STATES — resume must reject.
+    expect(() => store.resume(created.id, makeMessage(), { nowIso: NOW }))
+      .toThrow(TaskNotResumableError);
+  });
+
+  it('throws TaskNotResumableError when from-state is WORKING (not paused)', () => {
+    const created = store.create(makeMessage(), { nowIso: NOW });
+    store.transition(created.id, 'TASK_STATE_WORKING', { nowIso: NOW });
+    expect(() => store.resume(created.id, makeMessage(), { nowIso: NOW }))
+      .toThrow(TaskNotResumableError);
+  });
+
+  it('throws TaskNotResumableError when from-state is terminal (COMPLETED)', () => {
+    const created = store.create(makeMessage(), { nowIso: NOW });
+    store.transition(created.id, 'TASK_STATE_WORKING', { nowIso: NOW });
+    store.transition(created.id, 'TASK_STATE_COMPLETED', { nowIso: NOW });
+    expect(() => store.resume(created.id, makeMessage(), { nowIso: NOW }))
+      .toThrow(TaskNotResumableError);
+  });
+
+  it('rejects resume with non-ROLE_USER message (per spec § 4.1.5 client→server direction)', () => {
+    const { taskId } = setupInputRequiredTask();
+    const agentResumeMsg = makeMessage({
+      messageId: 'agent-msg',
+      role: 'ROLE_AGENT', // wrong direction for resume
+      taskId,
+    });
+    expect(() => store.resume(taskId, agentResumeMsg, { nowIso: NOW }))
+      .toThrow(/ROLE_USER/);
+  });
+
+  it('TaskNotResumableError carries the current state for error mapping', () => {
+    const created = store.create(makeMessage(), { nowIso: NOW });
+    store.transition(created.id, 'TASK_STATE_WORKING', { nowIso: NOW });
+    store.transition(created.id, 'TASK_STATE_COMPLETED', { nowIso: NOW });
+    try {
+      store.resume(created.id, makeMessage(), { nowIso: NOW });
+      expect.fail('expected throw');
+    } catch (err) {
+      expect(err).toBeInstanceOf(TaskNotResumableError);
+      expect((err as TaskNotResumableError).currentState).toBe('TASK_STATE_COMPLETED');
+    }
+  });
+});
+
+describe('TaskStore.rejectFresh (macf#392 Phase 2b — REJECTED transition test fixture)', () => {
+  let store: TaskStore;
+
+  beforeEach(() => {
+    store = new TaskStore();
+  });
+
+  it('drives SUBMITTED → REJECTED with reason message in TaskStatus.message', () => {
+    const initial = makeMessage();
+    const reason = makeMessage({
+      messageId: 'reject-reason-1',
+      role: 'ROLE_AGENT',
+      parts: [{ text: 'Synthetic rejection' }],
+    });
+    const rejected = store.rejectFresh(initial, reason, { nowIso: NOW });
+    expect(rejected.status.state).toBe('TASK_STATE_REJECTED');
+    expect(rejected.status.message?.messageId).toBe('reject-reason-1');
+    expect(store.isTerminal(rejected.id)).toBe(true);
+  });
+
+  it('REJECTED is terminal — no further transitions allowed', () => {
+    const rejected = store.rejectFresh(makeMessage(), makeMessage({ role: 'ROLE_AGENT' }), { nowIso: NOW });
+    expect(() => store.transition(rejected.id, 'TASK_STATE_WORKING', { nowIso: NOW }))
+      .toThrow(InvalidTaskTransitionError);
   });
 });

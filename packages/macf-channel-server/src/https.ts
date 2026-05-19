@@ -16,12 +16,16 @@ import {
   A2A_ERROR_DOMAIN,
   A2A_REASON_INVALID_MESSAGE,
   A2A_REASON_METHOD_NOT_SUPPORTED,
+  A2A_REASON_TASK_NOT_FOUND,
+  A2A_REASON_TASK_NOT_RESUMABLE,
+  A2A_REASON_TASK_TERMINAL_STATE,
   JSONRPC_PARSE_ERROR,
   JSONRPC_INVALID_REQUEST,
   JSONRPC_METHOD_NOT_FOUND,
   JSONRPC_INVALID_PARAMS,
   JSONRPC_INTERNAL_ERROR,
 } from './a2a-types.js';
+import { TaskNotFoundError, TaskNotResumableError, InvalidTaskTransitionError } from './a2a-task.js';
 import type { TaskStore } from './a2a-task.js';
 
 const MAX_BODY_BYTES = 64 * 1024; // 64KB
@@ -578,27 +582,79 @@ export function createHttpsServer(config: {
         parentCtx,
         async (span) => {
           try {
-            // Phase 2a: happy-path drive through SUBMITTED → WORKING → COMPLETED.
-            // Agent's response is a synchronous text acknowledgment; Phase 2b
-            // will wire skill-name → MCP-tool dispatch so the response reflects
-            // actual MACF-tool output.
             const now = new Date().toISOString();
+            const incomingMessage = params.data.message;
+
+            // macf#392 Phase 2b: resume branch. If incoming Message.taskId
+            // is set, the client is resuming a paused task (INPUT_REQUIRED
+            // or AUTH_REQUIRED state); dispatch to TaskStore.resume() instead
+            // of creating a fresh task. Spec § 4.1.4 specifies Message.taskId
+            // as the canonical resume reference. Per Q3 design decision on
+            // #392, the route handler owns dispatch routing; TaskStore stays
+            // a passive validator.
+            if (incomingMessage.taskId !== undefined && incomingMessage.taskId.length > 0) {
+              const task = taskStore.resume(incomingMessage.taskId, incomingMessage, { nowIso: now });
+              span.setAttribute('macf.a2a.task_id', task.id);
+              span.setAttribute('macf.a2a.task_state', task.status.state);
+              span.setAttribute('macf.a2a.dispatch', 'resume');
+              span.setStatus({ code: SpanStatusCode.OK });
+              sendA2aJson(res, 200, {
+                jsonrpc: '2.0',
+                id: envelope.data.id,
+                result: task,
+              });
+              return;
+            }
+
+            // macf#392 Phase 2b: REJECTED-trigger test fixture. Env-flag-gated
+            // synthetic trigger for exercising the SUBMITTED → REJECTED edge
+            // without a real production rejection-policy layer (which lands
+            // in Phase 3+). Tests + operator-supervised investigations set
+            // MACF_A2A_TEST_REJECT_TRIGGER=1 to enable.
+            const firstPart = incomingMessage.parts[0];
+            const isRejectTrigger =
+              process.env['MACF_A2A_TEST_REJECT_TRIGGER'] === '1'
+              && firstPart !== undefined
+              && 'text' in firstPart
+              && firstPart.text === 'TEST_TRIGGER_REJECTED';
+            if (isRejectTrigger) {
+              const reasonMessage = {
+                messageId: `reject-${randomUUID()}`,
+                role: 'ROLE_AGENT' as const,
+                parts: [{ text: 'Rejected by synthetic test trigger (MACF_A2A_TEST_REJECT_TRIGGER=1; macf#392 Phase 2b fixture).' }],
+              };
+              const task = taskStore.rejectFresh(incomingMessage, reasonMessage, { nowIso: now });
+              span.setAttribute('macf.a2a.task_id', task.id);
+              span.setAttribute('macf.a2a.task_state', task.status.state);
+              span.setAttribute('macf.a2a.dispatch', 'reject_trigger');
+              span.setStatus({ code: SpanStatusCode.OK });
+              sendA2aJson(res, 200, {
+                jsonrpc: '2.0',
+                id: envelope.data.id,
+                result: task,
+              });
+              return;
+            }
+
+            // Default Phase 2a happy-path: fresh task → WORKING → COMPLETED.
+            // Agent's response is a synchronous text acknowledgment; Phase 3
+            // will wire skill-name → MCP-tool dispatch so the response
+            // reflects actual MACF-tool output.
             // randomUUID (CSPRNG) per the canonical no-weak-PRNG invariant
-            // in src/ (#109 H1). Phase 2a synthesizes the response messageId
-            // here; Phase 2b will wire skill-name → MCP-tool dispatch so
-            // the response carries the actual tool output.
+            // in src/ (#109 H1).
             const responseMessage = {
               messageId: `resp-${randomUUID()}`,
               role: 'ROLE_AGENT' as const,
               parts: [{ text: 'Acknowledged.' }],
             };
             const task = taskStore.completeHappyPath(
-              params.data.message,
+              incomingMessage,
               responseMessage,
               { nowIso: now },
             );
             span.setAttribute('macf.a2a.task_id', task.id);
             span.setAttribute('macf.a2a.task_state', task.status.state);
+            span.setAttribute('macf.a2a.dispatch', 'fresh');
             span.setStatus({ code: SpanStatusCode.OK });
             sendA2aJson(res, 200, {
               jsonrpc: '2.0',
@@ -614,6 +670,55 @@ export function createHttpsServer(config: {
               code: SpanStatusCode.ERROR,
               message: err instanceof Error ? err.message : String(err),
             });
+
+            // macf#392 Phase 2b: structured error mapping per spec § 9
+            // google.rpc.Status form. Resume-flow errors get specific reason
+            // codes so callers can disambiguate (vs falling back to
+            // INTERNAL_ERROR for everything).
+            if (err instanceof TaskNotFoundError) {
+              sendA2aJson(res, 200, {
+                jsonrpc: '2.0',
+                id: envelope.data.id,
+                error: {
+                  code: JSONRPC_INVALID_PARAMS,
+                  message: `Task ${err.taskId} not found (cannot resume)`,
+                  data: { reason: A2A_REASON_TASK_NOT_FOUND, domain: A2A_ERROR_DOMAIN },
+                },
+              });
+              return;
+            }
+            if (err instanceof TaskNotResumableError) {
+              sendA2aJson(res, 200, {
+                jsonrpc: '2.0',
+                id: envelope.data.id,
+                error: {
+                  code: JSONRPC_INVALID_PARAMS,
+                  message: `Task ${err.taskId} in state ${err.currentState} is not resumable`,
+                  data: {
+                    reason: err.currentState === 'TASK_STATE_COMPLETED'
+                      || err.currentState === 'TASK_STATE_FAILED'
+                      || err.currentState === 'TASK_STATE_CANCELED'
+                      || err.currentState === 'TASK_STATE_REJECTED'
+                      ? A2A_REASON_TASK_TERMINAL_STATE
+                      : A2A_REASON_TASK_NOT_RESUMABLE,
+                    domain: A2A_ERROR_DOMAIN,
+                  },
+                },
+              });
+              return;
+            }
+            if (err instanceof InvalidTaskTransitionError) {
+              sendA2aJson(res, 200, {
+                jsonrpc: '2.0',
+                id: envelope.data.id,
+                error: {
+                  code: JSONRPC_INVALID_PARAMS,
+                  message: err.message,
+                  data: { reason: A2A_REASON_INVALID_MESSAGE, domain: A2A_ERROR_DOMAIN },
+                },
+              });
+              return;
+            }
             sendA2aJson(res, 200, {
               jsonrpc: '2.0',
               id: envelope.data.id,
