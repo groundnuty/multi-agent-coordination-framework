@@ -34,6 +34,7 @@
  * don't accidentally re-include it.
  */
 import { z } from 'zod';
+import { A2A_ENDPOINT_PATH } from './a2a-types.js';
 
 // ---------------------------------------------------------------------------
 // Zod schema (hand-rolled from A2A v1.0 spec § 4.4.1 + § 4.4.5 + § 4.5.6)
@@ -156,25 +157,40 @@ export interface AgentCardInputs {
  * clients SHOULD NOT depend on it. A source-level test in
  * `test/agent-card.test.ts` pins this invariant.
  *
- * Skills in Phase 1: empty array. The MACF coordination surfaces
- * (POST /notify for inbound peer notifications) are framework-internal,
- * not user-invocable agent skills in the A2A sense. Phase 2+ may add
- * skills as A2A's task lifecycle surfaces materialize.
+ * Skills in Phase 2a (macf#390): MACF domain capabilities — what the
+ * agent can DO, not what JSON-RPC methods it serves. Per spec § 4.4.5,
+ * skills describe agent-specific actions on top of the A2A protocol
+ * methods. Initial mapping (Phase 2a):
+ *
+ * - `macf.notify_peer` — Cross-Agent Notification (the canonical MACF
+ *   coordination primitive; #267)
+ * - `macf.checkpoint_to_memory` — Persist Context to Memory (the PreCompact
+ *   checkpoint MCP tool; #271 DR-023 §UC-3)
+ *
+ * Phase 3+ will add role-specific skills if the MACF MCP-tool surface
+ * grows. `/macf/sign` is intentionally absent — live cryptographic
+ * attestation stays MACF-only per DR-010 Path 2 + #371; a source-level
+ * test pins this invariant.
+ *
+ * `url` field: Phase 2a points AgentCard.url to the JSON-RPC endpoint
+ * (`<inputs.url>/a2a/v1`). A2A clients discover via
+ * `/.well-known/agent-card.json` then POST `message/send` to the
+ * advertised url.
  */
 export function buildAgentCard(inputs: AgentCardInputs): AgentCard {
   const card: AgentCard = {
     id: `${inputs.project}-${inputs.agentName}`,
     name: inputs.agentName,
     description: `MACF agent (${inputs.agentRole}) in project ${inputs.project}. Coordinates with peer MACF agents over mTLS-authenticated channels.`,
-    url: inputs.url,
+    url: `${inputs.url.replace(/\/+$/, '')}${A2A_ENDPOINT_PATH}`,
     version: inputs.version,
     provider: {
       organization: `groundnuty/macf (${inputs.project})`,
       url: 'https://github.com/groundnuty/macf',
     },
     capabilities: {
-      // Phase 1: no claimed capabilities; Phase 2 will populate as
-      // inbound A2A JSON-RPC `message/send` + task lifecycle land.
+      streaming: false,
+      pushNotifications: false,
     },
     securitySchemes: {
       mutual_tls: {
@@ -185,7 +201,24 @@ export function buildAgentCard(inputs: AgentCardInputs): AgentCard {
     security: [{ mutual_tls: [] }],
     defaultInputModes: ['application/json'],
     defaultOutputModes: ['application/json'],
-    skills: [],
+    skills: [
+      {
+        id: 'macf.notify_peer',
+        name: 'Cross-Agent Notification',
+        description: 'Send a structured notification to a peer MACF agent. Used for issue/PR routing, CI-completion signaling, and ad-hoc cross-agent messaging. Sender-side delivery is mTLS-authenticated; receiver dispatches based on notification type.',
+        tags: ['macf', 'coordination', 'notification'],
+        inputModes: ['application/json'],
+        outputModes: ['application/json'],
+      },
+      {
+        id: 'macf.checkpoint_to_memory',
+        name: 'Persist Context to Memory',
+        description: 'Checkpoint conversation context to the agent\'s persistent memory store. Invoked via PreCompact hook (DR-023 §UC-3) or manually before long pauses. Returns a memory-file reference for later recall.',
+        tags: ['macf', 'memory', 'checkpoint'],
+        inputModes: ['application/json'],
+        outputModes: ['application/json'],
+      },
+    ],
   };
   // Defense-in-depth: validate our own output before returning.
   // Catches bugs where a field shape drifts from the schema without

@@ -105,9 +105,12 @@ describe('buildAgentCard (macf#370)', () => {
     expect(card.id).toBe('macf-code-agent');
   });
 
-  it('maps url verbatim from inputs', () => {
+  it('maps url to inputs.url + /a2a/v1 (macf#390 Phase 2a — JSON-RPC endpoint)', () => {
+    // Pre-#390: card.url was verbatim from inputs (host:port). Phase 2a
+    // appends /a2a/v1 so A2A clients can discover + POST `message/send`
+    // to the right path. AgentCard is the canonical advertisement.
     const card = buildAgentCard(baseInputs);
-    expect(card.url).toBe('https://127.0.0.1:42501');
+    expect(card.url).toBe('https://127.0.0.1:42501/a2a/v1');
   });
 
   it('emits version from inputs (channel-server PACKAGE_VERSION at runtime)', () => {
@@ -126,14 +129,27 @@ describe('buildAgentCard (macf#370)', () => {
     expect(card.security).toEqual([{ mutual_tls: [] }]);
   });
 
-  it('emits empty skills array in Phase 1 (no advertised skills yet)', () => {
+  it('emits MACF capability skills in Phase 2a (notify_peer + checkpoint_to_memory)', () => {
+    // macf#390 Phase 2a: AgentSkills describe MACF DOMAIN capabilities
+    // (per A2A v1.0 § 4.4.5), not JSON-RPC protocol methods. Initial
+    // mapping: notify_peer + checkpoint_to_memory.
     const card = buildAgentCard(baseInputs);
-    expect(card.skills).toEqual([]);
+    const ids = (card.skills ?? []).map((s) => s.id);
+    expect(ids).toContain('macf.notify_peer');
+    expect(ids).toContain('macf.checkpoint_to_memory');
   });
 
-  it('emits empty capabilities object in Phase 1 (no claimed capabilities)', () => {
+  it('emits non-empty capabilities in Phase 2a (streaming + pushNotifications declared false)', () => {
+    // macf#390 Phase 2a: synchronous-only path; streaming + push
+    // explicitly false. Phase 2.5/3 may flip these.
     const card = buildAgentCard(baseInputs);
-    expect(card.capabilities).toEqual({});
+    expect(card.capabilities['streaming']).toBe(false);
+    expect(card.capabilities['pushNotifications']).toBe(false);
+  });
+
+  it('points AgentCard.url at the /a2a/v1 JSON-RPC endpoint (macf#390 Phase 2a)', () => {
+    const card = buildAgentCard(baseInputs);
+    expect(card.url).toMatch(/\/a2a\/v1$/);
   });
 
   // ---------------------------------------------------------------------
