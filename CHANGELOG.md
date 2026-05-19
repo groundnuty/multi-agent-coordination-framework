@@ -9,6 +9,31 @@ Plugin + routing-workflow changes ship from separate repos
 [`groundnuty/macf-actions`](https://github.com/groundnuty/macf-actions))
 and are not included here — pin them explicitly in each workspace.
 
+## [0.2.28] — 2026-05-19
+
+Single-piece micro-release: follow-up to v0.2.27's audit-log emission
+landing. Populates `resource.attributes` from claude.sh's
+`OTEL_SERVICE_NAME` + `OTEL_RESOURCE_ATTRIBUTES` env exports so
+hook-emitted spans aggregate by `service.name` + `gen_ai.*` with the
+rest of the MACF observability stack (previously empty
+`resource.attributes` block left them under
+`rootServiceName=<root span not yet received>` in Tempo).
+
+### Fixed
+
+- **Audit-log resource-attrs gap** in `check-gh-token.sh`. New
+  `_macf_audit_build_resource_attrs_json` helper reads canonical OTel
+  env vars (per `observability-wiring.md`) and populates both span +
+  counter emission bodies. Pass-through approach (env → parsed → OTLP
+  body) over direct `MACF_AGENT_NAME` / `MACF_AGENT_ROLE` read keeps
+  claude.sh as the single source of truth + auto-propagates future
+  canonical additions. Graceful degradation when env unset (empty
+  array; identical to pre-#388 shape; devops's direct-invocation smoke
+  still works). PR [#389] / closes [#388].
+
+[#388]: https://github.com/groundnuty/macf/issues/388
+[#389]: https://github.com/groundnuty/macf/pull/389
+
 ## [0.2.27] — 2026-05-19
 
 Three-piece release: A2A v1.0 interop empirical evidence (Python SDK
