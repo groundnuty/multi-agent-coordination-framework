@@ -347,6 +347,33 @@ point THEN (octokit middleware if octokit gets adopted; or a
 node-level subprocess-spawn hook). YAGNI for current scope; flagged
 here as a known limitation for future re-evaluation.
 
+**Multi-environment observability gap (deployment topology, added
+2026-05-19 per macf#368 first-audited-dispatch empirical observation):**
+the PreToolUse hook's emission requires (i) `OTEL_EXPORTER_OTLP_ENDPOINT`
+set in the agent's session env AND (ii) the configured OTLP endpoint to
+be network-reachable from the agent's session. In practice, audit-log
+spans land only from operator-local agent sessions where the claude.sh
+OTel block is exported AND the cluster Tempo (`http://127.0.0.1:14318`
+per `groundnuty/macf-devops-toolkit` canonical) is reachable. Remote
+agent sessions (e.g., code-agent's CI VM, devops-agent's VM if separate
+from the cluster host) silently skip emission per the hook's opt-in
+observability design (`OTEL_EXPORTER_OTLP_ENDPOINT` unset → no curl
+fired). This is a deployment-topology gap, not a hook-correctness
+gap — the structural defense pattern is intact (the gh CLI invocation
+itself proceeds correctly + the hook fires + the audit-emission branch
+runs); the audit-log REACH is what's bounded. Sister-shape to
+`silent-fallback-hazards.md` Instance 8's "OTLP-endpoint silent-drop"
+Tier 4 (long-lived agent processes started during connect-refused
+window have OTel SDK retry budget exhausted) — same architectural
+family ("the OTLP boundary fails silently in a way the agent doesn't
+surface"). Witness: macf#368 first audited `gh workflow run
+npm-deprecate.yml` 2026-05-19; dispatch SUCCEEDED end-to-end but hook
+silent-skipped emission because code-agent's remote session lacked
+both pre-conditions. The audit-log's VALUE depends on its REACH, not
+just its CORRECTNESS — future deployment patterns that put `actions:write`
+on remote agents should explicitly verify (i) + (ii) OR accept that
+those agents' privileged-API calls won't emit audit-log signals.
+
 **Shared-instrumentation architectural consideration**: science-agent
 flagged "if MACF agents don't all share an octokit factory, consider
 adding one — keeps the audit-log surface canonical instead of N
