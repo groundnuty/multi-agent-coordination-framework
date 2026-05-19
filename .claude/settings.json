@@ -39,7 +39,9 @@
         "~/.cache/devbox",
         "~/.local/share/devbox",
         "~/.nix-profile",
-        "/nix"
+        "/nix",
+        "/Users/orzech/Dropbox/home/repos/groundnuty/macf-science-agent/paper-research",
+        "/home/ubuntu/repos/groundnuty/macf-science-agent/paper-research"
       ],
       "denyWrite": [
         "/etc",
