@@ -1,13 +1,28 @@
 import { createServer, type Server as NodeHttpsServer } from 'node:https';
 import type { TLSSocket } from 'node:tls';
 import { readFileSync } from 'node:fs';
-import { randomInt } from 'node:crypto';
+import { randomInt, randomUUID } from 'node:crypto';
 import { context, propagation, SpanKind, SpanStatusCode } from '@opentelemetry/api';
 import { NotifyPayloadSchema, SignRequestSchema } from '@groundnuty/macf-core';
 import type { NotifyPayload, SignRequest, HealthResponse, HttpsServer, Logger } from '@groundnuty/macf-core';
 import { PortExhaustedError, PortUnavailableError, HttpsServerError, HttpError } from '@groundnuty/macf-core';
 import { getTracer, SpanNames, Attr, GenAiAttr, operationNameForNotifyType } from './tracing.js';
 import { getNotifyReceivedCounter, getSignCallsCounter, MetricAttr } from './metrics.js';
+import {
+  JsonRpcRequestSchema,
+  MessageSendParamsSchema,
+  A2A_METHOD_MESSAGE_SEND,
+  A2A_ENDPOINT_PATH,
+  A2A_ERROR_DOMAIN,
+  A2A_REASON_INVALID_MESSAGE,
+  A2A_REASON_METHOD_NOT_SUPPORTED,
+  JSONRPC_PARSE_ERROR,
+  JSONRPC_INVALID_REQUEST,
+  JSONRPC_METHOD_NOT_FOUND,
+  JSONRPC_INVALID_PARAMS,
+  JSONRPC_INTERNAL_ERROR,
+} from './a2a-types.js';
+import type { TaskStore } from './a2a-task.js';
 
 const MAX_BODY_BYTES = 64 * 1024; // 64KB
 export const PORT_RANGE_START = 8800;
@@ -51,13 +66,35 @@ function sendJson(
   res: import('node:http').ServerResponse,
   status: number,
   body: Record<string, unknown>,
+  extraHeaders: Record<string, string> = {},
 ): void {
   const json = JSON.stringify(body);
   res.writeHead(status, {
     'Content-Type': 'application/json',
     'Content-Length': Buffer.byteLength(json),
+    ...extraHeaders,
   });
   res.end(json);
+}
+
+/**
+ * Headers required on A2A v1.0 protocol responses (macf#390 Phase 2a;
+ * spec § 3.6). `A2A-Version` advertises the protocol version the server
+ * implements; standard A2A clients read it for negotiation. Absence is
+ * a spec-compliance gap that doesn't break v1.0 interop today but
+ * becomes load-bearing when v1.1+ clients need to negotiate.
+ */
+const A2A_RESPONSE_HEADERS: Record<string, string> = {
+  'A2A-Version': '1.0',
+};
+
+/** sendJson variant that always emits the A2A v1.0 spec § 3.6 response headers. */
+function sendA2aJson(
+  res: import('node:http').ServerResponse,
+  status: number,
+  body: Record<string, unknown>,
+): void {
+  sendJson(res, status, body, A2A_RESPONSE_HEADERS);
 }
 
 function readBody(
@@ -117,9 +154,20 @@ export function createHttpsServer(config: {
    * behavior change to existing endpoints.
    */
   readonly agentCard?: unknown;
+  /**
+   * A2A v1.0 inbound task store for `message/send` JSON-RPC handling
+   * at `/a2a/v1` (groundnuty/macf#390 Phase 2a). Optional — pre-#390
+   * channel-servers skip the route and return 404.
+   *
+   * Phase 2a: in-memory `Map<taskId, Task>`. Each request drives a
+   * fresh task through the happy path SUBMITTED → WORKING → COMPLETED.
+   * Phase 2b will exercise INPUT_REQUIRED / AUTH_REQUIRED + resume
+   * via `Message.taskId`.
+   */
+  readonly taskStore?: TaskStore;
   readonly logger: Logger;
 }): HttpsServer {
-  const { onNotify, onHealth, onSign, agentCard, logger } = config;
+  const { onNotify, onHealth, onSign, agentCard, taskStore, logger } = config;
 
   const tlsOptions = {
     key: readFileSync(config.agentKeyPath),
@@ -400,6 +448,180 @@ export function createHttpsServer(config: {
             span.setStatus({
               code: SpanStatusCode.ERROR,
               message: err instanceof Error ? err.message : String(err),
+            });
+          } finally {
+            span.end();
+          }
+        },
+      );
+      return;
+    }
+
+    // A2A v1.0 inbound JSON-RPC `message/send` endpoint (groundnuty/macf#390
+    // Phase 2a). URL pattern `/a2a/v1` advertised via AgentCard.url; clients
+    // discover via `/.well-known/agent-card.json` then POST JSON-RPC envelopes
+    // here. Backwards-compat: existing `/notify` + `/macf/sign` + AgentCard
+    // routes unchanged; A2A surface is purely additive.
+    //
+    // Phase 2a scope: happy-path message/send → fresh Task → SUBMITTED →
+    // WORKING → COMPLETED (synchronous return). Phase 2b extends to
+    // INPUT_REQUIRED / AUTH_REQUIRED + resume via Message.taskId; ALL state
+    // transitions declared in `a2a-task.ts` but Phase 2a only exercises
+    // the happy path.
+    //
+    // Traceparent: extracted from req.headers (W3C tracecontext via HTTP)
+    // per header-only design decision 4 on macf#390 (#368 finding: current
+    // mTLS topology doesn't header-rewrite). Defense-in-depth metadata-
+    // stuffing reserved for Phase 4 (external gateway scenarios).
+    if (method === 'POST' && url === A2A_ENDPOINT_PATH) {
+      if (taskStore === undefined) {
+        sendA2aJson(res, 404, { error: 'A2A endpoint not configured on this channel-server' });
+        return;
+      }
+
+      const contentType = req.headers['content-type'] ?? '';
+      if (!contentType.includes('application/json')) {
+        sendA2aJson(res, 415, { error: 'Content-Type must be application/json' });
+        return;
+      }
+
+      let body: string;
+      try {
+        body = await readBody(req);
+      } catch {
+        sendA2aJson(res, 413, { error: 'Body too large (max 64KB)' });
+        return;
+      }
+
+      // JSON-RPC 2.0 §5 — parse-error → -32700 (id=null since we couldn't
+      // parse enough of the request to know its id).
+      let parsed: unknown;
+      try {
+        parsed = JSON.parse(body);
+      } catch {
+        sendA2aJson(res, 200, {
+          jsonrpc: '2.0',
+          id: null,
+          error: {
+            code: JSONRPC_PARSE_ERROR,
+            message: 'Parse error',
+            data: { reason: A2A_REASON_INVALID_MESSAGE, domain: A2A_ERROR_DOMAIN },
+          },
+        });
+        return;
+      }
+
+      // JSON-RPC envelope shape — wrong shape → -32600 Invalid Request.
+      const envelope = JsonRpcRequestSchema.safeParse(parsed);
+      if (!envelope.success) {
+        // Best-effort id extraction from the raw body for the error envelope.
+        const rawId = (parsed as { id?: string | number }).id ?? null;
+        sendA2aJson(res, 200, {
+          jsonrpc: '2.0',
+          id: rawId,
+          error: {
+            code: JSONRPC_INVALID_REQUEST,
+            message: `Invalid JSON-RPC request: ${envelope.error.message}`,
+            data: { reason: A2A_REASON_INVALID_MESSAGE, domain: A2A_ERROR_DOMAIN },
+          },
+        });
+        return;
+      }
+
+      // Method dispatch. Phase 2a supports only `message/send`. Other
+      // A2A methods (`tasks/get`, `tasks/cancel`, `message/stream`) →
+      // -32601 Method not found. They land in Phase 2b/2.5/3.
+      if (envelope.data.method !== A2A_METHOD_MESSAGE_SEND) {
+        sendA2aJson(res, 200, {
+          jsonrpc: '2.0',
+          id: envelope.data.id,
+          error: {
+            code: JSONRPC_METHOD_NOT_FOUND,
+            message: `Method '${envelope.data.method}' not supported (Phase 2a only implements '${A2A_METHOD_MESSAGE_SEND}')`,
+            data: { reason: A2A_REASON_METHOD_NOT_SUPPORTED, domain: A2A_ERROR_DOMAIN },
+          },
+        });
+        return;
+      }
+
+      const params = MessageSendParamsSchema.safeParse(envelope.data.params);
+      if (!params.success) {
+        sendA2aJson(res, 200, {
+          jsonrpc: '2.0',
+          id: envelope.data.id,
+          error: {
+            code: JSONRPC_INVALID_PARAMS,
+            message: `Invalid message/send params: ${params.error.message}`,
+            data: { reason: A2A_REASON_INVALID_MESSAGE, domain: A2A_ERROR_DOMAIN },
+          },
+        });
+        return;
+      }
+
+      // Wrap in SERVER span (analog to existing /notify handler) so any
+      // child operations attach via active-context propagation. Parent
+      // ctx extracted from W3C `traceparent` per design decision 4.
+      const parentCtx = propagation.extract(context.active(), req.headers);
+      const clientCn = (req.socket as TLSSocket)
+        .getPeerCertificate()?.subject?.CN ?? 'unknown';
+      const tracer = getTracer();
+      await tracer.startActiveSpan(
+        'macf.a2a.message_send',
+        {
+          kind: SpanKind.SERVER,
+          attributes: {
+            [GenAiAttr.System]: 'macf',
+            [GenAiAttr.OperationName]: 'a2a.message_send',
+            [Attr.RemoteCn]: clientCn,
+          },
+        },
+        parentCtx,
+        async (span) => {
+          try {
+            // Phase 2a: happy-path drive through SUBMITTED → WORKING → COMPLETED.
+            // Agent's response is a synchronous text acknowledgment; Phase 2b
+            // will wire skill-name → MCP-tool dispatch so the response reflects
+            // actual MACF-tool output.
+            const now = new Date().toISOString();
+            // randomUUID (CSPRNG) per the canonical no-weak-PRNG invariant
+            // in src/ (#109 H1). Phase 2a synthesizes the response messageId
+            // here; Phase 2b will wire skill-name → MCP-tool dispatch so
+            // the response carries the actual tool output.
+            const responseMessage = {
+              messageId: `resp-${randomUUID()}`,
+              role: 'ROLE_AGENT' as const,
+              parts: [{ text: 'Acknowledged.' }],
+            };
+            const task = taskStore.completeHappyPath(
+              params.data.message,
+              responseMessage,
+              { nowIso: now },
+            );
+            span.setAttribute('macf.a2a.task_id', task.id);
+            span.setAttribute('macf.a2a.task_state', task.status.state);
+            span.setStatus({ code: SpanStatusCode.OK });
+            sendA2aJson(res, 200, {
+              jsonrpc: '2.0',
+              id: envelope.data.id,
+              result: task,
+            });
+          } catch (err) {
+            logger.error('a2a_message_send_failed', {
+              error: err instanceof Error ? err.message : String(err),
+            });
+            span.recordException(err as Error);
+            span.setStatus({
+              code: SpanStatusCode.ERROR,
+              message: err instanceof Error ? err.message : String(err),
+            });
+            sendA2aJson(res, 200, {
+              jsonrpc: '2.0',
+              id: envelope.data.id,
+              error: {
+                code: JSONRPC_INTERNAL_ERROR,
+                message: 'Internal error processing message/send',
+                data: { domain: A2A_ERROR_DOMAIN },
+              },
             });
           } finally {
             span.end();

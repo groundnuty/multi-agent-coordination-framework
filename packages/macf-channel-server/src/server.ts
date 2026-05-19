@@ -15,6 +15,7 @@ import { createMcpChannel } from './mcp.js';
 import { createHealthState } from './health.js';
 import { createHttpsServer } from './https.js';
 import { buildAgentCard } from './agent-card.js';
+import { TaskStore } from './a2a-task.js';
 import { PACKAGE_VERSION } from './package-version.js';
 import { createRegistry, createRegistryFromConfig } from '@groundnuty/macf-core';
 import { checkCollision, CollisionError } from './collision.js';
@@ -363,6 +364,12 @@ async function main(): Promise<void> {
     version: PACKAGE_VERSION,
   });
 
+  // macf#390 Phase 2a: in-memory A2A task store wired into the JSON-RPC
+  // route at /a2a/v1. Lifecycle scoped to the channel-server process —
+  // no on-disk state per design decision 2 on the issue. Phase 2.5 may
+  // revisit if longer-lived persistence becomes a need.
+  const taskStore = new TaskStore();
+
   const httpsServer = createHttpsServer({
     caCertPath: config.caCertPath,
     agentCertPath: config.agentCertPath,
@@ -371,6 +378,7 @@ async function main(): Promise<void> {
     onHealth: () => health.getHealth(),
     onSign,
     agentCard,
+    taskStore,
     logger,
   });
 
