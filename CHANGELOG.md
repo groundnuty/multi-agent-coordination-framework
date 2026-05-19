@@ -9,65 +9,90 @@ Plugin + routing-workflow changes ship from separate repos
 [`groundnuty/macf-actions`](https://github.com/groundnuty/macf-actions))
 and are not included here — pin them explicitly in each workspace.
 
-## [0.2.29] — 2026-05-19
+## [0.2.30] — 2026-05-19
 
-A2A v1.0 Phase 2a — first substantive A2A protocol surface ships on
-`macf-channel-server`: inbound JSON-RPC `message/send` at `/a2a/v1`
-with the canonical task lifecycle state machine + AgentCard
-skills/url update. Backwards-compatible with existing `/notify` +
-`/macf/sign` + AgentCard discovery endpoints (purely additive).
+Recovery + bundled release. v0.2.29 publish workflow failed at npm registry
+PUT step (HTTP 404; sigstore TLOG entries orphan per DR-022 Amendment L
+witness 2; npm-token root cause under operator investigation). Per the
+canonical recovery procedure, v0.2.30 bumps + republishes all three
+packages with bundled Phase 2a + Phase 2c + Phase 2b content. Identical
+to the failed v0.2.29 publish content + Phase 2b additions; sigstore gets
+fresh TLOG entries for v0.2.30.
 
-Phase 2b sub-issue tracks intermediate-state edges (INPUT_REQUIRED /
-AUTH_REQUIRED + resume via `Message.taskId`) + Python `a2a-sdk` v1.0.3
-integration test extending [#385] + traceparent end-to-end E2E smoke.
-Phase 2c sub-issue tracks AgentCard proto-alignment (description +
-supported_interfaces fields surfaced during PR #391 review).
+Three A2A v1.0 phases bundled in this single release vehicle:
 
-### Added
+### Phase 2a — inbound message/send + task lifecycle (PR [#391])
 
-- **POST `/a2a/v1` JSON-RPC `message/send` endpoint** in
-  `macf-channel-server`. Validates A2A v1.0 envelope + Message shape;
-  creates Task in SUBMITTED → transitions WORKING → COMPLETED
-  (synchronous happy path); returns task as JSON-RPC `result`. Other
-  A2A methods (`tasks/get` / `tasks/cancel` / `message/stream`) →
-  -32601 Method not found (deferred to Phase 2b/2.5/3). PR [#391].
-- **A2A v1.0 task lifecycle state machine** in
-  `src/a2a-task.ts`. `TaskStore` (in-memory `Map<taskId, Task>`) +
-  `transition()` validation against the full v1.0 transition table
-  (8 states, REJECTED included as v1.0-only terminal) + happy-path
-  helper. Phase 2a exercises SUBMITTED → WORKING → COMPLETED; full
-  state machine declared but not yet exercised.
-- **A2A v1.0 Zod schemas** in `src/a2a-types.ts` — Message, Part
-  (4-variant oneOf per canonical proto: text/raw/url/data), Task,
-  TaskStatus, TaskState 8-state enum, JSON-RPC envelopes. Spec
-  section refs in JSDoc; proto-verified 2026-05-19.
-- **`A2A-Version: 1.0` response header** on all `/a2a/v1` responses
-  per spec § 3.6 (standard A2A clients use the header for protocol-
-  version negotiation).
-- **AgentCard.skills populated** with MACF capabilities
-  (`macf.notify_peer`, `macf.checkpoint_to_memory`) per A2A v1.0
-  § 4.4.5 — skills describe agent capabilities, not JSON-RPC methods.
-  `/macf/sign` remains intentionally NOT advertised per DR-010 Path 2.
-- **AgentCard.url updated** to point at `/a2a/v1` (A2A clients
-  discover via `/.well-known/agent-card.json` then POST `message/send`
-  at the advertised endpoint).
-- **`design/phases/P-A2A-phase-2.md`** — phase spec with state
-  machine diagram + design decisions + Phase 2a/2b/2c decomposition.
+- POST `/a2a/v1` JSON-RPC `message/send` endpoint per spec § 9 examples
+- Full 8-state TaskState enum + transition table (REJECTED included)
+- AgentCard.skills populated with MACF capabilities
+- `A2A-Version: 1.0` response header per spec § 3.6 (added in #391 review-amend)
+- TaskStore + Zod schemas + state machine
+- See PR #391 / closes [#390]
 
-### Tests
+### Phase 2c — AgentCard schema proto-alignment (PR #395)
 
-- +63 new unit tests in `macf-channel-server` (39 a2a-types + 24
-  a2a-task) — schema coverage + state machine transition validity +
-  TaskStore CRUD + happy-path drive
-- +3 source-shape regression tests pinning `A2A_RESPONSE_HEADERS` +
-  `sendA2aJson` helper + scoped-block invariant ("no bare `sendJson`
-  on the A2A path")
-- 3 existing `agent-card` tests updated for Phase 2a shape (skills +
-  capabilities + url)
+- Realigned with canonical `a2aproject/A2A:specification/a2a.proto`
+- Removed non-canonical top-level `id` + `url` (URL moved to
+  `supportedInterfaces[0].url` per AgentInterface)
+- Added required `description`, `supportedInterfaces`,
+  `defaultInputModes`, `defaultOutputModes`
+- AgentSkill `description` + `tags` upgraded to required
+- Strict-validation assertion in Python SDK integration test
+- DR-022 Amendment M documents the migration
+- See PR #395 / closes [#393]
 
-[#385]: https://github.com/groundnuty/macf/pull/385
-[#391]: https://github.com/groundnuty/macf/pull/391
+### Phase 2b — intermediate states + Message.taskId resume (PR #397)
+
+- TaskStore.resume() + rejectFresh() methods
+- Route handler resume branch (Message.taskId presence check)
+- Structured error mapping: TaskNotFoundError, TaskNotResumableError,
+  InvalidTaskTransitionError → JSON-RPC google.rpc.Status form
+- ROLE_USER enforcement on resume messages (spec § 4.1.5)
+- Env-flag-gated REJECTED test fixture
+- New reason codes: TASK_TERMINAL_STATE, TASK_NOT_RESUMABLE
+- See PR #397 / Refs [#392]
+
+### Cumulative
+
+- Tests: 1438/1438 pass (870 macf + 272 channel-server + 296 macf-core)
+- Backwards-compat: `/notify`, `/macf/sign`, `/health`, AgentCard
+  discovery all unchanged
+- `/macf/sign` Path 2 exclusion invariant preserved across all three phases
+
+Phase 2d sub-issue ([#398]) tracks remaining deferrals: Python SDK
+`message/send` round-trip + traceparent E2E mock-OTLP + `tasks/get` +
+`tasks/cancel` JSON-RPC methods.
+
+Phase 3 sub-issue ([#396]) tracks outbound A2A (MACF as client); design
+proposal acked; impl follows Phase 2d.
+
 [#390]: https://github.com/groundnuty/macf/issues/390
+[#392]: https://github.com/groundnuty/macf/issues/392
+[#391]: https://github.com/groundnuty/macf/pull/391
+[#396]: https://github.com/groundnuty/macf/issues/396
+[#398]: https://github.com/groundnuty/macf/issues/398
+
+## [0.2.29] — 2026-05-19 — FAILED PUBLISH (not on npm)
+
+**This version was NEVER PUBLISHED to npm.** The release-cut commit landed
+on `groundnuty/macf:main` (`11cbbccf`), the v0.2.29 tag was pushed, the
+`publish.yml` workflow started + completed Sigstore provenance for
+`@groundnuty/macf-core@0.2.29`, but npm registry returned HTTP 404 on
+the PUT step (root cause under operator-side investigation; candidates:
+expired NPM_TOKEN, missing 2FA-bypass capability, OIDC trusted-publisher
+conflict per DR-022 Amendments C + J).
+
+Recovery per DR-022 Amendment L: bump to v0.2.30 + republish.
+**Consumers MUST NOT pin to v0.2.29** — it doesn't exist on npm.
+v0.2.30 ships the intended Phase 2a + 2c + 2b content with fresh sigstore
+TLOG entries.
+
+Master tracking: [#368]. Sigstore TLOG entries from the v0.2.29 attempt
+will be operator-deprecated post-recovery (via `npm-deprecate.yml`
+workflow_dispatch, sister-shape to v0.2.25 → v0.2.26 orphan cleanup).
+
+[#368]: https://github.com/groundnuty/macf/issues/368
 
 ## [0.2.28] — 2026-05-19
 
