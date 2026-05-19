@@ -42,8 +42,11 @@ plugin/
                        `macf rules refresh`
 
 design/
-  decisions/      ← 19 decision records (DR-001 through DR-019)
-  phases/         ← 7 implementation phase specs (P1 through P7)
+  decisions/      ← 24 decision records (DR-001 through DR-024;
+                    DR-019 + DR-022 each have post-review amendments)
+  phases/         ← 8 implementation phase specs
+                    (P1–P7 + P-A2A-phase-2 added 2026-05-19 for the
+                    A2A v1.0 inbound JSON-RPC arc per macf#390)
 research/         ← literature reviews, empirical analysis
 
 test/             ← unit tests (default vitest run) + test/e2e/ (excluded)
@@ -52,10 +55,66 @@ test/             ← unit tests (default vitest run) + test/e2e/ (excluded)
 ## Implementation Status
 
 P1–P7 all implemented. Post-P7 work is bug-fix + security + hardening driven
-by issue queue and periodic audits. Currently at **v0.2.19** (see
-`CHANGELOG.md`). 24 DRs, 7 phase specs, 13 canonical rules, 16 research notes.
-1262/1262 tests as of v0.2.19; v0.2.20 bundle in flight (PR #353 merged for
-notify_peer wake-opt-in; #350 slash-command last to land before release-cut).
+by issue queue and periodic audits. **Current state**: `main` is at v0.2.30
+bump-commit (`f3c7f10`) with Phase 2a + 2c + 2b bundled; **last successfully
+published version on npm is v0.2.28** (v0.2.29 + v0.2.30 publish attempts
+both FAILED with npm 404 PUT; 2 orphan sigstore TLOG entries; operator-side
+npm-token investigation gating v0.2.31+ recovery per `#368` thread). See
+`CHANGELOG.md`. 24 DRs (DR-019 Amendment A SHIPPED v0.2.27; DR-022
+Amendment M SHIPPED in code on v0.2.30 bump-commit), 8 phase specs (added
+`P-A2A-phase-2.md`), 13 canonical rules, 16 research notes.
+
+**A2A integration arc** (master tracking #368): Phase 0–2 all shipped in
+code on `main`:
+- Phase 0 (#369, v0.2.23 — OTel `invoke_agent` span rename) ✓
+- Phase 1 (#370, v0.2.24 — `/.well-known/agent-card.json` discovery) ✓
+- `/sign` Path 2 (#371, v0.2.26 — `/macf/sign` namespace) ✓
+- **Phase 2a (#391/#390, v0.2.30 — inbound JSON-RPC `message/send` at
+  `/a2a/v1` + task lifecycle state machine + AgentCard skills/url update;
+  full 8-state TaskState enum including v1.0-only `REJECTED`)** ✓ code-merged
+- **Phase 2c (#395/#393, v0.2.30 — AgentCard schema proto-alignment;
+  top-level `id`+`url` removed; `description` + `supportedInterfaces`
+  (where endpoint URL lives) + `defaultInputModes` + `defaultOutputModes`
+  required per canonical proto; AgentSkill `description` + `tags`
+  required)** ✓ code-merged
+- **Phase 2b (#397/#392, v0.2.30 — intermediate states +
+  `Message.taskId` resume + structured JSON-RPC error mapping;
+  TaskNotFoundError + TaskNotResumableError; ROLE_USER enforcement;
+  env-flag-gated REJECTED test fixture)** ✓ code-merged
+- Phase 2d (#398) — Python SDK `message/send` round-trip +
+  traceparent E2E mock-OTLP + `tasks/get` + `tasks/cancel` JSON-RPC
+  methods; sub-issue queued post-v0.2.31 publish
+- Phase 3 (#396) — outbound A2A `message/send` from MACF as A2A client;
+  design proposal ACKED by science-agent; impl queued post-Phase-2d
+
+Test count baseline at v0.2.30 bump-commit: **1438 across the three
+packages** (870 macf + 272 channel-server + 296 macf-core).
+
+**Recent release notes worth knowing on resume:**
+- v0.2.23 = #369 Phase 0 span rename
+- v0.2.24 = #370 Phase 1 AgentCard discovery
+- v0.2.26 = #371 /macf/sign Path 2 recovery (v0.2.25 was broken/orphan)
+- v0.2.27 = #383 + #384 + #385 (deprecated-constant removal + DR-019
+  Amendment A audit-log impl + Python A2A SDK integration test)
+- v0.2.28 = #389 resource-attrs population in audit-log emission
+  (**this is the latest LIVE version on npm**)
+- v0.2.29 = bundled v0.2.27+v0.2.28 retry (publish FAILED at npm PUT)
+- v0.2.30 = bundled Phase 2a + 2c + 2b (publish FAILED with same npm 404 root cause)
+- v0.2.31+ = recovery release; cut when operator unblocks npm-token issue
+- DR-019 Amendment A SHIPPED v0.2.27 (#378 → #384 impl) — App now has
+  `actions:write` per operator grant; audit-log emission live for any
+  matching `gh workflow run` etc.
+- DR-022 Amendment M SHIPPED in v0.2.30 bump (#395) — AgentCard proto-
+  alignment migration documentation
+
+**Critical operator-action gating release progress** (#368): npm-token
+investigation. Per science-agent diagnostic candidates: NPM_TOKEN expired
+/ missing 2FA-bypass capability / scope edited / OIDC trusted-publisher
+conflict per DR-022 Amendments C + J. Five-min diagnostic commands +
+npmjs.com Web UI checks per `#368` 21:59Z + 22:01Z comments. Sigstore
+TLOG orphans at logIndex 1575263520 (v0.2.29) + 1575475073 (v0.2.30);
+append-only by design + remain as orphan attestations of attempted
+publishes (no cleanup needed).
 
 **Architecture in canonical state** (post-v0.2.18):
 - Stage 3 routing — mTLS HTTPS POST `/notify` via `macf-actions@v3.3.0`. SSH-based
@@ -270,3 +329,7 @@ default) per macf#313 v0.2.10.
 | Doctor false-positive on Write/Edit absence  | `permissions.allow` check reads merged settings.json + settings.local.json post-v0.2.9 (#305); operator entries in either file count |
 | E2E suite failing silently / fixture drift   | `.github/workflows/e2e.yml` + auto-opened `code-agent/blocked` issue on main |
 | Linked CLI behavior doesn't match main       | Stale `dist/`; run `macf self-update` (or `make -f dev.mk build`); see #144 |
+| A2A `/a2a/v1` JSON-RPC error / unexpected response shape | `packages/macf-channel-server/src/https.ts` route block (post-#391/#397) + `a2a-types.ts` Zod schemas + `a2a-task.ts` TaskStore. Errors map to spec § 9.5 google.rpc.Status form with `reason: TASK_NOT_FOUND` / `TASK_NOT_RESUMABLE` / `TASK_TERMINAL_STATE` / `INVALID_MESSAGE` |
+| AgentCard `/.well-known/agent-card.json` shape questions | `packages/macf-channel-server/src/agent-card.ts` post-#395 (proto-canonical: top-level `id`/`url` ABSENT; endpoint URL lives in `supportedInterfaces[0].url`; `description`/`defaultInputModes`/`defaultOutputModes`/`skills` REQUIRED) — see DR-022 Amendment M for migration narrative |
+| npm publish fails after sigstore step | Per DR-022 Amendment L recovery procedure: STOP retrying same version (sigstore TLOG entries are append-only orphans); diagnose downstream cause (npm-token, OIDC, scope); bump-version + republish after fix lands. See `feedback_partial_publish_orphan_tlog_class.md` memory (3 instances 2026-05-18→19) |
+| A2A inbound resume not dispatching to existing task | `Message.taskId` field set on incoming `message/send` per spec § 4.1.4 + 3.4.3; only resumable from INPUT_REQUIRED + AUTH_REQUIRED states; ROLE_USER enforced per spec § 4.1.5 — see #392 PR #397 + `a2a-task.ts:resume()` |
