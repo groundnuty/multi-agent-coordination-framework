@@ -237,6 +237,40 @@ _macf_audit_parse_workflow() {
   echo ""
 }
 
+_macf_audit_build_resource_attrs_json() {
+  # Build OTLP-shape resource.attributes JSON array from the canonical
+  # claude.sh-exported OTel env vars (`OTEL_SERVICE_NAME` +
+  # `OTEL_RESOURCE_ATTRIBUTES`). Per macf#388 / observability-wiring.md:
+  # claude.sh exports these at session bootstrap as the single source
+  # of truth for the agent's identity attrs. The hook silent-skips
+  # service.name + gen_ai.* attrs when emitting outside a claude.sh-
+  # wrapped session (graceful degradation; returns the empty array).
+  #
+  # OTEL_RESOURCE_ATTRIBUTES format per OTel spec: comma-separated
+  # `key=value` pairs, no quoting. Canonical export:
+  #   gen_ai.agent.name=<name>,gen_ai.agent.role=<role>,service.namespace=macf
+  local service_name="${OTEL_SERVICE_NAME:-}"
+  local resource_attrs="${OTEL_RESOURCE_ATTRIBUTES:-}"
+  jq -n \
+    --arg service_name "$service_name" \
+    --arg resource_attrs "$resource_attrs" \
+    '
+    (
+      if $service_name != ""
+      then [{key: "service.name", value: {stringValue: $service_name}}]
+      else []
+      end
+    )
+    +
+    (
+      $resource_attrs
+      | split(",")
+      | map(select(length > 0))
+      | map(split("=") | select(length >= 2 and .[0] != "") | {key: .[0], value: {stringValue: (.[1] // "")}})
+    )
+    ' 2>/dev/null || echo "[]"
+}
+
 _macf_audit_emit() {
   # Emit span + counter for an actions:write-scoped invocation.
   # Observational only — every emission path is best-effort. Failures
@@ -370,6 +404,14 @@ _macf_audit_emit_curl_span() {
       + ( if $url_full != "" then [{key: "url.full", value: {stringValue: $url_full}}] else [] end )' 2>/dev/null
   )" || return 1
 
+  # macf#388: populate resource.attributes from claude.sh's exported
+  # OTel env vars so hook-emitted spans match the rest of the MACF
+  # stack's service.name / gen_ai.* attrs (instead of falling under
+  # `rootServiceName=<root span not yet received>` in Tempo).
+  # Graceful degradation: empty array when env unset.
+  local resource_attrs_json
+  resource_attrs_json="$(_macf_audit_build_resource_attrs_json)"
+
   local body
   body="$(
     jq -n \
@@ -378,9 +420,10 @@ _macf_audit_emit_curl_span() {
       --arg name "macf.app.gh_api_call" \
       --arg ts_ns "$ts_ns" \
       --argjson attrs "$attrs_json" \
+      --argjson resource_attrs "$resource_attrs_json" \
       '{
         resourceSpans: [{
-          resource: { attributes: [] },
+          resource: { attributes: $resource_attrs },
           scopeSpans: [{
             scope: { name: "macf" },
             spans: [{
@@ -425,15 +468,22 @@ _macf_audit_emit_curl_metric() {
       + ( if $workflow != "" then [{key: "workflow", value: {stringValue: $workflow}}] else [] end )' 2>/dev/null
   )" || return 1
 
+  # macf#388: same resource-attrs population as the span side, for
+  # cross-signal consistency on Tempo / Prometheus aggregation by
+  # service.name / gen_ai.* dimensions.
+  local resource_attrs_json
+  resource_attrs_json="$(_macf_audit_build_resource_attrs_json)"
+
   local body
   body="$(
     jq -n \
       --arg name "macf.app.gh_actions_write_total" \
       --arg ts_ns "$ts_ns" \
       --argjson attrs "$attrs_json" \
+      --argjson resource_attrs "$resource_attrs_json" \
       '{
         resourceMetrics: [{
-          resource: { attributes: [] },
+          resource: { attributes: $resource_attrs },
           scopeMetrics: [{
             scope: { name: "macf" },
             metrics: [{
