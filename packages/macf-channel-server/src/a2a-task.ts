@@ -19,7 +19,7 @@
  */
 import { randomUUID } from 'node:crypto';
 import type { Task, TaskState, Message } from './a2a-types.js';
-import { TERMINAL_TASK_STATES } from './a2a-types.js';
+import { TERMINAL_TASK_STATES, INTERRUPTED_TASK_STATES } from './a2a-types.js';
 
 // ---------------------------------------------------------------------------
 // Transition table — per A2A v1.0 § 4.1.3 (TaskState + lifecycle text)
@@ -87,6 +87,27 @@ export class InvalidTaskTransitionError extends Error {
   ) {
     super(`Illegal task transition ${from} → ${to} for task ${taskId}`);
     this.name = 'InvalidTaskTransitionError';
+  }
+}
+
+/** Error class for resume attempts against unknown task ids (macf#392 Phase 2b). */
+export class TaskNotFoundError extends Error {
+  public readonly code = 'TASK_NOT_FOUND';
+  constructor(public readonly taskId: string) {
+    super(`Task not found: ${taskId}`);
+    this.name = 'TaskNotFoundError';
+  }
+}
+
+/** Error class for resume attempts against non-resumable from-states (macf#392 Phase 2b). */
+export class TaskNotResumableError extends Error {
+  public readonly code = 'TASK_NOT_RESUMABLE';
+  constructor(
+    public readonly taskId: string,
+    public readonly currentState: TaskState,
+  ) {
+    super(`Task ${taskId} in state ${currentState} is not resumable (must be INPUT_REQUIRED or AUTH_REQUIRED)`);
+    this.name = 'TaskNotResumableError';
   }
 }
 
@@ -208,6 +229,63 @@ export class TaskStore {
     return this.transition(created.id, 'TASK_STATE_COMPLETED', {
       nowIso: opts.nowIso,
       message: responseMessage,
+    });
+  }
+
+  /**
+   * Resume a task currently in INPUT_REQUIRED or AUTH_REQUIRED state
+   * (macf#392 Phase 2b). Validates ROLE_USER on the resume message
+   * (canonical client→server direction per spec § 4.1.5), the
+   * from-state is resumable, and transitions back to WORKING with
+   * the resume message appended to history.
+   *
+   * Errors:
+   * - `TaskNotFoundError` if `taskId` doesn't match any tracked task
+   * - `TaskNotResumableError` if from-state isn't INPUT_REQUIRED or AUTH_REQUIRED
+   * - `Error` (generic) if message.role !== 'ROLE_USER'
+   */
+  resume(
+    taskId: string,
+    resumeMessage: Message,
+    opts: { readonly nowIso: string },
+  ): Task {
+    const task = this.#tasks.get(taskId);
+    if (task === undefined) {
+      throw new TaskNotFoundError(taskId);
+    }
+    if (!INTERRUPTED_TASK_STATES.has(task.status.state)) {
+      throw new TaskNotResumableError(taskId, task.status.state);
+    }
+    if (resumeMessage.role !== 'ROLE_USER') {
+      throw new Error(
+        `Resume Message must have role=ROLE_USER per spec § 4.1.5 (got ${resumeMessage.role})`,
+      );
+    }
+    return this.transition(taskId, 'TASK_STATE_WORKING', {
+      nowIso: opts.nowIso,
+      message: resumeMessage,
+    });
+  }
+
+  /**
+   * Drive a fresh task to REJECTED state (macf#392 Phase 2b test
+   * fixture). SUBMITTED → REJECTED is a legal transition per the
+   * canonical proto table. Used by route handler test trigger when
+   * the inbound Message text matches a synthetic rejection pattern.
+   *
+   * NOT a production-policy rejection layer — real refusal logic
+   * comes in Phase 3+ when the skill-name → MCP-tool dispatcher
+   * needs to refuse certain inputs.
+   */
+  rejectFresh(
+    initialMessage: Message,
+    reason: Message,
+    opts: { readonly nowIso: string },
+  ): Task {
+    const created = this.create(initialMessage, opts);
+    return this.transition(created.id, 'TASK_STATE_REJECTED', {
+      nowIso: opts.nowIso,
+      message: reason,
     });
   }
 }

@@ -276,6 +276,10 @@ export const A2A_ERROR_DOMAIN = 'a2a-protocol.org';
 export const A2A_REASON_INVALID_MESSAGE = 'INVALID_MESSAGE';
 export const A2A_REASON_TASK_NOT_FOUND = 'TASK_NOT_FOUND';
 export const A2A_REASON_METHOD_NOT_SUPPORTED = 'METHOD_NOT_SUPPORTED';
+/** Resume attempted against a terminal task (COMPLETED/FAILED/CANCELED/REJECTED) — macf#392 Phase 2b. */
+export const A2A_REASON_TASK_TERMINAL_STATE = 'TASK_TERMINAL_STATE';
+/** Resume attempted with non-resumable from-state (only INPUT_REQUIRED + AUTH_REQUIRED accept resume) — macf#392 Phase 2b. */
+export const A2A_REASON_TASK_NOT_RESUMABLE = 'TASK_NOT_RESUMABLE';
 
 /** Canonical JSON-RPC method string for the inbound message exchange (spec § 9 examples). */
 export const A2A_METHOD_MESSAGE_SEND = 'message/send';
