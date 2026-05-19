@@ -9,6 +9,66 @@ Plugin + routing-workflow changes ship from separate repos
 [`groundnuty/macf-actions`](https://github.com/groundnuty/macf-actions))
 and are not included here — pin them explicitly in each workspace.
 
+## [0.2.29] — 2026-05-19
+
+A2A v1.0 Phase 2a — first substantive A2A protocol surface ships on
+`macf-channel-server`: inbound JSON-RPC `message/send` at `/a2a/v1`
+with the canonical task lifecycle state machine + AgentCard
+skills/url update. Backwards-compatible with existing `/notify` +
+`/macf/sign` + AgentCard discovery endpoints (purely additive).
+
+Phase 2b sub-issue tracks intermediate-state edges (INPUT_REQUIRED /
+AUTH_REQUIRED + resume via `Message.taskId`) + Python `a2a-sdk` v1.0.3
+integration test extending [#385] + traceparent end-to-end E2E smoke.
+Phase 2c sub-issue tracks AgentCard proto-alignment (description +
+supported_interfaces fields surfaced during PR #391 review).
+
+### Added
+
+- **POST `/a2a/v1` JSON-RPC `message/send` endpoint** in
+  `macf-channel-server`. Validates A2A v1.0 envelope + Message shape;
+  creates Task in SUBMITTED → transitions WORKING → COMPLETED
+  (synchronous happy path); returns task as JSON-RPC `result`. Other
+  A2A methods (`tasks/get` / `tasks/cancel` / `message/stream`) →
+  -32601 Method not found (deferred to Phase 2b/2.5/3). PR [#391].
+- **A2A v1.0 task lifecycle state machine** in
+  `src/a2a-task.ts`. `TaskStore` (in-memory `Map<taskId, Task>`) +
+  `transition()` validation against the full v1.0 transition table
+  (8 states, REJECTED included as v1.0-only terminal) + happy-path
+  helper. Phase 2a exercises SUBMITTED → WORKING → COMPLETED; full
+  state machine declared but not yet exercised.
+- **A2A v1.0 Zod schemas** in `src/a2a-types.ts` — Message, Part
+  (4-variant oneOf per canonical proto: text/raw/url/data), Task,
+  TaskStatus, TaskState 8-state enum, JSON-RPC envelopes. Spec
+  section refs in JSDoc; proto-verified 2026-05-19.
+- **`A2A-Version: 1.0` response header** on all `/a2a/v1` responses
+  per spec § 3.6 (standard A2A clients use the header for protocol-
+  version negotiation).
+- **AgentCard.skills populated** with MACF capabilities
+  (`macf.notify_peer`, `macf.checkpoint_to_memory`) per A2A v1.0
+  § 4.4.5 — skills describe agent capabilities, not JSON-RPC methods.
+  `/macf/sign` remains intentionally NOT advertised per DR-010 Path 2.
+- **AgentCard.url updated** to point at `/a2a/v1` (A2A clients
+  discover via `/.well-known/agent-card.json` then POST `message/send`
+  at the advertised endpoint).
+- **`design/phases/P-A2A-phase-2.md`** — phase spec with state
+  machine diagram + design decisions + Phase 2a/2b/2c decomposition.
+
+### Tests
+
+- +63 new unit tests in `macf-channel-server` (39 a2a-types + 24
+  a2a-task) — schema coverage + state machine transition validity +
+  TaskStore CRUD + happy-path drive
+- +3 source-shape regression tests pinning `A2A_RESPONSE_HEADERS` +
+  `sendA2aJson` helper + scoped-block invariant ("no bare `sendJson`
+  on the A2A path")
+- 3 existing `agent-card` tests updated for Phase 2a shape (skills +
+  capabilities + url)
+
+[#385]: https://github.com/groundnuty/macf/pull/385
+[#391]: https://github.com/groundnuty/macf/pull/391
+[#390]: https://github.com/groundnuty/macf/issues/390
+
 ## [0.2.28] — 2026-05-19
 
 Single-piece micro-release: follow-up to v0.2.27's audit-log emission
