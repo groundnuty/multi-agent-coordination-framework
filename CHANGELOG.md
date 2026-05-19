@@ -9,6 +9,62 @@ Plugin + routing-workflow changes ship from separate repos
 [`groundnuty/macf-actions`](https://github.com/groundnuty/macf-actions))
 and are not included here — pin them explicitly in each workspace.
 
+## [0.2.27] — 2026-05-19
+
+Three-piece release: A2A v1.0 interop empirical evidence (Python SDK
+integration test), DR-019 Amendment A audit-log emission landing, and
+deprecated `SpanNames.ToolNotifyPeer` constant cleanup. Bundled per the
+substrate-evolution-cadence directive.
+
+### Added
+
+- **DR-019 Amendment A — `actions:write` audit-log emission** in
+  `check-gh-token.sh` PreToolUse hook. Detects `gh workflow run|cancel|rerun`
+  + `gh api .../actions/...` invocations across all three subcommand
+  classes (workflow lifecycle / run lifecycle / API-direct POST). Emits
+  OTel CLIENT span (`macf.app.gh_api_call` with HTTP semconv + MACF
+  governance attrs) + counter (`macf.app.gh_actions_write_total`
+  bounded by the dispatch-allowlist `MACF_ACTIONS_DISPATCH_ALLOWLIST_REGEX`).
+  Emission via `otel-cli` (preferred for span) with curl-OTLP-HTTP
+  fallback (always for counter); silent skip when
+  `OTEL_EXPORTER_OTLP_ENDPOINT` is unset. Observational only —
+  emit-failure non-blocking. Wrapper-form-aware (sudo/env/bash-c).
+  PR [#384] / closes [#381]; sequence (a) impl-first per three-way
+  reviewer alignment.
+- **Python A2A SDK integration test** at
+  `packages/macf-channel-server/test/integration/a2a-python-sdk.test.ts`.
+  Cross-implementation triangulation: the official `a2a-sdk` v1.0.3
+  PyPI package's `A2ACardResolver` + pydantic AgentCard model parses
+  MACF's hand-rolled Zod-validated `/.well-known/agent-card.json`
+  output. Closes the deferred Phase 1 acceptance criterion from
+  [#370] (PR #375). Integration tests gated outside `make check`
+  (`make -f dev.mk test-integration` invocation; venv cached at
+  `node_modules/.cache/a2a-python-venv` with SDK-version sentinel).
+  PR [#385] / closes [#376]; CI coverage extension tracked as [#386].
+
+### Removed
+
+- **Deprecated `SpanNames.ToolNotifyPeer` constant** from
+  `packages/macf-channel-server/src/tracing.ts`. The literal had been
+  unemitted since [#369] (PR #372, v0.2.23) renamed the outbound
+  notify_peer span to `invoke_agent {gen_ai.agent.name}` per OTel
+  GenAI Agent Spans semconv. Trigger conditions satisfied per [#374]
+  thread (operator-overrode the 7-day defensive window on 2026-05-19;
+  rename live 24h+; zero legacy hits in full 7d Tempo retention;
+  devops dashboards migrated). Substrate-Stage-2-routing context as
+  the cause of trivially-zero condition 2 captured in DR-022
+  Amendment L. PR [#383] / closes [#374].
+
+[#369]: https://github.com/groundnuty/macf/pull/372
+[#370]: https://github.com/groundnuty/macf/pull/375
+[#374]: https://github.com/groundnuty/macf/issues/374
+[#376]: https://github.com/groundnuty/macf/issues/376
+[#381]: https://github.com/groundnuty/macf/issues/381
+[#383]: https://github.com/groundnuty/macf/pull/383
+[#384]: https://github.com/groundnuty/macf/pull/384
+[#385]: https://github.com/groundnuty/macf/pull/385
+[#386]: https://github.com/groundnuty/macf/issues/386
+
 ## [0.2.26] — 2026-05-18
 
 Republish of v0.2.25 due to a sigstore-provenance race condition in
