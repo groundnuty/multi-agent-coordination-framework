@@ -41,7 +41,8 @@
         "~/.nix-profile",
         "/nix",
         "/Users/orzech/Dropbox/home/repos/groundnuty/macf-science-agent/paper-research",
-        "/home/ubuntu/repos/groundnuty/macf-science-agent/paper-research"
+        "/home/ubuntu/repos/groundnuty/macf-science-agent/paper-research",
+        "/tmp"
       ],
       "denyWrite": [
         "/etc",
