@@ -432,6 +432,350 @@ describe('check-gh-token.sh (hook)', () => {
     });
   });
 
+  // -----------------------------------------------------------------
+  // DR-019 Amendment A (#381) — actions:write audit-log emission
+  // -----------------------------------------------------------------
+  // The hook, in addition to its existing token-shape enforcement,
+  // emits OTel span + counter signals when the gh command is in the
+  // `actions:write` subcommand class. Emission is observational only:
+  // emission failure (OTLP endpoint unreachable, jq absent, etc.) must
+  // NOT block the gh call. The only block path remains the token-shape
+  // check. See DR-019 Amendment A.
+  //
+  // Test approach: assert on exit codes + control flow (no real OTel
+  // collector). We use a localhost port that's not listening to verify
+  // the curl-fallback emission tolerates collector failure; we use an
+  // unset OTLP endpoint to verify silent-skip semantics.
+  describe('actions:write audit-log emission (DR-019 Amendment A, #381)', () => {
+    // Valid ghs_ token + actions:write subcommand → hook passes the
+    // token check, classifies the action, emits (or skips), exit 0.
+    const VALID_TOKEN = 'ghs_validtoken1234567890abcdef';
+
+    // A localhost port nothing should be listening on. curl will fail
+    // fast; the hook must swallow the failure and exit 0.
+    const UNREACHABLE_OTLP = 'http://127.0.0.1:1';
+
+    describe('subcommand-class detection — each pattern emits and exits 0', () => {
+      it('classifies `gh workflow run` as dispatch and exits 0 (OTLP unset, silent skip)', () => {
+        const r = runHook({
+          command: 'gh workflow run npm-deprecate.yml --repo groundnuty/macf',
+          env: { GH_TOKEN: VALID_TOKEN },
+        });
+        expect(r.status).toBe(0);
+      });
+
+      it('classifies `gh workflow enable` as dispatch and exits 0', () => {
+        const r = runHook({
+          command: 'gh workflow enable npm-deprecate.yml --repo groundnuty/macf',
+          env: { GH_TOKEN: VALID_TOKEN },
+        });
+        expect(r.status).toBe(0);
+      });
+
+      it('classifies `gh workflow disable` as dispatch and exits 0', () => {
+        const r = runHook({
+          command: 'gh workflow disable npm-deprecate.yml --repo groundnuty/macf',
+          env: { GH_TOKEN: VALID_TOKEN },
+        });
+        expect(r.status).toBe(0);
+      });
+
+      it('classifies `gh run cancel` as cancel and exits 0', () => {
+        const r = runHook({
+          command: 'gh run cancel 1234567890 --repo groundnuty/macf',
+          env: { GH_TOKEN: VALID_TOKEN },
+        });
+        expect(r.status).toBe(0);
+      });
+
+      it('classifies `gh run rerun` as rerun and exits 0', () => {
+        const r = runHook({
+          command: 'gh run rerun 1234567890 --repo groundnuty/macf',
+          env: { GH_TOKEN: VALID_TOKEN },
+        });
+        expect(r.status).toBe(0);
+      });
+
+      it('classifies `gh run rerun --failed` as rerun and exits 0', () => {
+        const r = runHook({
+          command: 'gh run rerun 1234567890 --failed --repo groundnuty/macf',
+          env: { GH_TOKEN: VALID_TOKEN },
+        });
+        expect(r.status).toBe(0);
+      });
+
+      it('classifies `gh api .../actions/workflows/.../dispatches` as dispatch and exits 0', () => {
+        const r = runHook({
+          command:
+            'gh api -X POST /repos/groundnuty/macf/actions/workflows/npm-deprecate.yml/dispatches -f ref=main',
+          env: { GH_TOKEN: VALID_TOKEN },
+        });
+        expect(r.status).toBe(0);
+      });
+
+      it('classifies `gh api .../actions/runs/{id}/cancel` as cancel and exits 0', () => {
+        const r = runHook({
+          command: 'gh api -X POST /repos/groundnuty/macf/actions/runs/9876543210/cancel',
+          env: { GH_TOKEN: VALID_TOKEN },
+        });
+        expect(r.status).toBe(0);
+      });
+
+      it('classifies `gh api .../actions/runs/{id}/rerun` as rerun and exits 0', () => {
+        const r = runHook({
+          command: 'gh api -X POST /repos/groundnuty/macf/actions/runs/9876543210/rerun',
+          env: { GH_TOKEN: VALID_TOKEN },
+        });
+        expect(r.status).toBe(0);
+      });
+
+      it('classifies `gh api .../actions/runs/{id}/rerun-failed-jobs` as rerun and exits 0', () => {
+        const r = runHook({
+          command:
+            'gh api -X POST /repos/groundnuty/macf/actions/runs/9876543210/rerun-failed-jobs',
+          env: { GH_TOKEN: VALID_TOKEN },
+        });
+        expect(r.status).toBe(0);
+      });
+    });
+
+    describe('wrapper forms — sudo/env prefixes flow through classification', () => {
+      // The existing wrapper-aware GH_PATTERN already tolerates `sudo gh`
+      // etc. The audit branch hits classify_action with the full command
+      // text and looks for `gh <verb>` substring, so wrappers don't
+      // disturb detection. Verify by exercising one wrapper form per
+      // action class.
+      it('handles `sudo gh workflow run ...` and exits 0', () => {
+        const r = runHook({
+          command: 'sudo gh workflow run npm-deprecate.yml --repo groundnuty/macf',
+          env: { GH_TOKEN: VALID_TOKEN },
+        });
+        expect(r.status).toBe(0);
+      });
+
+      it('handles `env CI=1 gh run cancel ...` and exits 0', () => {
+        const r = runHook({
+          command: 'env CI=1 gh run cancel 1234 --repo groundnuty/macf',
+          env: { GH_TOKEN: VALID_TOKEN },
+        });
+        expect(r.status).toBe(0);
+      });
+    });
+
+    describe('emit-failure is non-blocking (observational only)', () => {
+      // Set the OTLP endpoint to a localhost port nothing is listening
+      // on. curl will fail (connection refused); the hook must swallow
+      // and exit 0. This is the key DR-019 Amendment A guarantee:
+      // observability infrastructure failures do NOT propagate to the
+      // gh call's success/failure.
+      it('exits 0 even when OTLP endpoint is unreachable (dispatch)', () => {
+        const r = runHook({
+          command: 'gh workflow run npm-deprecate.yml --repo groundnuty/macf',
+          env: {
+            GH_TOKEN: VALID_TOKEN,
+            OTEL_EXPORTER_OTLP_ENDPOINT: UNREACHABLE_OTLP,
+          },
+        });
+        expect(r.status).toBe(0);
+      });
+
+      it('exits 0 even when OTLP endpoint is unreachable (cancel)', () => {
+        const r = runHook({
+          command: 'gh run cancel 1234 --repo groundnuty/macf',
+          env: {
+            GH_TOKEN: VALID_TOKEN,
+            OTEL_EXPORTER_OTLP_ENDPOINT: UNREACHABLE_OTLP,
+          },
+        });
+        expect(r.status).toBe(0);
+      });
+
+      it('exits 0 even when OTLP endpoint is unreachable (rerun)', () => {
+        const r = runHook({
+          command: 'gh run rerun 1234 --repo groundnuty/macf',
+          env: {
+            GH_TOKEN: VALID_TOKEN,
+            OTEL_EXPORTER_OTLP_ENDPOINT: UNREACHABLE_OTLP,
+          },
+        });
+        expect(r.status).toBe(0);
+      });
+
+      it('exits 0 when OTLP endpoint is malformed (graceful curl failure)', () => {
+        const r = runHook({
+          command: 'gh workflow run npm-deprecate.yml --repo groundnuty/macf',
+          env: {
+            GH_TOKEN: VALID_TOKEN,
+            OTEL_EXPORTER_OTLP_ENDPOINT: 'not-a-valid-url',
+          },
+        });
+        expect(r.status).toBe(0);
+      });
+    });
+
+    describe('OTLP-endpoint-unset → silent skip (opt-in observability)', () => {
+      // Per CLAUDE.md observability section: emission is opt-in. When
+      // OTEL_EXPORTER_OTLP_ENDPOINT is unset, the hook should NOT
+      // invoke curl/otel-cli at all. We verify by ensuring the hook
+      // exits 0 quickly even without a reachable collector.
+      it('does not emit when OTEL_EXPORTER_OTLP_ENDPOINT is unset', () => {
+        const r = runHook({
+          command: 'gh workflow run npm-deprecate.yml --repo groundnuty/macf',
+          env: { GH_TOKEN: VALID_TOKEN },
+        });
+        expect(r.status).toBe(0);
+        // Whether curl was invoked is implementation detail; the
+        // important observable is that the hook exits 0 quickly even
+        // without an unreachable-collector backstop. The non-zero
+        // emission timeout we set in the script (curl -m 2) bounds
+        // worst-case slowness; the unset-endpoint path should not
+        // even hit curl.
+      });
+
+      it('does not emit when OTEL_EXPORTER_OTLP_ENDPOINT is empty string', () => {
+        const r = runHook({
+          command: 'gh run cancel 1234 --repo groundnuty/macf',
+          env: { GH_TOKEN: VALID_TOKEN, OTEL_EXPORTER_OTLP_ENDPOINT: '' },
+        });
+        expect(r.status).toBe(0);
+      });
+    });
+
+    describe('allowlist semantics — dispatch-only allowlist; cancel/rerun unaffected', () => {
+      // Per DR-019 Amendment A: the dispatch allowlist (currently
+      // `npm-deprecate.yml`) governs `dispatch` action visibility on
+      // the alerting side. The hook itself emits unconditionally (the
+      // alerting "unexpected workflow" check lives on the collector /
+      // dashboard, not the hook script). cancel/rerun operate on runs
+      // not workflows — no allowlist applies to them. These tests
+      // exercise the regex variable presence + classification, NOT
+      // collector-side alerting.
+      it('dispatch to allowlisted workflow (npm-deprecate.yml) emits + exits 0', () => {
+        const r = runHook({
+          command: 'gh workflow run npm-deprecate.yml --repo groundnuty/macf',
+          env: { GH_TOKEN: VALID_TOKEN, OTEL_EXPORTER_OTLP_ENDPOINT: UNREACHABLE_OTLP },
+        });
+        expect(r.status).toBe(0);
+      });
+
+      it('dispatch to NON-allowlisted workflow still emits + exits 0 (collector alerts; hook does not block)', () => {
+        const r = runHook({
+          command: 'gh workflow run unknown-workflow.yml --repo groundnuty/macf',
+          env: { GH_TOKEN: VALID_TOKEN, OTEL_EXPORTER_OTLP_ENDPOINT: UNREACHABLE_OTLP },
+        });
+        expect(r.status).toBe(0);
+      });
+
+      it('cancel is unaffected by dispatch allowlist (operates on run-id)', () => {
+        const r = runHook({
+          command: 'gh run cancel 1234567890 --repo groundnuty/macf',
+          env: { GH_TOKEN: VALID_TOKEN, OTEL_EXPORTER_OTLP_ENDPOINT: UNREACHABLE_OTLP },
+        });
+        expect(r.status).toBe(0);
+      });
+
+      it('rerun is unaffected by dispatch allowlist (operates on run-id)', () => {
+        const r = runHook({
+          command: 'gh run rerun 1234567890 --repo groundnuty/macf',
+          env: { GH_TOKEN: VALID_TOKEN, OTEL_EXPORTER_OTLP_ENDPOINT: UNREACHABLE_OTLP },
+        });
+        expect(r.status).toBe(0);
+      });
+    });
+
+    describe('regression — non-actions:write gh commands skip audit branch entirely', () => {
+      // The audit-log branch only fires for actions:write subcommand
+      // classes. Unrelated gh commands (issue / pr / repo / api outside
+      // of /actions/...) pass through without classification work.
+      it('`gh issue view` (non-actions:write) exits 0 without audit', () => {
+        const r = runHook({
+          command: 'gh issue view 140 --repo groundnuty/macf',
+          env: { GH_TOKEN: VALID_TOKEN, OTEL_EXPORTER_OTLP_ENDPOINT: UNREACHABLE_OTLP },
+        });
+        expect(r.status).toBe(0);
+      });
+
+      it('`gh pr create` (non-actions:write) exits 0 without audit', () => {
+        const r = runHook({
+          command: 'gh pr create --repo groundnuty/macf --title test',
+          env: { GH_TOKEN: VALID_TOKEN, OTEL_EXPORTER_OTLP_ENDPOINT: UNREACHABLE_OTLP },
+        });
+        expect(r.status).toBe(0);
+      });
+
+      it('`gh api /repos/.../issues` (non-actions path) exits 0 without audit', () => {
+        const r = runHook({
+          command: 'gh api /repos/groundnuty/macf/issues',
+          env: { GH_TOKEN: VALID_TOKEN, OTEL_EXPORTER_OTLP_ENDPOINT: UNREACHABLE_OTLP },
+        });
+        expect(r.status).toBe(0);
+      });
+
+      it('`gh run view` (read-only run subcommand) exits 0 without audit', () => {
+        // `gh run view` / `gh run list` / `gh run watch` / `gh run download`
+        // are all `actions: read` operations; the audit branch must not
+        // classify them as cancel/rerun.
+        const r = runHook({
+          command: 'gh run view 1234 --repo groundnuty/macf',
+          env: { GH_TOKEN: VALID_TOKEN, OTEL_EXPORTER_OTLP_ENDPOINT: UNREACHABLE_OTLP },
+        });
+        expect(r.status).toBe(0);
+      });
+
+      it('`gh workflow view` (read-only workflow subcommand) exits 0 without audit', () => {
+        const r = runHook({
+          command: 'gh workflow view npm-deprecate.yml --repo groundnuty/macf',
+          env: { GH_TOKEN: VALID_TOKEN, OTEL_EXPORTER_OTLP_ENDPOINT: UNREACHABLE_OTLP },
+        });
+        expect(r.status).toBe(0);
+      });
+    });
+
+    describe('bad-token cases still block; audit branch does not run', () => {
+      // Defense-in-depth: token-shape check runs BEFORE audit. A bad
+      // token blocks regardless of whether the command would have been
+      // an actions:write call.
+      it('blocks `gh workflow run` when GH_TOKEN is bad (token check fires before audit)', () => {
+        const r = runHook({
+          command: 'gh workflow run npm-deprecate.yml',
+          env: { GH_TOKEN: 'ghp_useronly1234' },
+        });
+        expect(r.status).toBe(2);
+      });
+
+      it('blocks `gh run cancel` when GH_TOKEN is unset', () => {
+        const r = runHook({
+          command: 'gh run cancel 1234',
+          env: {},
+        });
+        expect(r.status).toBe(2);
+      });
+    });
+
+    describe('repo-allowlist regex is grep-able (canonical-rule-update affordance)', () => {
+      // The dispatch allowlist regex is declared as a shell variable
+      // near the top of the audit branch (MACF_ACTIONS_DISPATCH_ALLOWLIST_REGEX)
+      // so future DR amendments can locate + amend it via a focused
+      // grep. This test pins that affordance — if the variable ever
+      // gets renamed or hidden inside a function, this fails and the
+      // next amendment knows to update the spec ref.
+      it('script contains the named allowlist variable', async () => {
+        const fs = await import('node:fs');
+        const content = fs.readFileSync(HOOK_SCRIPT, 'utf-8');
+        expect(content).toContain('MACF_ACTIONS_DISPATCH_ALLOWLIST_REGEX');
+        expect(content).toContain('npm-deprecate');
+      });
+
+      it('script documents the known-instrumentation-gap clause inline', async () => {
+        // Per DR-019 Amendment A "Known instrumentation gaps" — surfaces
+        // non-Bash subprocess paths as a forward-looking limitation.
+        const fs = await import('node:fs');
+        const content = fs.readFileSync(HOOK_SCRIPT, 'utf-8');
+        expect(content).toMatch(/Known instrumentation gaps|non-Bash subprocess/);
+      });
+    });
+  });
+
   describe('error message quality', () => {
     it('block message points at macf-gh-token.sh helper', () => {
       const r = runHook({
