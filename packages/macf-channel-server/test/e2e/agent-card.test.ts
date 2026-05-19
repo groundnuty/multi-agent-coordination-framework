@@ -129,12 +129,23 @@ describe('AgentCard discovery endpoint E2E (macf#370 — A2A Phase 1)', () => {
           '/.well-known/agent-card.json',
         );
         const card = JSON.parse(res.body);
-        expect(card.id).toBe('macf-code-agent');
+        // macf#393 Phase 2c: AgentCard shape is proto-canonical.
+        // No top-level `id` or `url` (id is non-canonical; url moved
+        // to supportedInterfaces[0].url per proto AgentInterface).
+        expect(card.id).toBeUndefined();
+        expect(card.url).toBeUndefined();
         expect(card.name).toBe('code-agent');
-        expect(card.url).toBe('https://127.0.0.1:0');
+        expect(card.supportedInterfaces[0].url).toBe('https://127.0.0.1:0/a2a/v1');
+        expect(card.supportedInterfaces[0].protocolBinding).toBe('JSONRPC');
+        expect(card.supportedInterfaces[0].protocolVersion).toBe('1.0');
         expect(card.version).toBe('0.2.23');
         expect(card.provider.organization).toContain('macf');
         expect(card.securitySchemes.mutual_tls.type).toBe('mutualTls');
+        // Required-per-proto fields all present
+        expect(card.description.length).toBeGreaterThan(0);
+        expect(card.defaultInputModes).toContain('application/json');
+        expect(card.defaultOutputModes).toContain('application/json');
+        expect(card.skills.length).toBeGreaterThan(0);
       } finally {
         await stop();
       }

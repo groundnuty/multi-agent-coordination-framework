@@ -41,15 +41,23 @@ import { A2A_ENDPOINT_PATH } from './a2a-types.js';
 // ---------------------------------------------------------------------------
 
 /**
- * AgentSkill — per spec § 4.4.5. Required: id, name. Optional:
- * description, tags, examples, inputModes, outputModes, metadata,
- * extensions.
+ * AgentSkill — per canonical proto (`a2aproject/A2A:specification/a2a.proto`
+ * `message AgentSkill`). Required per proto: id, name, description, tags.
+ * Optional: examples, input_modes, output_modes, security_requirements.
+ *
+ * JSON wire form uses canonical lowerCamelCase mapping from proto
+ * snake_case (`input_modes` → `inputModes`, etc.) per proto3 JSON spec.
+ *
+ * **macf#393 Phase 2c**: `description` + `tags` upgraded from optional
+ * (Phase 1's lenient shape) to required per proto. Strict-validating
+ * external A2A clients (Bedrock AgentCore, Microsoft Agent Framework,
+ * etc.) reject AgentCards with skill entries missing required fields.
  */
 export const AgentSkillSchema = z.object({
   id: z.string().min(1),
   name: z.string().min(1),
-  description: z.string().optional(),
-  tags: z.array(z.string()).optional(),
+  description: z.string().min(1),
+  tags: z.array(z.string()).min(1),
   examples: z.array(z.string()).optional(),
   inputModes: z.array(z.string()).optional(),
   outputModes: z.array(z.string()).optional(),
@@ -57,6 +65,30 @@ export const AgentSkillSchema = z.object({
 });
 
 export type AgentSkill = z.infer<typeof AgentSkillSchema>;
+
+/**
+ * AgentInterface — per canonical proto `message AgentInterface`.
+ * Per AgentCard `supported_interfaces` (proto field 3, REQUIRED): the
+ * endpoint URL + protocol binding the agent serves. v1.0 moves the
+ * endpoint URL OUT of AgentCard top-level into the (repeated)
+ * AgentInterface entries.
+ *
+ * Required per proto: url, protocol_binding, protocol_version.
+ * Optional: tenant.
+ *
+ * JSON wire form: `protocolBinding` (lowerCamelCase) + `protocolVersion`.
+ */
+export const AgentInterfaceSchema = z.object({
+  url: z.string().url(),
+  /** Protocol binding identifier: `"JSONRPC"` | `"GRPC"` | `"HTTP+JSON"`. */
+  protocolBinding: z.string().min(1),
+  /** Optional tenant identifier for multi-tenant deployments. */
+  tenant: z.string().optional(),
+  /** A2A protocol version this interface serves, e.g. `"1.0"`. */
+  protocolVersion: z.string().min(1),
+});
+
+export type AgentInterface = z.infer<typeof AgentInterfaceSchema>;
 
 /**
  * MutualTlsSecurityScheme — per spec § 4.5.6. Type discriminator
@@ -98,29 +130,49 @@ export const AgentCapabilitiesSchema = z.object({
 export type AgentCapabilities = z.infer<typeof AgentCapabilitiesSchema>;
 
 /**
- * AgentCard — per spec § 4.4.1. Required: id, name, url, version,
- * provider, capabilities, securitySchemes. Optional: description,
- * defaultInputModes, defaultOutputModes, skills, extensions, security,
- * metadata.
+ * AgentCard — per canonical proto `message AgentCard` (verified verbatim
+ * from `a2aproject/A2A:specification/a2a.proto` 2026-05-19).
+ *
+ * Required per proto: name, description, supported_interfaces,
+ * version, capabilities, default_input_modes, default_output_modes, skills.
+ * Optional: provider, documentation_url, security_schemes,
+ * security_requirements, signatures, icon_url.
+ *
+ * JSON wire form uses canonical lowerCamelCase mapping from proto
+ * snake_case (`supported_interfaces` → `supportedInterfaces`, etc.).
+ *
+ * **macf#393 Phase 2c** — schema realignment to canonical proto:
+ * - REMOVED top-level `id` (no such field in proto)
+ * - REMOVED top-level `url` (moves to `supportedInterfaces[0].url`)
+ * - ADDED `description` as required (was optional in Phase 1)
+ * - ADDED `supportedInterfaces` as required (endpoint URL lives here per v1.0)
+ * - ADDED `defaultInputModes` + `defaultOutputModes` as required
+ * - `skills` upgraded from optional to required (proto says REQUIRED)
+ *
+ * The schema change is structurally breaking for any consumer that parsed
+ * Phase 1's AgentCard shape; pre-flight grep on 2026-05-19 confirmed zero
+ * external consumers (Phase 1 shipped ~24h prior). Migration documented
+ * in DR-022 Amendment M.
  */
 export const AgentCardSchema = z.object({
-  id: z.string().min(1),
   name: z.string().min(1),
-  url: z.string().url(),
+  description: z.string().min(1),
+  supportedInterfaces: z.array(AgentInterfaceSchema).min(1),
   version: z.string().min(1),
-  provider: AgentProviderSchema,
+  provider: AgentProviderSchema.optional(),
   capabilities: AgentCapabilitiesSchema,
   // Phase 1 mTLS-only stance. Phase 2+ widening to a discriminated
   // union (OAuth/OIDC for external integrations per A2A spec § 4.5)
   // lives here when needed — replace `MutualTlsSecuritySchemeSchema`
   // with `z.discriminatedUnion('type', [MutualTls..., OAuth2..., ...])`.
   // Per #370 review (science-agent 2026-05-18).
-  securitySchemes: z.record(z.string(), MutualTlsSecuritySchemeSchema),
-  description: z.string().optional(),
-  defaultInputModes: z.array(z.string()).optional(),
-  defaultOutputModes: z.array(z.string()).optional(),
-  skills: z.array(AgentSkillSchema).optional(),
+  securitySchemes: z.record(z.string(), MutualTlsSecuritySchemeSchema).optional(),
+  defaultInputModes: z.array(z.string()).min(1),
+  defaultOutputModes: z.array(z.string()).min(1),
+  skills: z.array(AgentSkillSchema).min(1),
   security: z.array(z.record(z.string(), z.array(z.string()))).optional(),
+  documentationUrl: z.string().optional(),
+  iconUrl: z.string().optional(),
   metadata: z.record(z.string(), z.unknown()).optional(),
 });
 
@@ -178,11 +230,15 @@ export interface AgentCardInputs {
  * advertised url.
  */
 export function buildAgentCard(inputs: AgentCardInputs): AgentCard {
+  // macf#393 Phase 2c: canonical proto-aligned AgentCard shape.
+  // - No top-level `id` or `url` (proto has neither at AgentCard level)
+  // - Endpoint URL lives in supportedInterfaces[].url
+  // - description, supportedInterfaces, defaultInputModes,
+  //   defaultOutputModes, skills are all REQUIRED per proto
+  const endpointUrl = `${inputs.url.replace(/\/+$/, '')}${A2A_ENDPOINT_PATH}`;
   const card: AgentCard = {
-    id: `${inputs.project}-${inputs.agentName}`,
     name: inputs.agentName,
-    description: `MACF agent (${inputs.agentRole}) in project ${inputs.project}. Coordinates with peer MACF agents over mTLS-authenticated channels.`,
-    url: `${inputs.url.replace(/\/+$/, '')}${A2A_ENDPOINT_PATH}`,
+    description: `MACF ${inputs.agentRole} agent in project ${inputs.project}. Coordinates with peer MACF agents over mTLS-authenticated channels; serves A2A v1.0 inbound message/send at /a2a/v1.`,
     version: inputs.version,
     provider: {
       organization: `groundnuty/macf (${inputs.project})`,
@@ -199,22 +255,29 @@ export function buildAgentCard(inputs: AgentCardInputs): AgentCard {
       },
     },
     security: [{ mutual_tls: [] }],
-    defaultInputModes: ['application/json'],
-    defaultOutputModes: ['application/json'],
+    supportedInterfaces: [
+      {
+        url: endpointUrl,
+        protocolBinding: 'JSONRPC',
+        protocolVersion: '1.0',
+      },
+    ],
+    defaultInputModes: ['text/plain', 'application/json'],
+    defaultOutputModes: ['text/plain', 'application/json'],
     skills: [
       {
         id: 'macf.notify_peer',
         name: 'Cross-Agent Notification',
-        description: 'Send a structured notification to a peer MACF agent. Used for issue/PR routing, CI-completion signaling, and ad-hoc cross-agent messaging. Sender-side delivery is mTLS-authenticated; receiver dispatches based on notification type.',
-        tags: ['macf', 'coordination', 'notification'],
+        description: 'Send a notification to a peer MACF agent. Used for issue/PR routing, CI-completion signaling, and ad-hoc cross-agent messaging. Sender-side delivery is mTLS-authenticated; receiver dispatches based on notification type.',
+        tags: ['notification', 'coordination', 'multi-agent'],
         inputModes: ['application/json'],
         outputModes: ['application/json'],
       },
       {
         id: 'macf.checkpoint_to_memory',
         name: 'Persist Context to Memory',
-        description: 'Checkpoint conversation context to the agent\'s persistent memory store. Invoked via PreCompact hook (DR-023 §UC-3) or manually before long pauses. Returns a memory-file reference for later recall.',
-        tags: ['macf', 'memory', 'checkpoint'],
+        description: 'Persist current session context to MACF memory layer. Invoked via PreCompact hook (DR-023 §UC-3) or manually before long pauses. Returns a memory-file reference for later recall.',
+        tags: ['memory', 'persistence', 'checkpoint'],
         inputModes: ['application/json'],
         outputModes: ['application/json'],
       },

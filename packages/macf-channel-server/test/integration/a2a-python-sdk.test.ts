@@ -203,20 +203,79 @@ describe('A2A Python SDK integration (macf#376 — closes #370 deferred AC)', ()
       }
     });
 
-    it('SDK preserves our URL through proto normalization (supportedInterfaces[])', async () => {
-      // The proto model splits AgentCard.url (our flat top-level
-      // attribute) into a `supportedInterfaces` array of transport
-      // descriptors. A successful round-trip means our `url` MUST
-      // appear somewhere on the SDK-parsed side — even if at a
-      // different JSON path. Asserting this pins the proto-shape
-      // assumption: if the SDK changes how it represents the URL
-      // in a future version, this fails loud and we can re-encode.
+    it('SDK preserves our supportedInterfaces[].url through proto round-trip', async () => {
+      // macf#393 Phase 2c: MACF now emits proto-canonical AgentCard
+      // with the endpoint URL in supportedInterfaces[0].url (not at
+      // top level). The Python SDK parses this directly; the URL
+      // round-trips through pydantic and re-appears in the SDK-parsed
+      // representation. Asserting the URL is preserved end-to-end.
       const { port, stop } = await startServer({ agentCard: baseAgentCard });
       try {
         const result = await runProbe({ baseUrl: `https://127.0.0.1:${port}` });
         expect(result.exitCode, `probe stderr: ${result.stderr}`).toBe(0);
         const parsed = JSON.parse(result.stdout);
-        expect(JSON.stringify(parsed)).toContain(baseAgentCard.url);
+        const advertisedUrl = baseAgentCard.supportedInterfaces[0]?.url ?? '';
+        expect(advertisedUrl.length).toBeGreaterThan(0);
+        expect(JSON.stringify(parsed)).toContain(advertisedUrl);
+      } finally {
+        await stop();
+      }
+    });
+
+    // macf#393 Phase 2c strict-validation suggestion (science-agent option
+    // (a)): explicit Python-side assertion that every proto-required
+    // AgentCard field is present + non-empty on the SDK-parsed side.
+    // Sister-validation to the Zod-shape unit tests; the value-add is
+    // confirming the canonical-shape WIRE BODY parses cleanly through a
+    // real strict A2A v1.0 client (the Python SDK), catching future drift.
+    it('strict-validation: all proto-required AgentCard fields present on SDK-parsed shape', async () => {
+      const { port, stop } = await startServer({ agentCard: baseAgentCard });
+      try {
+        const result = await runProbe({ baseUrl: `https://127.0.0.1:${port}` });
+        expect(result.exitCode, `probe stderr: ${result.stderr}`).toBe(0);
+        const parsed = JSON.parse(result.stdout) as Record<string, unknown>;
+
+        // Proto-required AgentCard fields (per a2a.proto message AgentCard):
+        // name, description, supported_interfaces (→ supportedInterfaces),
+        // version, capabilities, default_input_modes (→ defaultInputModes),
+        // default_output_modes (→ defaultOutputModes), skills.
+        const requiredFields: ReadonlyArray<string> = [
+          'name',
+          'description',
+          'supportedInterfaces',
+          'version',
+          'capabilities',
+          'defaultInputModes',
+          'defaultOutputModes',
+          'skills',
+        ];
+        for (const field of requiredFields) {
+          expect(parsed[field], `proto-required AgentCard field '${field}' missing`).toBeDefined();
+        }
+
+        // Per-skill required fields (per a2a.proto message AgentSkill):
+        // id, name, description, tags.
+        const skills = parsed['skills'] as ReadonlyArray<Record<string, unknown>> | undefined;
+        expect(skills, 'skills array missing').toBeDefined();
+        expect(skills!.length, 'skills array empty').toBeGreaterThan(0);
+        for (const skill of skills!) {
+          for (const field of ['id', 'name', 'description', 'tags']) {
+            expect(skill[field], `skill ${skill['id'] ?? '(no id)'} missing required field '${field}'`).toBeDefined();
+          }
+          const tags = skill['tags'] as ReadonlyArray<unknown> | undefined;
+          expect(tags?.length, `skill ${skill['id']} has empty tags array`).toBeGreaterThan(0);
+        }
+
+        // Per-AgentInterface required fields: url, protocol_binding,
+        // protocol_version (→ protocolBinding, protocolVersion).
+        const interfaces = parsed['supportedInterfaces'] as ReadonlyArray<Record<string, unknown>> | undefined;
+        expect(interfaces, 'supportedInterfaces array missing').toBeDefined();
+        expect(interfaces!.length, 'supportedInterfaces array empty').toBeGreaterThan(0);
+        for (const iface of interfaces!) {
+          expect(iface['url']).toBeDefined();
+          expect(iface['protocolBinding']).toBeDefined();
+          expect(iface['protocolVersion']).toBeDefined();
+        }
       } finally {
         await stop();
       }
