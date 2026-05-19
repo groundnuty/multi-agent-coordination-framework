@@ -1,4 +1,4 @@
-.PHONY: install check test lint typecheck build clean test-e2e install-hooks
+.PHONY: install check test lint typecheck build clean test-e2e test-integration install-hooks
 
 install:
 	devbox run -- npm ci
@@ -35,6 +35,18 @@ test:
 
 test-e2e:
 	devbox run -- npm run test:e2e --workspaces --if-present
+
+# Integration tests that require external runtime deps beyond what
+# `make check` assumes — currently just `test:integration` on
+# macf-channel-server, which spawns a Python subprocess with the
+# official `a2a-sdk` to triangulate AgentCard parsing (macf#376).
+# Devbox-Python is mandatory; the venv is cached under
+# `node_modules/.cache/a2a-python-venv` so subsequent runs are fast.
+# Gated out of `make check` because the first-run pip-install adds
+# ~10s + a hard devbox-python dependency that the regular check flow
+# shouldn't need.
+test-integration:
+	devbox run -- npm run test:integration --workspaces --if-present
 
 clean:
 	rm -rf packages/*/dist packages/*/coverage coverage
