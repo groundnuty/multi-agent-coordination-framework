@@ -21,6 +21,15 @@ name: E2E
 # (sha, run_id, event_name, repository), but the env-var pattern is
 # best practice regardless — future edits that add user-controlled
 # inputs (issue titles, commit messages) stay safe-by-default.
+#
+# Integration job (#386) covers the Python a2a-sdk cross-implementation
+# tests added in #376 / #385. `make check` excludes them because the
+# pip-install adds ~10s + a hard devbox-python dependency; without CI
+# coverage, AgentCard schema drift could land silently on routine
+# AgentCard-touching PRs (the proto-alignment work in #393/#395 is
+# exactly the surface that benefits from cross-implementation triangulation).
+# Path-filtered to PRs that touch AgentCard surface + the integration
+# test infra itself, so noise stays low while the safety net stays on.
 
 on:
   push:
@@ -31,6 +40,16 @@ on:
       - 'package-lock.json'
       - 'dev.mk'
       - 'devbox.json'
+  pull_request:
+    # PR trigger only feeds the integration-python-a2a job (via
+    # dorny/paths-filter). The existing `e2e` job gates itself off
+    # PR events with an `if:` so the post-merge cadence isn't
+    # duplicated on every PR push. Paths here intentionally broad
+    # since the per-job filter narrows further.
+    paths:
+      - 'packages/macf-channel-server/**'
+      - 'devbox.json'
+      - '.github/workflows/e2e.yml'
   schedule:
     # 07:00 UTC daily — off-hours vs. most commit windows, catches
     # external-drift class without racing active PR merges.
@@ -40,9 +59,15 @@ on:
 permissions:
   contents: read
   issues: write
+  pull-requests: read
 
 jobs:
   e2e:
+    # Existing post-merge E2E job. Skipped on `pull_request` events —
+    # PR coverage for E2E is intentionally NOT added here (see #149
+    # rationale: E2E is post-merge + cadence; PR gate stays `make check`).
+    # The PR trigger above only exists to feed the integration job.
+    if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
     # Job-level env shared by auto-open + self-close steps. Both need
     # the same title-prefix string to stay in lockstep on the dedup
@@ -172,6 +197,229 @@ jobs:
           Run: $RUN_URL
 
           Auto-closed by the self-close-on-green step (#163) per coordination.md Issue Lifecycle rule 5 ("wait for the next auto-run to confirm green, then close with evidence"). If the fix was incomplete, the next E2E failure re-opens via the title-prefix dedup path.
+          EOF
+          )
+
+          gh issue close "$EXISTING" --repo "$REPO" --reason completed --comment "$CLOSE_BODY"
+          echo "Closed issue #$EXISTING"
+
+  # ---------------------------------------------------------------------------
+  # Python a2a-sdk integration job (#386).
+  #
+  # Runs `make -f dev.mk test-integration` (vitest config:
+  # `packages/macf-channel-server/vitest.integration.config.ts`) which
+  # spawns a Python subprocess with the pinned `a2a-sdk` Python package
+  # (see `packages/macf-channel-server/test/integration/fixtures/python-venv.ts`)
+  # and triangulates AgentCard parsing across the two implementations.
+  #
+  # Why it lives here and not in `make check`:
+  #   - First-run pip-install adds ~10s
+  #   - Hard devbox-python dependency
+  #   - The shape of drift it catches (AgentCard schema vs. canonical
+  #     a2a proto) is rare enough that a per-PR gate on the relevant
+  #     paths is the right cost/coverage point — not every PR
+  #
+  # Cadence rationale:
+  #   - `pull_request` — catches drift before merge on AgentCard-
+  #     touching PRs. Path filter (job-level via dorny/paths-filter)
+  #     narrows from the workflow-level coarse filter.
+  #   - `push` to main — backstop: if path filter misses a transitive
+  #     change (e.g., a shared util the AgentCard surface depends on
+  #     gets edited), post-merge catches it.
+  #   - `schedule` (07:00 UTC) — daily external-drift catch (a2a-sdk
+  #     PyPI yanks, pip resolver changes, devbox python pin drift).
+  #
+  # Cache strategy:
+  #   - `A2A_SDK_VERSION` is the discriminator inside the sentinel
+  #     pattern at `python-venv.ts` (cache key: `python-venv-${VERSION}`).
+  #     A version bump invalidates the cache automatically; the
+  #     ensureA2aVenv() helper re-creates the venv on cache miss.
+  #   - Cache path: `packages/macf-channel-server/node_modules/.cache/a2a-python-venv`
+  #     (the path the helper writes to).
+  #
+  # On failure: same auto-open / self-close-on-green pattern as the
+  # e2e job above, but with its own incident-title prefix so the two
+  # incident streams stay independent.
+  # ---------------------------------------------------------------------------
+  integration-python-a2a:
+    runs-on: ubuntu-latest
+    env:
+      INCIDENT_TITLE_PREFIX: "ci(integration): python a2a-sdk suite failing on main"
+    steps:
+      - uses: actions/checkout@v6
+
+      # Per-job path filter. Workflow-level `on.pull_request.paths`
+      # is coarse (`packages/macf-channel-server/**`); this narrows
+      # to the exact surface where a Python-cross-impl test catches
+      # drift. On `push` / `schedule` / `workflow_dispatch` we always
+      # run (path filter is intentionally PR-only — post-merge is
+      # the backstop for transitive drift).
+      - uses: dorny/paths-filter@v3
+        id: changes
+        if: github.event_name == 'pull_request'
+        with:
+          filters: |
+            integration:
+              - 'packages/macf-channel-server/src/agent-card.ts'
+              - 'packages/macf-channel-server/src/https.ts'
+              - 'packages/macf-channel-server/src/server.ts'
+              - 'packages/macf-channel-server/test/integration/**'
+              - 'packages/macf-channel-server/vitest.integration.config.ts'
+              - 'devbox.json'
+              - '.github/workflows/e2e.yml'
+
+      # `should_run` short-circuit: true on push/schedule/dispatch
+      # (always), or on PR if the paths filter matched. Each subsequent
+      # step gates on this so the cache restore / devbox install /
+      # venv setup are skipped entirely on no-op PR runs.
+      - name: Decide whether to run
+        id: gate
+        env:
+          EVENT: ${{ github.event_name }}
+          PR_MATCH: ${{ steps.changes.outputs.integration }}
+        run: |
+          set -euo pipefail
+          if [ "$EVENT" != "pull_request" ]; then
+            echo "should_run=true" >> "$GITHUB_OUTPUT"
+          elif [ "$PR_MATCH" = "true" ]; then
+            echo "should_run=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "should_run=false" >> "$GITHUB_OUTPUT"
+            echo "PR touched no integration-relevant paths — skipping."
+          fi
+
+      # Extract A2A_SDK_VERSION from the sentinel fixture so the cache
+      # key tracks the pinned version automatically. Bumping the SDK
+      # version in python-venv.ts now also invalidates this cache —
+      # same single-source-of-truth contract the runtime helper uses.
+      - name: Read pinned A2A_SDK_VERSION
+        id: sdk_version
+        if: steps.gate.outputs.should_run == 'true'
+        run: |
+          set -euo pipefail
+          VERSION=$(grep -E "^export const A2A_SDK_VERSION" \
+            packages/macf-channel-server/test/integration/fixtures/python-venv.ts \
+            | sed -E "s/.*= *'([^']+)'.*/\1/")
+          if [ -z "$VERSION" ]; then
+            echo "FATAL: could not extract A2A_SDK_VERSION from python-venv.ts" >&2
+            exit 1
+          fi
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "Pinned a2a-sdk version: $VERSION"
+
+      # Cache the Python venv keyed on the pinned SDK version.
+      # Cache hit: ensureA2aVenv() finds the sentinel + python bin and
+      # returns sub-second. Cache miss: helper creates the venv and
+      # pip-installs ~10s; next run benefits.
+      - name: Cache Python venv
+        if: steps.gate.outputs.should_run == 'true'
+        uses: actions/cache@v4
+        with:
+          path: packages/macf-channel-server/node_modules/.cache/a2a-python-venv
+          key: python-venv-${{ steps.sdk_version.outputs.version }}-${{ runner.os }}
+
+      - uses: jetify-com/devbox-install-action@v0.15.0
+        if: steps.gate.outputs.should_run == 'true'
+
+      - name: Install deps
+        if: steps.gate.outputs.should_run == 'true'
+        run: make -f dev.mk install
+
+      - name: Run Python a2a-sdk integration suite
+        if: steps.gate.outputs.should_run == 'true'
+        run: make -f dev.mk test-integration
+
+      # Same auto-open pattern as the e2e job. Scoped to push +
+      # schedule (post-merge / cadence) — PR failures fail the check
+      # itself, no incident issue needed. Workflow_dispatch excluded
+      # so manual investigations don't open false-positive incidents.
+      - name: Auto-open / update issue on integration failure
+        if: failure() && (github.event_name == 'push' || github.event_name == 'schedule')
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          COMMIT_SHA: ${{ github.sha }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          EVENT: ${{ github.event_name }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+
+          EXISTING=$(gh issue list \
+            --repo "$REPO" \
+            --state open \
+            --search "\"$INCIDENT_TITLE_PREFIX\" in:title" \
+            --json number \
+            --jq '.[0].number // ""')
+
+          COMMENT_BODY=$(cat <<EOF
+          New Python a2a-sdk integration failure detected on \`$COMMIT_SHA\` (event: \`$EVENT\`).
+
+          Run: $RUN_URL
+
+          @macf-code-agent[bot] — integration suite failing on main. Investigate and fix, or file a revert if the break is urgent.
+          EOF
+          )
+
+          if [ -n "$EXISTING" ]; then
+            gh issue comment "$EXISTING" --repo "$REPO" --body "$COMMENT_BODY"
+            echo "Updated existing issue #$EXISTING"
+          else
+            BODY=$(cat <<EOF
+          The Python a2a-sdk integration suite (\`make -f dev.mk test-integration\`) failed on main.
+
+          Initial failure: commit \`$COMMIT_SHA\` (event: \`$EVENT\`).
+          Run: $RUN_URL
+
+          This issue is auto-opened by \`.github/workflows/e2e.yml\` (#386) and will **auto-close on the next green run** via the self-close-on-green step. Subsequent failures before that green run append a comment rather than opening a new issue.
+
+          @macf-code-agent[bot] — integration suite failing on main. Investigate and fix, or file a revert if the break is urgent.
+
+          ---
+
+          **Likely causes:**
+
+          - AgentCard schema drift (TS shape diverged from canonical a2a proto — see DR-022 Amendment M migration; cross-impl test catches what unit tests can't)
+          - Pinned \`a2a-sdk\` version no longer installable (yanked from PyPI, transitive dep break)
+          - Devbox python pin drift (python@3.12 in devbox.json incompatible with a2a-sdk requirement)
+          - https.ts / server.ts wiring change broke the AgentCard endpoint response shape
+          EOF
+          )
+            gh issue create \
+              --repo "$REPO" \
+              --title "$INCIDENT_TITLE_PREFIX — since \`$COMMIT_SHA\`" \
+              --label "code-agent,blocked" \
+              --body "$BODY"
+          fi
+
+      - name: Self-close auto-opened issue on green
+        if: success() && steps.gate.outputs.should_run == 'true' && (github.event_name == 'push' || github.event_name == 'schedule')
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          COMMIT_SHA: ${{ github.sha }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          EVENT: ${{ github.event_name }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+
+          EXISTING=$(gh issue list \
+            --repo "$REPO" \
+            --state open \
+            --search "\"$INCIDENT_TITLE_PREFIX\" in:title" \
+            --json number \
+            --jq '.[0].number // ""')
+
+          if [ -z "$EXISTING" ]; then
+            echo "No auto-opened integration issue open — no-op."
+            exit 0
+          fi
+
+          CLOSE_BODY=$(cat <<EOF
+          Python a2a-sdk integration suite GREEN on \`$COMMIT_SHA\` (event: \`$EVENT\`).
+
+          Run: $RUN_URL
+
+          Auto-closed by the self-close-on-green step per coordination.md Issue Lifecycle rule 5. If the fix was incomplete, the next failure re-opens via the title-prefix dedup path.
           EOF
           )
 
