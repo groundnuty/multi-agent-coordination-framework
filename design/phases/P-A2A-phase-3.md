@@ -98,6 +98,19 @@ else:
 Fresh fetch on miss + on auth-failure (401/403). Cache lives in-memory in
 the channel-server process; closed on shutdown.
 
+**A2A delivery-success criteria** (per `dispatchToPeer()` in
+`notify-peer.ts`): treats `SUBMITTED` / `WORKING` / `INPUT_REQUIRED` /
+`AUTH_REQUIRED` / `COMPLETED` as `httpOk: true` ("delivered") and
+`REJECTED` / `FAILED` / `CANCELED` as `httpOk: false`. Rationale: for
+notification flows (peer_notification class), "task accepted" matters
+more than "task completed" — the sender doesn't synchronously wait for
+the receiver's reply. The legacy `/notify` endpoint returns HTTP 200
+on receipt without driving any task state machine, so the A2A-equivalent
+"task accepted" semantic matches the legacy contract. Terminal-error
+states (REJECTED / FAILED / CANCELED) explicitly mean the agent declined
+or aborted; those map to `httpOk: false` so the sender's
+`peers_delivered` count reflects the operationally-relevant outcome.
+
 ### Notes from science-agent's review — both addressed
 
 **Note 1 (spec-canonical)**: span name uses `invoke_agent {target}` via
