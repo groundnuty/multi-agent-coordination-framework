@@ -505,8 +505,22 @@ Each layer's hazard was UNDISCOVERABLE before its predecessor surfaced. Token-ca
 
 **Workflow changes shipped during the recovery (canonical pattern for future packages):**
 
-- **`f0fdcd0`** — `npm@11.14.1` user-prefix install in publish workflow. OIDC needs npm 11.5.1+; Node-bundled npm on Ubuntu runners may be older. User-prefix install (`npm install -g --prefix ~/.npm-global npm@11.x`) avoids needing root.
-- **`ff485d9`** — bare `npm publish` (not `devbox run -- npm publish`). The upgraded npm needs to be on PATH; devbox's PATH manipulation can override.
+- **`f0fdcd0`** — `npm@11.14.1` user-prefix install in publish workflow. OIDC needs npm 11.5.1+; Node-bundled npm on Ubuntu runners may be older. Canonical pin form:
+
+  ```bash
+  npm install -g --prefix ~/.npm-global npm@11.14.1   # PINNED; bump explicitly when needed
+  ```
+
+  **Do NOT use floating tags** (`npm@11.x` / `npm@latest`) — silent bumps as npm 11.y.z releases violate the pin-discipline the recovery arc itself surfaced (per `feedback_no_floating_tags_in_ci_pins.md`).
+
+- **`ff485d9`** — bare `npm publish` (not `devbox run -- npm publish`). Precise mechanism (worth capturing for future maintainers):
+  - Devbox uses Nix's **read-only** store at `/nix/store/.../lib`; `devbox run -- npm install -g npm@X` hits `EACCES` on `mkdir` there
+  - User-prefix install (`--prefix ~/.npm-global`) sidesteps the read-only path
+  - **Inside** `devbox run --`, devbox prepends nix-store paths to `PATH` → devbox's `npm@10.8.3` (devbox-pinned) takes precedence over the user-prefix `npm@11.14.1`
+  - **Outside** `devbox run --`, the runner's `GITHUB_PATH` puts `~/.npm-global/bin` first → upgraded npm wins
+
+  Rule: **bare `npm publish` for OIDC** (need npm 11.5.1+); **`devbox run --` for everything else** that depends on devbox's pinned Node toolchain. Follows from the asymmetric PATH-stacking, not just generic "PATH override."
+
 - **`acfdede`** — post-publish attestation verify uses `.dist.attestations.url` (canonical), NOT `.dist.attestations.provenance.url` (false-positive shape that breaks CI verification step).
 
 **Permissions required on the workflow:**
@@ -521,7 +535,7 @@ permissions:
 
 Package admin (operator role) configures the trusted-publisher relationship in npm UI:
 
-1. npm.com → Package → Settings → Trusted Publishers → Add Publisher
+1. npmjs.com → Package → Settings → Trusted Publishers → Add Publisher
 2. Provider: GitHub Actions
 3. Repository owner: `groundnuty`
 4. Repository: `macf`
