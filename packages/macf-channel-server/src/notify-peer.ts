@@ -26,6 +26,7 @@
  *   `to:` customization needed).
  */
 import { request as httpsRequest } from 'node:https';
+import { randomUUID } from 'node:crypto';
 import type { Registry, AgentInfo } from '@groundnuty/macf-core';
 import type { Logger } from '@groundnuty/macf-core';
 import { toVariableSegment } from '@groundnuty/macf-core';
@@ -38,6 +39,8 @@ import { z } from 'zod';
 import { context, propagation, SpanKind, SpanStatusCode, trace } from '@opentelemetry/api';
 import { buildInvokeAgentSpanName, Attr, GenAiAttr } from './tracing.js';
 import { getNotifyPeerCounter, MetricAttr } from './metrics.js';
+import { A2aClient, A2aClientError } from './a2a-client.js';
+import type { Message } from './a2a-types.js';
 
 export const NotifyPeerInputSchema = {
   to: z.string().optional()
@@ -68,6 +71,13 @@ export interface NotifyPeerDeps {
   readonly mTlsClientKeyPem: string;
   readonly caCertPem: string;
   readonly logger: Logger;
+  /**
+   * Optional outbound A2A client for protocol-selection (macf#396 Phase 3).
+   * If absent, falls back to the legacy `/notify` envelope for all peers.
+   * server.ts wires this when constructing the deps; tests can inject a
+   * stub or omit entirely to exercise legacy-only paths.
+   */
+  readonly a2aClient?: A2aClient;
 }
 
 export interface NotifyPeerInput {
@@ -198,6 +208,162 @@ function postToPeer(
 }
 
 /**
+ * Build the outbound URL for a peer's channel-server (used by A2A path
+ * for AgentCard discovery + message/send target).
+ */
+function peerBaseUrl(peer: { readonly info: AgentInfo }): string {
+  return `https://${peer.info.host}:${peer.info.port}`;
+}
+
+/**
+ * Construct an A2A v1.0 Message from a notify_peer payload. The Message
+ * shape encodes the legacy envelope's semantic fields (event, source,
+ * message body, context) into A2A-canonical structure so the receiver
+ * (after Phase 3.5 receiver-side wake-decision integration) can route
+ * appropriately.
+ *
+ * - `messageId`: fresh UUID per call (spec § 4.1.4 — required)
+ * - `role`: ROLE_USER (sender's perspective; spec § 4.1.5 — client→server)
+ * - `parts[0]`: text with a human-readable summary of the notification
+ * - `metadata.event` + `metadata.source` + `metadata.context`: structured
+ *   payload preserved verbatim so receiver-side handlers can read them
+ *
+ * NOTE: Phase 3 ships the SENDER side only. The receiver's `/a2a/v1`
+ * handler currently creates a Task COMPLETED for any message/send +
+ * doesn't consult `decideWake`. Phase 3.5 (followup issue) wires the
+ * receiver-side metadata-driven wake-decision routing so that custom
+ * events on the A2A path still wake the receiver TUI.
+ */
+function buildA2aMessageFromPayload(
+  input: NotifyPeerInput,
+  selfAgentName: string,
+): Message {
+  const summary = input.message ?? `Notification from ${selfAgentName} (event=${input.event})`;
+  return {
+    messageId: randomUUID(),
+    role: 'ROLE_USER',
+    parts: [{ text: summary }],
+    metadata: {
+      event: input.event,
+      source: selfAgentName,
+      ...(input.context !== undefined ? { context: input.context } : {}),
+    },
+  };
+}
+
+/**
+ * Decide which outbound protocol to use for a given peer (macf#396 Phase 3
+ * design Q6 decision tree):
+ *
+ *   1. `MACF_OUTBOUND_LEGACY=1` env var → legacy `/notify`
+ *   2. `event === 'custom'` (operator-driven; wakes receiver via Pattern E
+ *      'custom' branch in decideWake) → legacy `/notify` (preserves
+ *      wake-on-receipt until Phase 3.5 wires receiver-side wake decision
+ *      on A2A path)
+ *   3. No A2aClient configured → legacy `/notify`
+ *   4. Peer publishes valid AgentCard with `protocolBinding === 'JSONRPC'`
+ *      in any `supportedInterfaces[]` entry → A2A path
+ *   5. Otherwise → legacy `/notify` (with warning span attribute)
+ *
+ * Returns `'a2a'` or `'legacy'`. Caller dispatches accordingly. AgentCard
+ * fetch failures + schema-validation failures fall through to legacy with
+ * the failure logged at warn level (not fatal — legacy path is safe).
+ */
+async function selectOutboundProtocol(
+  deps: NotifyPeerDeps,
+  peer: { readonly name: string; readonly info: AgentInfo },
+  event: NotifyPeerInput['event'],
+): Promise<'a2a' | 'legacy'> {
+  if (process.env['MACF_OUTBOUND_LEGACY'] === '1') {
+    return 'legacy';
+  }
+  if (event === 'custom') {
+    // Operator-driven event — receiver-side wake-on-receipt fires via
+    // legacy /notify's decideWake() call. Phase 3.5 follow-up issue will
+    // wire receiver-side decideWake on /a2a/v1 too; until then, custom
+    // events stay on legacy to preserve the wake contract.
+    return 'legacy';
+  }
+  if (deps.a2aClient === undefined) {
+    return 'legacy';
+  }
+  try {
+    const card = await deps.a2aClient.getAgentCard(peerBaseUrl(peer));
+    if (card === null) {
+      return 'legacy';
+    }
+    const hasJsonRpcBinding = card.supportedInterfaces.some(
+      (iface) => iface.protocolBinding === 'JSONRPC',
+    );
+    return hasJsonRpcBinding ? 'a2a' : 'legacy';
+  } catch (err) {
+    deps.logger.warn('notify_peer_agent_card_fetch_failed', {
+      peer: peer.name,
+      error: err instanceof Error ? err.message : String(err),
+    });
+    return 'legacy';
+  }
+}
+
+/**
+ * Dispatch a notification to a single peer via either A2A `message/send`
+ * or legacy `/notify` POST, depending on `selectOutboundProtocol()`'s
+ * decision.
+ *
+ * Returns the same shape postToPeer returns — caller aggregates uniformly
+ * across both protocols. `httpOk: true` means the peer ACCEPTED the
+ * notification (A2A: returned a Task with non-error state; legacy: HTTP 200).
+ * `transportOk: true` means the peer was REACHABLE (TLS + connect succeeded).
+ *
+ * The wrapping `invoke_agent {target}` span (set by `notifyPeer`'s
+ * tracer scope) is shared across both protocols; this function sets
+ * the `macf.outbound.protocol` attribute on the span to disambiguate.
+ */
+async function dispatchToPeer(
+  deps: NotifyPeerDeps,
+  peer: { readonly name: string; readonly info: AgentInfo },
+  input: NotifyPeerInput,
+  legacyPayload: object,
+  timeoutMs: number,
+): Promise<{ readonly httpOk: boolean; readonly transportOk: boolean }> {
+  const protocol = await selectOutboundProtocol(deps, peer, input.event);
+  const span = trace.getActiveSpan();
+  if (span !== undefined) {
+    span.setAttribute(Attr.OutboundProtocol, protocol);
+  }
+  if (protocol === 'legacy') {
+    return postToPeer(deps, peer, legacyPayload, timeoutMs);
+  }
+  // A2A path: construct message + send + map outcome.
+  const message = buildA2aMessageFromPayload(input, deps.selfAgentName);
+  try {
+    const task = await deps.a2aClient!.sendMessage(
+      `${peerBaseUrl(peer)}`,
+      message,
+      { target: peer.name },
+    );
+    const state = task.status.state;
+    // Treat non-error terminal states as "delivered". REJECTED is the
+    // canonical "agent declined" state — treat as not-delivered.
+    const accepted =
+      state === 'TASK_STATE_COMPLETED'
+      || state === 'TASK_STATE_WORKING'
+      || state === 'TASK_STATE_SUBMITTED'
+      || state === 'TASK_STATE_INPUT_REQUIRED'
+      || state === 'TASK_STATE_AUTH_REQUIRED';
+    return { httpOk: accepted, transportOk: true };
+  } catch (err) {
+    deps.logger.warn('notify_peer_a2a_error', {
+      peer: peer.name,
+      code: err instanceof A2aClientError ? err.code : 'UNKNOWN',
+      error: err instanceof Error ? err.message : String(err),
+    });
+    const transportOk = !(err instanceof A2aClientError) || err.code !== 'TRANSPORT_ERROR';
+    return { httpOk: false, transportOk };
+  }
+}
+
+/**
  * Tool body — resolves peers, fans out, aggregates.
  *
  * Per-peer timeout is 5s (macf#267 Finding 1 fix; was 1s in v0.2.3,
@@ -276,8 +442,12 @@ export async function notifyPeer(
           ...(input.context !== undefined ? { context: input.context } : {}),
         };
 
+        // macf#396 Phase 3: dispatchToPeer does protocol-selection
+        // per-peer (A2A vs legacy /notify) based on AgentCard discovery
+        // + the MACF_OUTBOUND_LEGACY env flag + event-class routing.
+        // See selectOutboundProtocol() for the decision tree.
         const results = await Promise.all(
-          peers.map(p => postToPeer(deps, p, payload, 5000)),
+          peers.map(p => dispatchToPeer(deps, p, input, payload, 5000)),
         );
 
         const peers_delivered = results.filter(r => r.httpOk).length;

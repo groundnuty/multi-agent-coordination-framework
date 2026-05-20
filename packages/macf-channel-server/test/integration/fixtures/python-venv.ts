@@ -36,7 +36,18 @@ const __dirname = dirname(__filename);
 // reclaims it; gitignored via the root `node_modules/` entry.
 const PACKAGE_ROOT = resolve(__dirname, '../../../');
 const VENV_DIR = resolve(PACKAGE_ROOT, 'node_modules/.cache/a2a-python-venv');
-const SENTINEL = resolve(VENV_DIR, `.installed-${A2A_SDK_VERSION}`);
+
+/**
+ * Sentinel suffix changes whenever the installed dep set changes (not just
+ * the SDK version). Bump when adding/removing extras (e.g., http-server)
+ * so existing cached venvs get rebuilt instead of silently lacking deps.
+ *
+ * Current set (`v2`): `a2a-sdk[http-server]==1.0.3` + `httpx` (Phase 3
+ * added `http-server` extra for the server-side probe; pre-Phase-3
+ * venvs were `v1` = SDK + httpx only).
+ */
+const DEPSET_VERSION = 'v2';
+const SENTINEL = resolve(VENV_DIR, `.installed-${A2A_SDK_VERSION}-${DEPSET_VERSION}`);
 const PYTHON_BIN = resolve(VENV_DIR, 'bin/python3');
 const PIP_BIN = resolve(VENV_DIR, 'bin/pip');
 
@@ -86,9 +97,23 @@ export function ensureA2aVenv(): VenvHandle {
   }
 
   try {
+    // a2a-sdk[http-server] only adds `sse-starlette` per the SDK's
+    // pyproject; the actual ASGI server (uvicorn) + starlette runtime
+    // must be installed separately. Both are needed for the Phase 3
+    // server-side probe (a2a_server_probe.py — uses Starlette routes
+    // + uvicorn). The client-side probes only need httpx, but installing
+    // all four is cheap (~10MB) and avoids two install cycles when the
+    // integration tests touch both client + server modes.
     execFileSync(
       PIP_BIN,
-      ['install', '--quiet', `a2a-sdk==${A2A_SDK_VERSION}`, 'httpx'],
+      [
+        'install',
+        '--quiet',
+        `a2a-sdk[http-server]==${A2A_SDK_VERSION}`,
+        'httpx',
+        'uvicorn',
+        'starlette',
+      ],
       { stdio: 'pipe' },
     );
   } catch (err) {
@@ -98,9 +123,15 @@ export function ensureA2aVenv(): VenvHandle {
     );
   }
 
-  // Sentinel signals "this venv has the pinned SDK installed." Created
-  // last so a partial install doesn't get mistaken for a complete one.
-  writeFileSync(SENTINEL, `a2a-sdk==${A2A_SDK_VERSION}\n`, 'utf-8');
+  // Sentinel signals "this venv has the pinned SDK + dep set installed."
+  // Created last so a partial install doesn't get mistaken for a complete
+  // one. Dep set version bumps when extras change (e.g., http-server for
+  // Phase 3 server-side probe).
+  writeFileSync(
+    SENTINEL,
+    `a2a-sdk[http-server]==${A2A_SDK_VERSION}\nDEPSET_VERSION=${DEPSET_VERSION}\n`,
+    'utf-8',
+  );
 
   return {
     pythonPath: PYTHON_BIN,

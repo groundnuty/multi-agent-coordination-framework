@@ -391,13 +391,27 @@ async function main(): Promise<void> {
   // peers in the project registry (excluding self).
   const { readFileSync } = await import('node:fs');
   const { notifyPeer, NotifyPeerInputSchema, NotifyPeerOutputSchema } = await import('./notify-peer.js');
+  // macf#396 Phase 3: outbound A2A client for protocol-selection.
+  // Shared across notify_peer invocations so the AgentCard cache is
+  // process-lifetime (5-min TTL) rather than per-call. Closed in
+  // shutdown.ts when the channel-server stops.
+  const { A2aClient } = await import('./a2a-client.js');
+  const mTlsClientCertPem = readFileSync(config.agentCertPath, 'utf8');
+  const mTlsClientKeyPem = readFileSync(config.agentKeyPath, 'utf8');
+  const caCertPem = readFileSync(config.caCertPath, 'utf8');
+  const a2aClient = new A2aClient({
+    mTlsClientCertPem,
+    mTlsClientKeyPem,
+    caCertPem,
+  });
   const notifyPeerDeps = {
     registry,
     selfAgentName: config.agentName,
-    mTlsClientCertPem: readFileSync(config.agentCertPath, 'utf8'),
-    mTlsClientKeyPem: readFileSync(config.agentKeyPath, 'utf8'),
-    caCertPem: readFileSync(config.caCertPath, 'utf8'),
+    mTlsClientCertPem,
+    mTlsClientKeyPem,
+    caCertPem,
     logger,
+    a2aClient,
   };
   mcp.mcp.registerTool(
     'notify_peer',

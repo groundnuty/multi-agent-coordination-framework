@@ -288,11 +288,13 @@ jobs:
             echo "PR touched no integration-relevant paths — skipping."
           fi
 
-      # Extract A2A_SDK_VERSION from the sentinel fixture so the cache
-      # key tracks the pinned version automatically. Bumping the SDK
-      # version in python-venv.ts now also invalidates this cache —
+      # Extract A2A_SDK_VERSION + DEPSET_VERSION from the sentinel fixture
+      # so the cache key tracks BOTH the pinned SDK + dep set automatically.
+      # Bumping either in python-venv.ts now also invalidates this cache —
       # same single-source-of-truth contract the runtime helper uses.
-      - name: Read pinned A2A_SDK_VERSION
+      # DEPSET_VERSION bumps independently when extras change
+      # (e.g., adding `[http-server]` for Phase 3 server-side probe).
+      - name: Read pinned A2A_SDK_VERSION + DEPSET_VERSION
         id: sdk_version
         if: steps.gate.outputs.should_run == 'true'
         run: |
@@ -300,23 +302,32 @@ jobs:
           VERSION=$(grep -E "^export const A2A_SDK_VERSION" \
             packages/macf-channel-server/test/integration/fixtures/python-venv.ts \
             | sed -E "s/.*= *'([^']+)'.*/\1/")
+          DEPSET=$(grep -E "^const DEPSET_VERSION" \
+            packages/macf-channel-server/test/integration/fixtures/python-venv.ts \
+            | sed -E "s/.*= *'([^']+)'.*/\1/")
           if [ -z "$VERSION" ]; then
             echo "FATAL: could not extract A2A_SDK_VERSION from python-venv.ts" >&2
             exit 1
           fi
+          if [ -z "$DEPSET" ]; then
+            echo "FATAL: could not extract DEPSET_VERSION from python-venv.ts" >&2
+            exit 1
+          fi
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
-          echo "Pinned a2a-sdk version: $VERSION"
+          echo "depset=$DEPSET" >> "$GITHUB_OUTPUT"
+          echo "Pinned a2a-sdk version: $VERSION (depset $DEPSET)"
 
-      # Cache the Python venv keyed on the pinned SDK version.
+      # Cache the Python venv keyed on the pinned SDK version + dep set.
       # Cache hit: ensureA2aVenv() finds the sentinel + python bin and
       # returns sub-second. Cache miss: helper creates the venv and
-      # pip-installs ~10s; next run benefits.
+      # pip-installs ~10s (a2a-sdk[http-server] pulls starlette/uvicorn);
+      # next run benefits.
       - name: Cache Python venv
         if: steps.gate.outputs.should_run == 'true'
         uses: actions/cache@v4
         with:
           path: packages/macf-channel-server/node_modules/.cache/a2a-python-venv
-          key: python-venv-${{ steps.sdk_version.outputs.version }}-${{ runner.os }}
+          key: python-venv-${{ steps.sdk_version.outputs.version }}-${{ steps.sdk_version.outputs.depset }}-${{ runner.os }}
 
       - uses: jetify-com/devbox-install-action@v0.15.0
         if: steps.gate.outputs.should_run == 'true'
