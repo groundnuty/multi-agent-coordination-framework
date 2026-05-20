@@ -299,12 +299,21 @@ jobs:
             # `attestations` is an OBJECT (not array) — check for the
             # provenance.url subfield, which is set when provenance
             # was generated. `jq -e` exits non-zero on null/missing.
-            if ! echo "$META" | jq -e '.dist.attestations.provenance.url' >/dev/null; then
+            # Attestation shape (verified 2026-05-20 against the registry):
+            #   dist.attestations = {
+            #     url: "https://registry.npmjs.org/-/npm/v1/attestations/<scope>%2f<pkg>@<version>",
+            #     provenance: { predicateType: "https://slsa.dev/provenance/v1" }
+            #   }
+            # Earlier version of this script checked `.dist.attestations.provenance.url`
+            # which is NOT the canonical path (provenance has predicateType, not url) —
+            # the URL lives at `.dist.attestations.url` top-level. Fixed 2026-05-20
+            # after v0.2.32 publish succeeded but post-publish verify falsely failed.
+            if ! echo "$META" | jq -e '.dist.attestations.url' >/dev/null; then
               echo "::error::${FULL}@${VERSION} published without provenance attestation"
               echo "::error::dist.attestations field: $(echo "$META" | jq -c '.dist.attestations // null')"
               exit 1
             fi
-            ATT_URL=$(echo "$META" | jq -r '.dist.attestations.provenance.url')
+            ATT_URL=$(echo "$META" | jq -r '.dist.attestations.url')
             echo "✓ ${FULL}@${VERSION} provenance attestation present: ${ATT_URL}"
           done
 
