@@ -4,7 +4,9 @@
 
 > **Workspaces without full `macf init`** (e.g. `groundnuty/macf` itself, or any Claude Code workspace operated by a bot that isn't a MACF-registered agent) can still get this canonical rule via `macf rules refresh --dir <workspace>`. Same copy, no App credentials or registry required.
 
-This rule names the CLASS so agents recognize the shape on first encounter rather than re-discovering each instance from scratch. Eight specific instances are documented below as worked examples spanning different architectural layers (identity, parsing, TUI binding, observability routing, config substitution, multi-agent coordination protocol, metric-instrumentation lifecycle, observability-endpoint routing). Six of eight have structural defenses applied or in flight — the pattern of defense generalizes alongside the pattern of hazard.
+This rule names the CLASS so agents recognize the shape on first encounter rather than re-discovering each instance from scratch. Nine specific instances are documented below as worked examples spanning different architectural layers (identity, parsing, TUI binding, observability routing, config substitution, multi-agent coordination protocol, metric-instrumentation lifecycle, observability-endpoint routing, release-pipeline-partial-publish). Seven of nine have structural defenses applied or in flight — the pattern of defense generalizes alongside the pattern of hazard.
+
+Instance 9 is annotated as **sister-shape** (failure correctly surfaced + partial side-effect breaks retry idempotency) — listed here for cross-reference convenience but warrants a sibling canonical rule (`partial-side-effect-hazards.md`) if more instances surface. The two classes share "multi-step pipeline where consumer assumes atomicity" but the failure surface differs: silent-fallback hides at the API boundary; partial-side-effect surfaces loudly but persists semi-state.
 
 ---
 
@@ -21,7 +23,7 @@ The trap is that defensive programming targets exit codes, but exit-code success
 
 ---
 
-## Eight known instances
+## Nine known instances
 
 ### Instance 1 — gh-token attribution traps
 
@@ -113,6 +115,53 @@ curl -G "$TEMPO/api/search" --data-urlencode 'q={resource."gen_ai.agent.name"=~"
 ```
 
 This is a **secondary Pattern A failure mode** — the assertion script CAN return zero-traces and look like a Tier-1/2/3/4 firing when actually it's a query-syntax issue. Defense: when investigating "Pattern A reports zero traces," cross-check with the alternative query `{resource.service.name=~"macf-agent.*"}` (uses the OTel-canonical service-name attribute which TraceQL handles natively, no dotted-key quoting needed). If that returns non-zero, the issue is query-syntax not silent-fallback.
+
+### Instance 9 — Sigstore TLOG orphans on failed npm publish (partial-side-effect-on-failed-publish)
+
+**Surface:** `npm publish` with `--provenance` (sigstore attestation) — the multi-step pipeline `sigstore TLOG entry submit → attest binding → npm registry PUT` where each step's success isn't atomic with the others.
+
+**Failure shape:** Two observed sub-shapes, both producing orphan TLOG entries in the public sigstore transparency log:
+
+- **Sub-shape A — sigstore-409-on-retry** (`v0.2.25` 2026-05-18T21:48Z, groundnuty/macf#373): first publish-run aborted on pre-existing test flakes after TLOG entry submitted. Retry via tag-recreate hit `TLOG_CREATE_ENTRY_ERROR (409)` — sigstore correctly rejects the duplicate entry, but the retry's attestation is rejected. Two consumer packages already published (`@groundnuty/macf{,-core}@0.2.25`) became orphans pointing at a never-published `@groundnuty/macf-channel-server@0.2.25`.
+- **Sub-shape B — npm-404-after-sigstore-success** (`v0.2.29` 2026-05-19T21:30:32Z + `v0.2.30` 2026-05-19T22:17:36Z, groundnuty/macf#391+#397+#395 release-cuts): publish-workflow auth-step succeeded (`NPM_TOKEN` present + valid); sigstore TLOG entry submitted successfully (logIndex 1575263520 for v0.2.29; logIndex 1575475073 for v0.2.30); npm registry `PUT /@groundnuty%2fmacf-core` returned HTTP 404 `"not in this registry"`. Sigstore TLOG entries persisted; npm registry never received the package. Operator-side root-cause investigation in flight at codification time (candidate causes: npm-token-scope mismatch / OIDC trust conflict / 2FA-bypass missing / transient registry issue).
+
+**Recurrence:** 3 instances across 2 distinct trigger mechanisms (sigstore-409-on-retry; npm-404-after-sigstore-success); same root-shape (partial side-effect persists after downstream publish failure).
+
+**Why this is sister-shape, not strict silent-fallback:**
+
+| Aspect | Silent-fallback (Instances 1-8) | sigstore-TLOG-orphan (Instance 9) |
+|---|---|---|
+| API exit code | success (0 / HTTP 200) | failure (non-0 / HTTP 4xx-5xx) |
+| Failure signal | absent at API boundary | LOUD at API boundary (npm 404; sigstore 409) |
+| Hazard surface | detection (failure invisible until downstream breaks) | recovery (failure surfaces correctly but partial side-effect breaks retry idempotency) |
+| Class generalization | "operation success masks semantic failure" | "operation failure persists partial state that breaks retry" |
+
+Both classes share "multi-step pipeline where consumer assumes atomicity" but the failure mode + structural defense differ. Listed here as Instance 9 for cross-reference convenience; **future structural-defense work warrants a sibling canonical rule `partial-side-effect-hazards.md`** if more instances surface (e.g., partial-side-effect database migrations, partial-side-effect distributed-transaction failures). Codification at sibling-rule level happens at the 5-instance threshold per the rule-promotion convention.
+
+**Defense status:** Pattern recovery codified via DR-022 Amendment L (groundnuty/macf#380); pre-publish validation via Pattern D analog (Pattern D adapted from workflow-secrets-prechecks to publish-pipeline-prechecks). Two specific defense layers shipped + one in operator's queue:
+
+- **Defense 1 — bump-version recovery (NOT tag-retry)** — DR-022 Amendment L canonical recovery procedure. When publish fails leaving sigstore TLOG orphans, recover via `npm version <next>` + fresh push, NOT `git tag -d + tag-recreate + force-push`. Fresh version produces a fresh TLOG entry + a fresh attestation; idempotent + clean. Applied successfully for v0.2.25 → v0.2.26 (instance 1 recovery). v0.2.29 + v0.2.30 also followed bump-version (29 → 30 → 31-pending), but the underlying npm-404 trigger is operator-side configuration, not retry-idempotency:
+  ```bash
+  # WRONG (idempotency-breaking when retry hits TLOG-409 or repeats the original 404)
+  git tag -d v0.2.25
+  git tag v0.2.25 <new-sha>
+  git push --force origin v0.2.25  # triggers re-publish with same version → TLOG 409 collision
+
+  # RIGHT (orthogonal recovery)
+  # Bump version: 0.2.25 → 0.2.26 with whatever fixes
+  npm version 0.2.26 && git push origin v0.2.26  # fresh version, fresh TLOG entry, clean publish
+  ```
+
+- **Defense 2 — pre-flight registry-collision check** (Pattern D analog; groundnuty/macf#380): publish-workflow precheck step queries `npm view @scope/package@<version>` BEFORE invoking sigstore; aborts if the version already exists on the registry. Catches the same-version-retry-on-TLOG-409 failure shape at the workflow boundary (Pattern D's aggregate-fail-loud discipline applied to publish pipeline). Won't catch first-attempt npm-404 (instance 2/3 shape) where the version genuinely doesn't exist yet — that fail-mode requires Defense 3.
+
+- **Defense 3 — TLOG-state observability** (in flight; devops-toolkit#74 + #77 dashboard live as of 2026-05-20T00:06:56Z): release-hygiene Grafana dashboard surfaces orphan-sigstore-attestations via `grafana-dashboards-release-hygiene` (UID `macf-release-hygiene`). Auto-detects "package N.M.K depends on N.M.K of sibling but sibling never published" + alerts when a tag's matching npm version is missing 24+ hours post-tag. Closes the operator-visibility gap that left v0.2.29 + v0.2.30 orphans accumulating without an automated catch.
+
+**Cleanup pending after instance N+1 (codification followup):**
+
+- v0.2.25 orphans (instance 1): `@groundnuty/macf{,-core}@0.2.25` published on npm → deprecate via `npm-deprecate.yml` workflow_dispatch (operator-side App-permission gate per DR-019 Amendment A — granted 2026-05-19, dispatch-allowlist for `npm-deprecate.yml` codified)
+- v0.2.29 + v0.2.30 orphans (instances 2/3): npm registry never received the PUT → nothing to deprecate on npm side; sigstore TLOG entries persist by design (transparency log is append-only). Future audit-trail check should reconcile sigstore-TLOG entries against npm-registry-state to catch shape-mismatched orphans proactively.
+
+**Codification rationale:** 3 instances across 2 trigger mechanisms + defense pattern stable + operator-witnessed across 2 calendar days (2026-05-18 + 2026-05-19) + cross-agent (instance 1 via science-agent's authoring; instances 2/3 via code-agent's release-cut workflow) — meets all four "When to add a new instance" criteria. The sister-class question (separate `partial-side-effect-hazards.md` canonical rule) is acknowledged inline + deferred to the 5-instance threshold per rule-promotion convention.
 
 ---
 
@@ -257,7 +306,7 @@ Silent-fallback hazards are **architectural**, not implementation bugs. They eme
 
 For coordination-system safety analysis: this is a class of hazards multi-agent systems must explicitly defend against. Each new instance teaches the same lesson; the class-name is what makes the lesson transferable across agents.
 
-### Defense-pattern emergence (6-of-8 known instances have structural defense applied or shipped)
+### Defense-pattern emergence (7-of-9 known instances have structural defense applied or shipped)
 
 | Instance | Surface | Structural defense | Pattern |
 |---|---|---|---|
@@ -266,13 +315,14 @@ For coordination-system safety analysis: this is a class of hazards multi-agent 
 | 3 — Remote Control IPC blocking tmux send-keys | Claude Code TUI input | Two-tier: consumer fleet structurally retired via channel-server primitive (DR-020 mTLS HTTPS POST); substrate fleet permanent operational reality — defense = rule-discipline + Pattern C fragility detector | Pattern C deployable as fragility detector |
 | 4 — Loki/CH-logs pipeline divergence | OTLP logs routing | manifest warnings + shape-aware diagnostic | Pattern A |
 | 5 — Workflow secrets-misnamed | GitHub Actions workflow inputs | Workflow precheck step | Pattern D |
-| 6 — Cross-agent notification loop | Multi-agent coordination protocol | macf v0.2.4: type-discriminator in receiver's `/notify` handler — `peer_notification` skips tmux wake (observational-only); other `NotifyType`s preserve wake-on-receipt | Pattern E |
+| 6 — Cross-agent notification loop | Multi-agent coordination protocol | macf v0.2.4 + v0.2.21: event-discriminator in receiver's `decideWake()` — autonomous events skip wake (observational-only); `event: 'custom'` (operator-driven) wakes; other `NotifyType`s preserve wake-on-receipt | Pattern E |
 | 7 — OTel-counter cumulative-state vs short-lived-process lifecycle | Metric-instrumentation lifecycle | Two-phase: doc workaround `sum(increase(...))` + OTel SDK delta temporality | Pattern A |
 | 8 — OTLP endpoint silent-drop | Observability-endpoint routing | Five-surface defense: CLI release-discipline + substrate testers env-override + canonical template `:14318` default + cluster-side compat port-map + agent-process `doctor-otel.sh` Pattern A | Pattern A (composite — first multi-architectural-layer case in this rule; instances 1-7 have single-pattern defenses) |
+| 9 — Sigstore TLOG orphans on failed npm publish (sister-class) | npm publish + sigstore attestation pipeline | Three-defense composite: bump-version recovery (DR-022 Amendment L) + pre-flight registry-collision check (Pattern D analog, macf#380) + TLOG-state observability (devops-toolkit#74+#77 Grafana dashboard live) | Pattern D analog (pre-flight precheck) + recovery-procedure-codification |
 
-Six of eight instances have structural defense applied or shipped. Defense patterns (A, B, C, D, E) generalize across instances — they're reusable defense templates, not case-specific fixes. **Pattern A (result-invariant assertion at the boundary) bears the most weight** — it's the structural defense for instances 4, 7, AND 8 (3 of 8), each at a different architectural boundary (logs pipeline, metric counter, observability endpoint). Instance 8's five-surface defense topology (consumer canonical + cluster-side compat port-map + concrete Pattern A impl) demonstrates that structural defense at the observability-pipeline-class can compose across architectural layers — the canonical-distribution layer + the cluster-infrastructure layer + the assertion-script layer all reinforce each other rather than substituting for each other.
+Seven of nine instances have structural defense applied or shipped. Defense patterns (A, B, C, D, E) generalize across instances — they're reusable defense templates, not case-specific fixes. **Pattern A (result-invariant assertion at the boundary) bears the most weight** — it's the structural defense for instances 4, 7, AND 8 (3 of 9), each at a different architectural boundary (logs pipeline, metric counter, observability endpoint). Instance 8's five-surface defense topology (consumer canonical + cluster-side compat port-map + concrete Pattern A impl) demonstrates that structural defense at the observability-pipeline-class can compose across architectural layers — the canonical-distribution layer + the cluster-infrastructure layer + the assertion-script layer all reinforce each other rather than substituting for each other. Instance 9 demonstrates that the Pattern D template generalizes from workflow-secrets-prechecks to release-pipeline-prechecks AND that recovery-procedure-codification (DR-022 Amendment L's bump-version-not-tag-retry) is its own defense category — distinct from detection-pre-merge defenses (Patterns A/B/D) and discrimination-at-receiver defenses (Pattern E).
 
-The breadth of layers spanned by 5 different defense patterns (identity, parsing, TUI binding, observability routing, config substitution, multi-agent coordination protocol, metric-instrumentation lifecycle, observability-endpoint routing) is independent evidence that the hazard CLASS is real. If silent-fallback was a single-instance accident, no defense pattern would emerge. **Pattern A's recurrence across 3 different observability boundaries (logs / metrics / endpoint) is the strongest signal that result-invariant assertion is the load-bearing structural-defense template for the entire observability-pipeline-class** of silent fallback.
+The breadth of layers spanned by 5 different defense patterns (identity, parsing, TUI binding, observability routing, config substitution, multi-agent coordination protocol, metric-instrumentation lifecycle, observability-endpoint routing, release-pipeline-partial-publish) is independent evidence that the hazard CLASS is real. If silent-fallback was a single-instance accident, no defense pattern would emerge. **Pattern A's recurrence across 3 different observability boundaries (logs / metrics / endpoint) is the strongest signal that result-invariant assertion is the load-bearing structural-defense template for the entire observability-pipeline-class** of silent fallback.
 
 ---
 
@@ -286,7 +336,7 @@ Add when ALL of the following hold:
 
 The class-name is what makes the lesson transferable, not multi-agent witness. A single-agent-confirmed instance with a concrete trace + identified defense pattern is sufficient for canonicalization (instances 4, 5, 7, 8 are all single-agent-confirmed). Cross-agent triangulation strengthens the framing but isn't a precondition.
 
-Add as a new numbered section under "Eight known instances" (will become "Nine known instances" etc.) with the same fields: Surface / Failure shape / Recurrence / Defense status.
+Add as a new numbered section under "Nine known instances" (will become "Ten known instances" etc.) with the same fields: Surface / Failure shape / Recurrence / Defense status. Increment the intro paragraph's instance count + the Defense-pattern emergence header's `N-of-M known instances` count too.
 
 ---
 
