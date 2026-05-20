@@ -170,6 +170,24 @@ jobs:
           devbox run -- make -f dev.mk check
           devbox run -- make -f dev.mk build
 
+      # OIDC trusted publishers (npm 11.5.1+) require a newer npm than
+      # devbox's nixpkgs pin currently provides (npm@10.8.3 at the
+      # nodePackages.npm pin). Upgrade in-place on the runner only;
+      # devbox.json's pin stays the same so local dev / CI test runs
+      # are unaffected. This step is no-op when NPM_TOKEN auth is used
+      # (npm 10.x supports legacy tokens), but load-bearing for the
+      # OIDC fallback path. See groundnuty/macf#368 v0.2.31 EOTP
+      # failure + DR-022 Amendment L for the recovery context.
+      #
+      # PINNED to a specific npm version, NOT `latest`: floating tags
+      # silently break in the future when npm 12+ ships behavioral
+      # changes. Bump this pin explicitly when needed. See operator
+      # directive 2026-05-20 (`feedback_no_floating_tags_in_ci_pins.md`).
+      - name: Upgrade npm to 11.14.1 (for OIDC trusted publisher support)
+        run: |
+          devbox run -- npm install -g npm@11.14.1
+          devbox run -- npm --version
+
       - name: Detect auth path
         id: auth
         env:
