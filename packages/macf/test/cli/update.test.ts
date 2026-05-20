@@ -170,15 +170,22 @@ describe('update command', () => {
     expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining('macf init'));
   });
 
-  // Per-test timeout lift (#377 Hazard 1): the legacy-config branch
-  // triggers plugin-version resolution which falls through to GitHub
-  // anon-API on a cold cache. Anon limit is 60 req/h shared across
-  // all CI runs in the org, so this test intermittently hits 5s
-  // timeout in publish-workflow CI. 30s tolerates the rate-limited
-  // path while keeping the fast path under the global 5s default.
-  // Root-cause stabilization (mocking the version-resolution path)
-  // tracked separately.
-  it('returns 1 when config has no versions section (legacy)', { timeout: 30_000 }, async () => {
+  // #382: mock fetch to stabilize the legacy-config path. Even though
+  // the legacy branch short-circuits before `resolveLatestVersions()`
+  // is called (the `if (!config.versions) return 1` at update.ts:409),
+  // the update path before that exit still runs `migrateCaKeyToV2`,
+  // which calls `client.readVariable(...)` → `fetch(api.github.com/...)`
+  // on its way to a 401/403 with the fake test credentials. In publish
+  // CI, that fetch can take seconds to fail. Stub `globalThis.fetch` so
+  // every outbound HTTP request short-circuits to a fast 404, keeping
+  // the test under the default 5s vitest timeout. Restored in afterEach.
+  // Replaces the 30s per-test timeout lift in PR #380.
+  it('returns 1 when config has no versions section (legacy)', async () => {
+    globalThis.fetch = vi.fn().mockResolvedValue({
+      ok: false,
+      status: 404,
+      json: async () => ({}),
+    }) as typeof fetch;
     writeConfig(dir); // no versions
     const code = await update(dir, { all: false, cli: false, plugin: false, actions: false, yes: false, dryRun: false });
     expect(code).toBe(1);
