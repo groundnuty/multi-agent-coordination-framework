@@ -476,3 +476,93 @@ Phase 1 (`groundnuty/macf#370` / v0.2.24) shipped the AgentCard discovery endpoi
 - Phase 2a (immediate prior): macf#390 + PR #391 (v0.2.29)
 - Canonical proto: `a2aproject/A2A:specification/a2a.proto`
 - Memory: `feedback_map_design_proposals_to_spec_sections.md` (proto-vs-docs source-of-truth principle)
+
+### Amendment N — OIDC Trusted Publishers replaces long-lived npm token (added 2026-05-20)
+
+The 5-iteration recovery arc 2026-05-19T21:30Z → 2026-05-20T03:04Z (`groundnuty/macf#368`) demonstrated that long-lived granular access tokens accumulate hidden state with multiple silent failure modes. The recovery's final success (v0.2.32) was via **architectural pivot to npm OIDC Trusted Publishers**, not via fixing the token. This amendment codifies OIDC as the canonical CI-publish authentication mechanism for MACF's `@groundnuty/macf{,-core,-channel-server}` packages.
+
+**Recovery arc as the empirical witness:**
+
+| Iteration | Outcome | Root-cause layer |
+|---|---|---|
+| v0.2.29 (Phase 2a release-cut) | FAIL npm 404 PUT | Token-acquisition: scope/identity mismatch hypothesis |
+| v0.2.30 (Phase 2c+2b bundle) | FAIL identical npm 404 | Token-acquisition: same |
+| v0.2.31 (Phase 2d+3 bundle) | FAIL npm EOTP | Token-capability: "Bypass two-factor authentication" missing on regenerated token |
+| **v0.2.32 (recovery release)** | **SUCCESS** | **Authentication-mechanism: OIDC Trusted Publishers pivot** |
+
+Each layer's hazard was UNDISCOVERABLE before its predecessor surfaced. Token-capability (v0.2.31 EOTP) was on the candidate-causes list since v0.2.29 (`#368` 22:01Z surfaced 5 candidates including "2FA-bypass missing") but only confirmed empirically after token regeneration. This is the **substrate-evolution-cadence pattern** at the release-pipeline layer — sister to the 4-iteration cadence v0.2.1→v0.2.4 (multi-agent-coordination layer) documented in `project_substrate_evolution_release_cadence.md`.
+
+**OIDC Trusted Publishers — structural benefits over long-lived tokens:**
+
+| Aspect | Long-lived token | OIDC Trusted Publishers |
+|---|---|---|
+| Auth secret on GitHub | Yes (`NPM_TOKEN`) | None |
+| Rotation lifecycle | Per-token-expiry + per-scope-edit + per-2FA-policy-change | Eliminated |
+| 2FA-bypass surface | Per-token capability (silent fail when missing) | Eliminated (OIDC IS the auth) |
+| Audit trail | Token-as-actor (account-level) | Workflow-as-actor (org/repo/workflow-level) — finer-grained |
+| Failure mode at publish time | `404` / `EOTP` / `Bad credentials` (3+ distinct modes catalogued) | Reduced surface (trusted-publisher contract violations) |
+| Recovery cost when broken | Token regen + capability-config audit + NPM_TOKEN secret rotation | Trusted-publisher relationship re-config (npm UI) |
+
+**Workflow changes shipped during the recovery (canonical pattern for future packages):**
+
+- **`f0fdcd0`** — `npm@11.14.1` user-prefix install in publish workflow. OIDC needs npm 11.5.1+; Node-bundled npm on Ubuntu runners may be older. Canonical pin form:
+
+  ```bash
+  npm install -g --prefix ~/.npm-global npm@11.14.1   # PINNED; bump explicitly when needed
+  ```
+
+  **Do NOT use floating tags** (`npm@11.x` / `npm@latest`) — silent bumps as npm 11.y.z releases violate the pin-discipline the recovery arc itself surfaced (per `feedback_no_floating_tags_in_ci_pins.md`).
+
+- **`ff485d9`** — bare `npm publish` (not `devbox run -- npm publish`). Precise mechanism (worth capturing for future maintainers):
+  - Devbox uses Nix's **read-only** store at `/nix/store/.../lib`; `devbox run -- npm install -g npm@X` hits `EACCES` on `mkdir` there
+  - User-prefix install (`--prefix ~/.npm-global`) sidesteps the read-only path
+  - **Inside** `devbox run --`, devbox prepends nix-store paths to `PATH` → devbox's `npm@10.8.3` (devbox-pinned) takes precedence over the user-prefix `npm@11.14.1`
+  - **Outside** `devbox run --`, the runner's `GITHUB_PATH` puts `~/.npm-global/bin` first → upgraded npm wins
+
+  Rule: **bare `npm publish` for OIDC** (need npm 11.5.1+); **`devbox run --` for everything else** that depends on devbox's pinned Node toolchain. Follows from the asymmetric PATH-stacking, not just generic "PATH override."
+
+- **`acfdede`** — post-publish attestation verify uses `.dist.attestations.url` (canonical), NOT `.dist.attestations.provenance.url` (false-positive shape that breaks CI verification step).
+
+**Permissions required on the workflow:**
+
+```yaml
+permissions:
+  contents: read
+  id-token: write   # OIDC token issuance for npm Trusted Publishers
+```
+
+**npm-side configuration:**
+
+Package admin (operator role) configures the trusted-publisher relationship in npm UI:
+
+1. npmjs.com → Package → Settings → Trusted Publishers → Add Publisher
+2. Provider: GitHub Actions
+3. Repository owner: `groundnuty`
+4. Repository: `macf`
+5. Workflow filename: `.github/workflows/publish.yml`
+6. Environment: (blank; or `production` if env-gated)
+
+**Sigstore TLOG orphan accounting (live empirical evidence):**
+
+| Version | logIndex | Outcome |
+|---|---|---|
+| v0.2.25 | 1573948960 | Sub-shape A (sigstore-409-on-retry, test-flake) |
+| v0.2.29 | 1575263520 | Sub-shape B (npm-404-after-sigstore-success) |
+| v0.2.30 | 1575475073 | Sub-shape B |
+| v0.2.31 | 1576145129 | Sub-shape B (EOTP) |
+| v0.2.32 | (valid attestation) | SUCCESS |
+
+5 cumulative orphans (4 from the recovery arc; sigstore TLOG is append-only by design). v0.2.25 had npm-published orphans (`@groundnuty/macf{,-core}@0.2.25`) requiring future `npm-deprecate.yml` workflow_dispatch; v0.2.29/v0.2.30/v0.2.31 never reached npm — nothing to deprecate npm-side.
+
+**Migration recommendation for existing macf-adjacent packages:**
+
+Future MACF packages (e.g., if `@groundnuty/macf-marketplace` or `@groundnuty/macf-actions` adopts npm publish) SHOULD use OIDC from the start. Existing packages on token-based publish can migrate opportunistically (not urgent unless a token-class failure surfaces) — the workflow change is reversible.
+
+**Cross-references:**
+
+- Recovery arc thread: `groundnuty/macf#368` 2026-05-19T21:30Z → 2026-05-20T03:04Z
+- Workflow commits: `f0fdcd0` + `ff485d9` + `aad5a15` + `acfdede` (all merged 2026-05-20T~02-03Z on `main`)
+- Sister-class canonical-rule: `silent-fallback-hazards.md` Instance 9 (sigstore TLOG orphans; merged via PR `#403`)
+- Prior gotcha: `reference_npm_token_bypass_2fa.md` (science-agent memory; 2026-04-22 DR-022 bootstrap)
+- Substrate-evolution-cadence pattern: `project_substrate_evolution_release_cadence.md` — release-pipeline layer is the third arc instance
+- OIDC pattern adopter: `feedback_oidc_trusted_publishers_for_npm.md` (science-agent memory; 2026-05-20)
