@@ -9,13 +9,52 @@ Plugin + routing-workflow changes ship from separate repos
 [`groundnuty/macf-actions`](https://github.com/groundnuty/macf-actions))
 and are not included here — pin them explicitly in each workspace.
 
-## [0.2.31] — 2026-05-20
+## [0.2.32] — 2026-05-20
+
+Recovery release per DR-022 Amendment L (fourth bump in the v0.2.29 →
+v0.2.32 recovery arc). v0.2.31 publish FAILED with `EOTP` — the
+operator-issued token lacked Bypass-2FA capability (npm granular tokens
+require this checkbox at creation time even when account 2FA is off;
+sister-class to `feedback_npm_bypass_2fa_flag.md`).
+
+Operator pivoted to **OIDC Trusted Publishers** (long-term cleaner; no
+token to rotate). Configured on all 3 packages on npmjs.com 2026-05-20;
+GitHub `NPM_TOKEN` secret deleted; workflow's `HAS_NPM_TOKEN=false`
+branch falls through to OIDC. workflow_dispatch dry-run via OIDC
+succeeded (`gh run view 26137973195`) before this bump.
+
+Workflow changes for OIDC support:
+
+- Added `npm install -g npm@11.14.1` step (OIDC trusted publishers
+  require npm 11.5.1+; devbox's pin is 10.8.3). Installed under
+  `$HOME/npm-global` user-prefix; devbox's read-only Nix store
+  prevents the standard `-g` install path.
+- Switched the 6 `npm publish` steps from `devbox run --` to bare
+  `npm` so the upgraded 11.14.1 binary is used (devbox's npm 10.x
+  lacks OIDC handshake support).
+- PINNED npm to specific version `11.14.1`, NOT `latest` — per
+  operator directive 2026-05-20 (floating tags create silent temporal
+  bitrot when upstream ships behavioral changes).
+
+Content is the same as the failed v0.2.31 attempt: full A2A v1.0
+bidirectional surface (Phase 2 inbound + Phase 3 outbound) + the
+CI / docs / test-stabilization PRs that accumulated during the
+recovery window. v0.2.31 sigstore TLOG entry (`logIndex 1576145129`)
+persists as orphan attestation; transparency log is append-only.
+
+## [0.2.31] — 2026-05-20 (PUBLISH-FAILED)
+
+**This version was never published to npm.** Publish workflow failed
+with `EOTP` (token lacked Bypass-2FA capability). v0.2.32 supersedes
+with identical content via OIDC trusted publisher path. Sigstore TLOG
+orphan accumulated (`logIndex 1576145129`).
 
 Recovery release per DR-022 Amendment L. v0.2.29 + v0.2.30 publish
-workflows both failed at npm registry PUT step (HTTP 404; sigstore TLOG
-entries orphan; operator-side npm-token investigation gating). Operator
-issued fresh token 2026-05-20; v0.2.31 republishes the bundled content
-plus the post-v0.2.30 work that accumulated during the recovery window.
+workflows previously failed at npm registry PUT step (HTTP 404; sigstore
+TLOG entries orphan; operator-side npm-token investigation gating).
+Operator issued fresh token 2026-05-20; v0.2.31 attempted to republish
+the bundled content plus the post-v0.2.30 work that accumulated during
+the recovery window.
 
 This release is **the full A2A v1.0 bidirectional surface** (Phase 2
 inbound + Phase 3 outbound) plus CI / docs / test-stabilization PRs.
