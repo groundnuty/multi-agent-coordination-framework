@@ -86,6 +86,16 @@ export const Attr = {
   CheckpointTrigger: 'macf.checkpoint.trigger',
   CheckpointWritten: 'macf.checkpoint.written',
   CheckpointDeduplicated: 'macf.checkpoint.deduplicated',
+  // macf#396 Phase 3: outbound A2A dispatch span attributes. Disambiguates
+  // the two outbound protocols sharing the same `invoke_agent` span name
+  // (canonical OTel GenAI semconv) — A2A v1.0 vs legacy `notify_peer`
+  // custom envelope. TraceQL queries filter via these attributes.
+  OutboundProtocol: 'macf.outbound.protocol',
+  OutboundTargetUrl: 'macf.outbound.target_url',
+  // macf#396 Phase 3: A2A response shape on outbound CLIENT spans.
+  // Sister to https.ts SERVER-side `macf.a2a.task_id` + `task_state`.
+  A2aTaskId: 'macf.a2a.task_id',
+  A2aTaskState: 'macf.a2a.task_state',
 } as const;
 
 /** GenAI semconv keys (experimental in v1.36+). */
