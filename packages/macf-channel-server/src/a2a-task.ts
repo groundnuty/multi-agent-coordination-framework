@@ -111,6 +111,18 @@ export class TaskNotResumableError extends Error {
   }
 }
 
+/** Error class for cancel attempts against terminal tasks (macf#398 Phase 2d). */
+export class TaskNotCancelableError extends Error {
+  public readonly code = 'TASK_NOT_CANCELABLE';
+  constructor(
+    public readonly taskId: string,
+    public readonly currentState: TaskState,
+  ) {
+    super(`Task ${taskId} in state ${currentState} cannot be canceled (already terminal)`);
+    this.name = 'TaskNotCancelableError';
+  }
+}
+
 // ---------------------------------------------------------------------------
 // TaskStore — in-memory; Phase 2 scope
 // ---------------------------------------------------------------------------
@@ -287,5 +299,32 @@ export class TaskStore {
       nowIso: opts.nowIso,
       message: reason,
     });
+  }
+
+  /**
+   * Cancel a non-terminal task (macf#398 Phase 2d). Cancellable from
+   * SUBMITTED / WORKING / INPUT_REQUIRED / AUTH_REQUIRED per the spec
+   * transition table; terminal tasks (COMPLETED / FAILED / CANCELED /
+   * REJECTED) reject with TaskNotCancelableError.
+   *
+   * Idempotent on already-CANCELED tasks would be ergonomic, but the
+   * spec doesn't mandate it + the transition table makes CANCELED a
+   * terminal state — so re-cancel returns the error. Callers can
+   * detect the terminal state via tasks/get first if they need to
+   * disambiguate.
+   *
+   * Errors:
+   * - `TaskNotFoundError` if `taskId` is unknown
+   * - `TaskNotCancelableError` if task is already terminal
+   */
+  cancel(taskId: string, opts: { readonly nowIso: string }): Task {
+    const task = this.#tasks.get(taskId);
+    if (task === undefined) {
+      throw new TaskNotFoundError(taskId);
+    }
+    if (TERMINAL_TASK_STATES.has(task.status.state)) {
+      throw new TaskNotCancelableError(taskId, task.status.state);
+    }
+    return this.transition(taskId, 'TASK_STATE_CANCELED', { nowIso: opts.nowIso });
   }
 }

@@ -19,7 +19,11 @@ import {
   TaskSchema,
   JsonRpcRequestSchema,
   MessageSendParamsSchema,
+  TaskIdParamsSchema,
+  resolveTaskId,
   A2A_METHOD_MESSAGE_SEND,
+  A2A_METHOD_TASKS_GET,
+  A2A_METHOD_TASKS_CANCEL,
   A2A_ENDPOINT_PATH,
   A2A_ERROR_DOMAIN,
   TERMINAL_TASK_STATES,
@@ -241,5 +245,64 @@ describe('Constants (spec citation anchors)', () => {
 
   it('A2A_ERROR_DOMAIN matches v1.0 google.rpc.Status spec', () => {
     expect(A2A_ERROR_DOMAIN).toBe('a2a-protocol.org');
+  });
+});
+
+describe('TaskIdParamsSchema + resolveTaskId (macf#398 Phase 2d)', () => {
+  it('accepts bare id form `{ id }`', () => {
+    const parsed = TaskIdParamsSchema.safeParse({ id: 'task-abc-123' });
+    expect(parsed.success).toBe(true);
+    if (parsed.success) {
+      expect(resolveTaskId(parsed.data)).toBe('task-abc-123');
+    }
+  });
+
+  it('accepts proto-canonical `{ name: "tasks/<id>" }` form', () => {
+    const parsed = TaskIdParamsSchema.safeParse({ name: 'tasks/task-abc-123' });
+    expect(parsed.success).toBe(true);
+    if (parsed.success) {
+      expect(resolveTaskId(parsed.data)).toBe('task-abc-123');
+    }
+  });
+
+  it('strips the `tasks/` prefix from name to yield bare id', () => {
+    const parsed = TaskIdParamsSchema.parse({ name: 'tasks/uuid-here' });
+    expect(resolveTaskId(parsed)).toBe('uuid-here');
+  });
+
+  it('id takes precedence when both are present', () => {
+    const parsed = TaskIdParamsSchema.parse({ id: 'from-id', name: 'tasks/from-name' });
+    expect(resolveTaskId(parsed)).toBe('from-id');
+  });
+
+  it('returns bare name as-is if it lacks the `tasks/` prefix', () => {
+    // Defensive — some clients may send `name` without the resource prefix.
+    const parsed = TaskIdParamsSchema.parse({ name: 'raw-id-no-prefix' });
+    expect(resolveTaskId(parsed)).toBe('raw-id-no-prefix');
+  });
+
+  it('rejects params with neither id nor name', () => {
+    expect(TaskIdParamsSchema.safeParse({}).success).toBe(false);
+    expect(TaskIdParamsSchema.safeParse({ metadata: { hint: 'x' } }).success).toBe(false);
+  });
+
+  it('rejects empty id / empty name', () => {
+    expect(TaskIdParamsSchema.safeParse({ id: '' }).success).toBe(false);
+    expect(TaskIdParamsSchema.safeParse({ name: '' }).success).toBe(false);
+  });
+
+  it('passes optional metadata through', () => {
+    const parsed = TaskIdParamsSchema.parse({ id: 'x', metadata: { priority: 'high' } });
+    expect(parsed.metadata).toEqual({ priority: 'high' });
+  });
+});
+
+describe('Method constants (macf#398 Phase 2d)', () => {
+  it('A2A_METHOD_TASKS_GET is the canonical slash-namespaced string', () => {
+    expect(A2A_METHOD_TASKS_GET).toBe('tasks/get');
+  });
+
+  it('A2A_METHOD_TASKS_CANCEL is the canonical slash-namespaced string', () => {
+    expect(A2A_METHOD_TASKS_CANCEL).toBe('tasks/cancel');
   });
 });

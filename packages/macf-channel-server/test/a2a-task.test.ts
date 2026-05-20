@@ -15,6 +15,7 @@ import {
   InvalidTaskTransitionError,
   TaskNotFoundError,
   TaskNotResumableError,
+  TaskNotCancelableError,
 } from '../src/a2a-task.js';
 import type { Message } from '../src/a2a-types.js';
 
@@ -305,5 +306,106 @@ describe('TaskStore.rejectFresh (macf#392 Phase 2b — REJECTED transition test 
     const rejected = store.rejectFresh(makeMessage(), makeMessage({ role: 'ROLE_AGENT' }), { nowIso: NOW });
     expect(() => store.transition(rejected.id, 'TASK_STATE_WORKING', { nowIso: NOW }))
       .toThrow(InvalidTaskTransitionError);
+  });
+});
+
+describe('TaskStore.cancel (macf#398 Phase 2d — tasks/cancel JSON-RPC method)', () => {
+  let store: TaskStore;
+
+  beforeEach(() => {
+    store = new TaskStore();
+  });
+
+  it('cancels a SUBMITTED task — transitions to CANCELED + becomes terminal', () => {
+    const created = store.create(makeMessage(), { nowIso: NOW });
+    const canceled = store.cancel(created.id, { nowIso: NOW });
+    expect(canceled.status.state).toBe('TASK_STATE_CANCELED');
+    expect(store.isTerminal(canceled.id)).toBe(true);
+  });
+
+  it('cancels a WORKING task', () => {
+    const created = store.create(makeMessage(), { nowIso: NOW });
+    store.transition(created.id, 'TASK_STATE_WORKING', { nowIso: NOW });
+    const canceled = store.cancel(created.id, { nowIso: NOW });
+    expect(canceled.status.state).toBe('TASK_STATE_CANCELED');
+  });
+
+  it('cancels an INPUT_REQUIRED task (paused; user has not resumed yet)', () => {
+    const created = store.create(makeMessage(), { nowIso: NOW });
+    store.transition(created.id, 'TASK_STATE_WORKING', { nowIso: NOW });
+    store.transition(created.id, 'TASK_STATE_INPUT_REQUIRED', { nowIso: NOW });
+    const canceled = store.cancel(created.id, { nowIso: NOW });
+    expect(canceled.status.state).toBe('TASK_STATE_CANCELED');
+  });
+
+  it('cancels an AUTH_REQUIRED task', () => {
+    const created = store.create(makeMessage(), { nowIso: NOW });
+    store.transition(created.id, 'TASK_STATE_WORKING', { nowIso: NOW });
+    store.transition(created.id, 'TASK_STATE_AUTH_REQUIRED', { nowIso: NOW });
+    const canceled = store.cancel(created.id, { nowIso: NOW });
+    expect(canceled.status.state).toBe('TASK_STATE_CANCELED');
+  });
+
+  it('throws TaskNotFoundError on unknown task id', () => {
+    expect(() => store.cancel('unknown-id', { nowIso: NOW }))
+      .toThrow(TaskNotFoundError);
+  });
+
+  it('throws TaskNotCancelableError on already-canceled task (terminal)', () => {
+    const created = store.create(makeMessage(), { nowIso: NOW });
+    store.cancel(created.id, { nowIso: NOW });
+    expect(() => store.cancel(created.id, { nowIso: NOW }))
+      .toThrow(TaskNotCancelableError);
+  });
+
+  it('throws TaskNotCancelableError on COMPLETED task', () => {
+    const created = store.create(makeMessage(), { nowIso: NOW });
+    store.transition(created.id, 'TASK_STATE_WORKING', { nowIso: NOW });
+    store.transition(created.id, 'TASK_STATE_COMPLETED', { nowIso: NOW });
+    expect(() => store.cancel(created.id, { nowIso: NOW }))
+      .toThrow(TaskNotCancelableError);
+  });
+
+  it('throws TaskNotCancelableError on FAILED task', () => {
+    const created = store.create(makeMessage(), { nowIso: NOW });
+    store.transition(created.id, 'TASK_STATE_WORKING', { nowIso: NOW });
+    store.transition(created.id, 'TASK_STATE_FAILED', { nowIso: NOW });
+    expect(() => store.cancel(created.id, { nowIso: NOW }))
+      .toThrow(TaskNotCancelableError);
+  });
+
+  it('throws TaskNotCancelableError on REJECTED task', () => {
+    const rejected = store.rejectFresh(makeMessage(), makeMessage({ role: 'ROLE_AGENT' }), { nowIso: NOW });
+    expect(() => store.cancel(rejected.id, { nowIso: NOW }))
+      .toThrow(TaskNotCancelableError);
+  });
+
+  it('TaskNotCancelableError carries the current state for error mapping', () => {
+    const created = store.create(makeMessage(), { nowIso: NOW });
+    store.transition(created.id, 'TASK_STATE_WORKING', { nowIso: NOW });
+    store.transition(created.id, 'TASK_STATE_COMPLETED', { nowIso: NOW });
+    try {
+      store.cancel(created.id, { nowIso: NOW });
+      expect.fail('expected throw');
+    } catch (err) {
+      expect(err).toBeInstanceOf(TaskNotCancelableError);
+      expect((err as TaskNotCancelableError).currentState).toBe('TASK_STATE_COMPLETED');
+      expect((err as TaskNotCancelableError).code).toBe('TASK_NOT_CANCELABLE');
+    }
+  });
+
+  it('records the timestamp at cancel time', () => {
+    const created = store.create(makeMessage(), { nowIso: NOW });
+    const cancelTime = '2026-05-19T20:30:00.000Z';
+    const canceled = store.cancel(created.id, { nowIso: cancelTime });
+    expect(canceled.status.timestamp).toBe(cancelTime);
+  });
+
+  it('tasks/get can still see the canceled task after cancel (terminal but persisted)', () => {
+    const created = store.create(makeMessage(), { nowIso: NOW });
+    store.cancel(created.id, { nowIso: NOW });
+    const fetched = store.get(created.id);
+    expect(fetched).toBeDefined();
+    expect(fetched?.status.state).toBe('TASK_STATE_CANCELED');
   });
 });

@@ -220,6 +220,53 @@ export const MessageSendParamsSchema = z.object({
 
 export type MessageSendParams = z.infer<typeof MessageSendParamsSchema>;
 
+// ---------------------------------------------------------------------------
+// tasks/get + tasks/cancel params — § 9 + canonical proto (macf#398 Phase 2d)
+// ---------------------------------------------------------------------------
+//
+// Per canonical proto (a2a.proto):
+//   message GetTaskRequest    { string name = 1; ... }
+//   message CancelTaskRequest { string name = 1; ... }
+//
+// `name` is the resource path "tasks/{id}". The JSON-RPC binding in
+// practice accepts EITHER the bare `id` form (canonical in most A2A
+// client SDKs surveyed) OR the proto-canonical `name` form. We accept
+// both by branching on which key is present; the route handler reduces
+// to the bare taskId for TaskStore lookup.
+//
+// Why accept both: the Python a2a-sdk v1.0.3 client surface emits
+// `params: { id }` for tasks/get; the protobuf-canonical wire form
+// emits `params: { name: "tasks/{id}" }`. Rejecting either would break
+// a real client.
+
+/** Params for `tasks/get` + `tasks/cancel`. Accepts `{ id }` or proto-canonical `{ name: "tasks/{id}" }`. */
+export const TaskIdParamsSchema = z
+  .object({
+    id: z.string().min(1).optional(),
+    name: z.string().min(1).optional(),
+    metadata: z.record(z.string(), z.unknown()).optional(),
+  })
+  .refine(
+    (obj) => (obj.id !== undefined) || (obj.name !== undefined),
+    { message: 'Params: one of `id` or `name` must be present' },
+  );
+
+export type TaskIdParams = z.infer<typeof TaskIdParamsSchema>;
+
+/**
+ * Resolve a TaskIdParams to the bare task id. `id` takes precedence
+ * over `name`; if only `name` is present, strip the `tasks/` resource
+ * prefix per the proto canonical mapping. Returns `undefined` if
+ * neither was present (the refine should have rejected, but defensive).
+ */
+export function resolveTaskId(params: TaskIdParams): string | undefined {
+  if (params.id !== undefined && params.id.length > 0) return params.id;
+  if (params.name !== undefined && params.name.length > 0) {
+    return params.name.startsWith('tasks/') ? params.name.slice('tasks/'.length) : params.name;
+  }
+  return undefined;
+}
+
 /**
  * JSON-RPC 2.0 success response envelope. `result` for `message/send`
  * is either a Task or a Message per spec § 9.4.1 — Phase 2a always
@@ -283,6 +330,12 @@ export const A2A_REASON_TASK_NOT_RESUMABLE = 'TASK_NOT_RESUMABLE';
 
 /** Canonical JSON-RPC method string for the inbound message exchange (spec § 9 examples). */
 export const A2A_METHOD_MESSAGE_SEND = 'message/send';
+
+/** Canonical JSON-RPC method string for task lookup (macf#398 Phase 2d). */
+export const A2A_METHOD_TASKS_GET = 'tasks/get';
+
+/** Canonical JSON-RPC method string for task cancellation (macf#398 Phase 2d). */
+export const A2A_METHOD_TASKS_CANCEL = 'tasks/cancel';
 
 /** Canonical AgentCard.url path for this server's A2A endpoint. */
 export const A2A_ENDPOINT_PATH = '/a2a/v1';
