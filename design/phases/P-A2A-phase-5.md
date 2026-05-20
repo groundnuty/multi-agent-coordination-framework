@@ -145,29 +145,54 @@ over the observation window (relevant to AC 5 sunset).
 **Status**: operator action; release-hygiene dashboard pre-exists
 
 Use the release-hygiene Grafana dashboard (`macf-release-hygiene` UID;
-`groundnuty/macf-devops-toolkit#74` / `#77` shipped 2026-05-20). Add a
-new panel OR use an existing per-version count panel filtered to CV
-agents:
+`groundnuty/macf-devops-toolkit#74` / `#77` shipped 2026-05-20).
+
+**Canonical query — Tempo span resource attribute** (primary; closest to
+the actual question "what version of channel-server is each CV agent
+running"):
+
+```
+{resource.service.name=~"macf-channel-server.*",
+ resource."gen_ai.agent.name"=~"cv-.*"}
+| select(resource.service.version, resource."gen_ai.agent.name")
+```
+
+Surface this as a Grafana Tempo panel; the `resource.service.version`
+attribute is emitted by `macf-channel-server`'s OTel SDK from the
+package version pulled at boot (see `packages/macf-channel-server/src/otel.ts`
+service-name + service-version resource detection). Each CV agent's
+recent SERVER spans carry the actual deployed version. Once both CV
+agents' spans show `service.version=0.2.32` (or later), AC 4 is
+satisfied.
+
+**Alternative — Prometheus inventory (if a per-version-counter is wired
+in the dashboard)**: the release-hygiene dashboard may grow a
+`macf_app_channel_server_version_info{agent, version}` info-metric
+in a future iteration. If/when that lands, the PromQL becomes:
 
 ```promql
-count by (gh_actor, gh_repo) (
-  macf_app_gh_actions_write_total{
-    gh_actor=~"cv-.*"
-  }
+count by (agent, version) (
+  macf_app_channel_server_version_info{agent=~"cv-.*"}
 )
 ```
 
-This surfaces the live consumer-version inventory. Once both CV agents
-appear on v0.2.32+, AC 4 is satisfied.
+**Not recommended** (prior draft had this; corrected here): querying
+`macf_app_gh_actions_write_total` for CV agents — that metric counts
+App workflow-dispatch calls (DR-019 Amendment A audit-log emissions),
+not channel-server version. CV agents typically aren't App-action-
+writers, so the metric trends near-zero regardless of version — wrong
+signal source for consumer-version inventory.
 
-Alternative direct check via npm registry user view:
+**Last-resort — direct workspace inspection** (offline alternative when
+Tempo / Grafana unavailable):
 
 ```bash
-npm view @groundnuty/macf-channel-server@0.2.32 dist.attestations.url
+# Per CV workspace, the AC 1 procedure step 2 already runs this:
+node -e "console.log(require('@groundnuty/macf-channel-server/package.json').version)"
 ```
 
-This is package-published-state, not consumer-deployment-state, so use
-the Tempo / Grafana surface for actual consumer verification.
+Asserts deployed version directly; complements Tempo for the
+observation-not-inference discipline.
 
 ### AC 5 — Sunset coordination
 
