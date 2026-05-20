@@ -55,40 +55,62 @@ test/             ← unit tests (default vitest run) + test/e2e/ (excluded)
 ## Implementation Status
 
 P1–P7 all implemented. Post-P7 work is bug-fix + security + hardening driven
-by issue queue and periodic audits. **Current state**: `main` is at v0.2.30
-bump-commit (`f3c7f10`) with Phase 2a + 2c + 2b bundled; **last successfully
-published version on npm is v0.2.28** (v0.2.29 + v0.2.30 publish attempts
-both FAILED with npm 404 PUT; 2 orphan sigstore TLOG entries; operator-side
-npm-token investigation gating v0.2.31+ recovery per `#368` thread). See
-`CHANGELOG.md`. 24 DRs (DR-019 Amendment A SHIPPED v0.2.27; DR-022
-Amendment M SHIPPED in code on v0.2.30 bump-commit), 8 phase specs (added
-`P-A2A-phase-2.md`), 13 canonical rules, 16 research notes.
+by issue queue and periodic audits. **Current state**: `main` is at v0.2.32
+(`aad5a15` bump-commit; `acfdede` post-publish verify-script fix). **LIVE
+on npm: v0.2.32 across all 3 packages with provenance attestations** —
+recovery arc from v0.2.29-failure to v0.2.32-success completed 2026-05-20
+via pivot to OIDC Trusted Publishers (operator-configured on npmjs.com;
+GitHub `NPM_TOKEN` secret deleted; workflow falls through to OIDC via
+`id-token: write` permission). See `CHANGELOG.md` [0.2.32] for the full
+recovery narrative. 24 DRs (DR-019 Amendment A SHIPPED v0.2.27; DR-022
+Amendment M SHIPPED v0.2.30 bump-commit; both LIVE via v0.2.32), 9 phase
+specs (added `P-A2A-phase-2.md`, `P-A2A-phase-2d.md`, `P-A2A-phase-3.md`),
+13 canonical rules (silent-fallback Instance 9 added via #403), 16
+research notes.
 
-**A2A integration arc** (master tracking #368): Phase 0–2 all shipped in
-code on `main`:
+**A2A integration arc** (master tracking #368): **full bidirectional v1.0
+surface LIVE on npm via v0.2.32**:
 - Phase 0 (#369, v0.2.23 — OTel `invoke_agent` span rename) ✓
 - Phase 1 (#370, v0.2.24 — `/.well-known/agent-card.json` discovery) ✓
 - `/sign` Path 2 (#371, v0.2.26 — `/macf/sign` namespace) ✓
-- **Phase 2a (#391/#390, v0.2.30 — inbound JSON-RPC `message/send` at
+- **Phase 2a (#391/#390, v0.2.32 — inbound JSON-RPC `message/send` at
   `/a2a/v1` + task lifecycle state machine + AgentCard skills/url update;
-  full 8-state TaskState enum including v1.0-only `REJECTED`)** ✓ code-merged
-- **Phase 2c (#395/#393, v0.2.30 — AgentCard schema proto-alignment;
+  full 8-state TaskState enum including v1.0-only `REJECTED`)** ✓ RELEASED
+- **Phase 2c (#395/#393, v0.2.32 — AgentCard schema proto-alignment;
   top-level `id`+`url` removed; `description` + `supportedInterfaces`
   (where endpoint URL lives) + `defaultInputModes` + `defaultOutputModes`
-  required per canonical proto; AgentSkill `description` + `tags`
-  required)** ✓ code-merged
-- **Phase 2b (#397/#392, v0.2.30 — intermediate states +
-  `Message.taskId` resume + structured JSON-RPC error mapping;
-  TaskNotFoundError + TaskNotResumableError; ROLE_USER enforcement;
-  env-flag-gated REJECTED test fixture)** ✓ code-merged
-- Phase 2d (#398) — Python SDK `message/send` round-trip +
-  traceparent E2E mock-OTLP + `tasks/get` + `tasks/cancel` JSON-RPC
-  methods; sub-issue queued post-v0.2.31 publish
-- Phase 3 (#396) — outbound A2A `message/send` from MACF as A2A client;
-  design proposal ACKED by science-agent; impl queued post-Phase-2d
+  required per canonical proto)** ✓ RELEASED
+- **Phase 2b (#397/#392, v0.2.32 — intermediate states + `Message.taskId`
+  resume + structured JSON-RPC error mapping; TaskNotFoundError +
+  TaskNotResumableError; ROLE_USER enforcement; env-flag-gated REJECTED
+  test fixture)** ✓ RELEASED
+- **Phase 2d (#402/#398, v0.2.32 — `tasks/get` + `tasks/cancel` JSON-RPC
+  methods; TaskIdParamsSchema accepts both `{ id }` + proto-canonical
+  `{ name: "tasks/<id>" }`; TaskStore.cancel() + TaskNotCancelableError;
+  Python a2a-sdk v1.0.3 round-trip integration; W3C tracecontext E2E via
+  InMemorySpanExporter + W3CTraceContextPropagator)** ✓ RELEASED
+- **Phase 3 (#407/#396, v0.2.32 — outbound A2A `message/send` via
+  `A2aClient` (sendMessage + getAgentCard with 5-min TTL cache); protocol
+  selection in `notify_peer.ts` via `selectOutboundProtocol()`;
+  MACF_OUTBOUND_LEGACY=1 + 'custom' event → legacy preserved;
+  `macf.outbound.protocol` + `OutboundTargetUrl` + `A2aTaskId` +
+  `A2aTaskState` tracing attrs)** ✓ RELEASED
+- Phase 3.5 — receiver-side wake-decision on `/a2a/v1` for `custom`
+  events; reactive-deferral (no time pressure); trigger = first
+  operator-driven `custom` event on A2A path
+- Phase 3.6 — wire-form convergence with Python a2a-sdk JSON-RPC
+  dispatcher; reactive-deferral; trigger = SDK stabilization OR external
+  client surfacing the form-mismatch (3 forms documented in design doc:
+  spec-text / SDK v1.0 primary PascalCase / SDK v0.3 compat lowercase)
+- Phase 4 (#405) — external publication + legacy `notify_peer` sunset;
+  unblocked post-v0.2.32; queued for next pickup
+- Phase 5 (#406) — CV consumer-fleet migration; light-touch (version-bump
+  coordination + cv-e2e-test rehearsal); queued post-Phase-4
 
-Test count baseline at v0.2.30 bump-commit: **1438 across the three
-packages** (870 macf + 272 channel-server + 296 macf-core).
+Test count at v0.2.32 release: **1477 across the three packages** + 8
+integration tests (opt-in via `make test-integration`). Channel-server
+went 272 → 311 (+39 from Phase 2d + Phase 3 a2a-client). macf-core 296
+unchanged. macf 870+ unchanged.
 
 **Recent release notes worth knowing on resume:**
 - v0.2.23 = #369 Phase 0 span rename
@@ -97,15 +119,16 @@ packages** (870 macf + 272 channel-server + 296 macf-core).
 - v0.2.27 = #383 + #384 + #385 (deprecated-constant removal + DR-019
   Amendment A audit-log impl + Python A2A SDK integration test)
 - v0.2.28 = #389 resource-attrs population in audit-log emission
-  (**this is the latest LIVE version on npm**)
-- v0.2.29 = bundled v0.2.27+v0.2.28 retry (publish FAILED at npm PUT)
-- v0.2.30 = bundled Phase 2a + 2c + 2b (publish FAILED with same npm 404 root cause)
-- v0.2.31+ = recovery release; cut when operator unblocks npm-token issue
-- DR-019 Amendment A SHIPPED v0.2.27 (#378 → #384 impl) — App now has
-  `actions:write` per operator grant; audit-log emission live for any
-  matching `gh workflow run` etc.
-- DR-022 Amendment M SHIPPED in v0.2.30 bump (#395) — AgentCard proto-
-  alignment migration documentation
+- v0.2.29 / v0.2.30 / v0.2.31 = bundled content; ALL FAILED to publish
+  (npm 404 PUT / npm 404 PUT / EOTP-Bypass-2FA-missing). Sigstore TLOG
+  orphans persist (4 entries: logIndex 1573948960 v0.2.25 + 1575263520
+  v0.2.29 + 1575475073 v0.2.30 + 1576145129 v0.2.31). NEVER published.
+- **v0.2.32 = bundled Phase 2a/b/c/d + Phase 3 + #399/#400/#401/#403;
+  PUBLISHED 2026-05-20T03:04Z via OIDC Trusted Publishers**
+- DR-019 Amendment A SHIPPED v0.2.27 (#378 → #384 impl) — App has
+  `actions:write`; audit-log emission live
+- DR-022 Amendment M SHIPPED v0.2.30 bump-commit (#395) — AgentCard
+  proto-alignment migration documentation; LIVE on npm via v0.2.32
 
 **Critical operator-action gating release progress** (#368): npm-token
 investigation. Per science-agent diagnostic candidates: NPM_TOKEN expired
