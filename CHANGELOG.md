@@ -9,6 +9,90 @@ Plugin + routing-workflow changes ship from separate repos
 [`groundnuty/macf-actions`](https://github.com/groundnuty/macf-actions))
 and are not included here — pin them explicitly in each workspace.
 
+## [0.2.31] — 2026-05-20
+
+Recovery release per DR-022 Amendment L. v0.2.29 + v0.2.30 publish
+workflows both failed at npm registry PUT step (HTTP 404; sigstore TLOG
+entries orphan; operator-side npm-token investigation gating). Operator
+issued fresh token 2026-05-20; v0.2.31 republishes the bundled content
+plus the post-v0.2.30 work that accumulated during the recovery window.
+
+This release is **the full A2A v1.0 bidirectional surface** (Phase 2
+inbound + Phase 3 outbound) plus CI / docs / test-stabilization PRs.
+
+### A2A v1.0 inbound — Phase 2a/b/c/d
+
+- **Phase 2a** ([#391], Refs #390) — inbound JSON-RPC `message/send`
+  at `/a2a/v1`; full 8-state TaskState enum (SUBMITTED → WORKING →
+  COMPLETED happy path; INPUT_REQUIRED / AUTH_REQUIRED / REJECTED states
+  declared); in-memory TaskStore.
+- **Phase 2b** ([#397], Refs #392) — intermediate states + resume
+  via `Message.taskId`; TaskNotFoundError + TaskNotResumableError;
+  ROLE_USER enforcement on resume; env-flag-gated REJECTED test fixture.
+- **Phase 2c** ([#395], Refs #393) — AgentCard proto-canonical
+  schema realignment; top-level `id` + `url` removed; `description` +
+  `supportedInterfaces` + `defaultInputModes` + `defaultOutputModes`
+  upgraded to required. See DR-022 Amendment M for migration narrative.
+- **Phase 2d** ([#402], Refs #398) — `tasks/get` + `tasks/cancel`
+  JSON-RPC methods; TaskIdParamsSchema accepts both bare `{ id }` and
+  proto-canonical `{ name: "tasks/<id>" }`; TaskStore.cancel() with
+  TaskNotCancelableError; Python a2a-sdk v1.0.3 round-trip integration
+  test; W3C tracecontext propagation E2E smoke via
+  InMemorySpanExporter + W3CTraceContextPropagator.
+
+### A2A v1.0 outbound — Phase 3
+
+- **Phase 3** ([#407], Refs #396) — `A2aClient` outbound primitive
+  with `sendMessage` + `getAgentCard` (5-min TTL cache) + mTLS via
+  per-project CA + traceparent injection. Protocol selection in
+  `notify_peer.ts` via `selectOutboundProtocol()` decision tree
+  (`MACF_OUTBOUND_LEGACY=1` env / `event === 'custom'` / no AgentCard
+  → legacy; AgentCard with JSONRPC binding → A2A). Tracing attrs
+  (`OutboundProtocol`, `OutboundTargetUrl`, `A2aTaskId`, `A2aTaskState`)
+  disambiguate the two outbound paths under canonical
+  `invoke_agent {target}` span name. Wire-form divergence between A2A
+  v1.0 spec text + Python SDK implementation surfaced + documented;
+  Phase 3.5 (receiver-side wake-decision on `/a2a/v1` for `custom`
+  events) + Phase 3.6 (wire-form convergence) reactive-deferrals.
+
+### CI + tests + docs
+
+- **CI integration job** ([#399], Refs #386) — extends `e2e.yml`
+  with `integration-python-a2a` job; path-filter scopes PR trigger to
+  AgentCard surface; venv cache keyed on SDK + dep set + OS;
+  self-close-on-green incident pattern from #163.
+- **Test stabilization** ([#400], Refs #382) — mock plugin-version
+  resolution path (root-cause refinement vs PR #380's hypothesis);
+  revert #380's 30s timeout lift back to default 5s.
+- **DR-019 doc backfill** ([#401]) — #TBD placeholders resolved with
+  delivered devops dashboard refs (`groundnuty/macf-devops-toolkit#74`
+  closed; #77 PR merged at `85c966a8`); PromQL string-escape gotcha
+  methodology paragraph
+  (`reference_multi_language_regex_escape_translation.md` cross-ref).
+- **Silent-fallback Instance 9** ([#403]) — sigstore TLOG orphans on
+  failed npm publish canonicalized as 9th instance (sister-shape to
+  strict silent-fallback: failure LOUD at API boundary; hazard is
+  retry-recovery not detection-surface). 3-instance evidence base
+  + three documented defense layers.
+
+### Test count baseline
+
+- macf-channel-server: 311 (+39 from pre-v0.2.30; Phase 2d + Phase 3)
+- macf-core: 296 (unchanged)
+- macf: 870+ (unchanged)
+- Integration tests (opt-in via `make test-integration`): 8 total
+  (4 Phase 2d Python-client + 4 Phase 3 Python-server, 1 documented
+  skip for wire-form divergence)
+
+### Operator notes
+
+- v0.2.29 + v0.2.30 sigstore TLOG entries (`logIndex 1575263520` +
+  `1575475073`) persist as orphan attestations; transparency log is
+  append-only by design. No cleanup needed.
+- `@groundnuty/macf{,-core}@0.2.25` orphan packages on npm remain;
+  deprecate via `npm-deprecate.yml` workflow_dispatch when convenient
+  (independent of release path).
+
 ## [0.2.30] — 2026-05-19
 
 Recovery + bundled release. v0.2.29 publish workflow failed at npm registry
