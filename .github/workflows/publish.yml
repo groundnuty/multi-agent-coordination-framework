@@ -172,12 +172,15 @@ jobs:
 
       # OIDC trusted publishers (npm 11.5.1+) require a newer npm than
       # devbox's nixpkgs pin currently provides (npm@10.8.3 at the
-      # nodePackages.npm pin). Upgrade in-place on the runner only;
-      # devbox.json's pin stays the same so local dev / CI test runs
-      # are unaffected. This step is no-op when NPM_TOKEN auth is used
-      # (npm 10.x supports legacy tokens), but load-bearing for the
-      # OIDC fallback path. See groundnuty/macf#368 v0.2.31 EOTP
-      # failure + DR-022 Amendment L for the recovery context.
+      # nodePackages.npm pin). Install npm@11.14.1 into a user-writable
+      # prefix on the runner ($HOME/npm-global) and prepend to PATH;
+      # devbox.json's pin stays the same so local dev is unaffected.
+      #
+      # Why NOT `devbox run -- npm install -g`: devbox uses Nix's
+      # read-only store at /nix/store/...; npm's default global prefix
+      # under Nix's nodejs hits EACCES on mkdir. The user-prefix
+      # approach uses the SAME devbox npm binary as the install driver
+      # but redirects the install target to a writable location.
       #
       # PINNED to a specific npm version, NOT `latest`: floating tags
       # silently break in the future when npm 12+ ships behavioral
@@ -185,8 +188,12 @@ jobs:
       # directive 2026-05-20 (`feedback_no_floating_tags_in_ci_pins.md`).
       - name: Upgrade npm to 11.14.1 (for OIDC trusted publisher support)
         run: |
+          set -euo pipefail
+          mkdir -p "$HOME/npm-global"
+          devbox run -- npm config set prefix "$HOME/npm-global"
           devbox run -- npm install -g npm@11.14.1
-          devbox run -- npm --version
+          echo "$HOME/npm-global/bin" >> "$GITHUB_PATH"
+          "$HOME/npm-global/bin/npm" --version
 
       - name: Detect auth path
         id: auth
@@ -214,21 +221,24 @@ jobs:
           echo "//registry.npmjs.org/:_authToken=${NPM_TOKEN}" >> "$HOME/.npmrc"
           echo "registry=https://registry.npmjs.org/" >> "$HOME/.npmrc"
 
-      # `devbox run -- npm publish` runs from the devbox project root
-      # (the monorepo root) regardless of any preceding `cd`. Using
-      # `cd packages/<name>` before the command was a silent no-op —
-      # npm packed the private monorepo-root package instead of the
-      # intended sub-package, failing with EPRIVATE. Use `npm`'s
-      # workspace flag to target each sub-package by name from root.
-      # See the v0.2.0-rc.0 failed publish run for the diagnostic.
+      # Bare `npm publish` (NOT `devbox run -- npm publish`) — uses the
+      # PATH-resolved npm 11.14.1 from $HOME/npm-global/bin (installed
+      # above) for OIDC trusted publisher support. devbox's pinned
+      # npm@10.8.3 lacks the OIDC handshake (needs 11.5.1+).
+      #
+      # Workflow flag (not cwd) targets sub-packages from monorepo root.
+      # `cd packages/<name>` before the command was a silent no-op
+      # historically — npm packed the private monorepo-root package
+      # instead of the intended sub-package, failing with EPRIVATE.
+      # See v0.2.0-rc.0 failed publish run for the diagnostic.
       - name: Publish @groundnuty/macf-core (first, consumers depend on it)
         env:
           DRY_RUN: ${{ github.event.inputs.dry-run }}
         run: |
           if [[ "$DRY_RUN" == "true" ]]; then
-            devbox run -- npm publish --workspace=@groundnuty/macf-core --provenance --access public --dry-run
+            npm publish --workspace=@groundnuty/macf-core --provenance --access public --dry-run
           else
-            devbox run -- npm publish --workspace=@groundnuty/macf-core --provenance --access public
+            npm publish --workspace=@groundnuty/macf-core --provenance --access public
           fi
 
       - name: Publish @groundnuty/macf (CLI)
@@ -236,9 +246,9 @@ jobs:
           DRY_RUN: ${{ github.event.inputs.dry-run }}
         run: |
           if [[ "$DRY_RUN" == "true" ]]; then
-            devbox run -- npm publish --workspace=@groundnuty/macf --provenance --access public --dry-run
+            npm publish --workspace=@groundnuty/macf --provenance --access public --dry-run
           else
-            devbox run -- npm publish --workspace=@groundnuty/macf --provenance --access public
+            npm publish --workspace=@groundnuty/macf --provenance --access public
           fi
 
       - name: Publish @groundnuty/macf-channel-server
@@ -246,9 +256,9 @@ jobs:
           DRY_RUN: ${{ github.event.inputs.dry-run }}
         run: |
           if [[ "$DRY_RUN" == "true" ]]; then
-            devbox run -- npm publish --workspace=@groundnuty/macf-channel-server --provenance --access public --dry-run
+            npm publish --workspace=@groundnuty/macf-channel-server --provenance --access public --dry-run
           else
-            devbox run -- npm publish --workspace=@groundnuty/macf-channel-server --provenance --access public
+            npm publish --workspace=@groundnuty/macf-channel-server --provenance --access public
           fi
 
       # Per macf#214 step 2: `npm publish --provenance` exits 0 even
