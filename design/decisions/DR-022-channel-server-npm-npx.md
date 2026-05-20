@@ -566,3 +566,50 @@ Future MACF packages (e.g., if `@groundnuty/macf-marketplace` or `@groundnuty/ma
 - Prior gotcha: `reference_npm_token_bypass_2fa.md` (science-agent memory; 2026-04-22 DR-022 bootstrap)
 - Substrate-evolution-cadence pattern: `project_substrate_evolution_release_cadence.md` — release-pipeline layer is the third arc instance
 - OIDC pattern adopter: `feedback_oidc_trusted_publishers_for_npm.md` (science-agent memory; 2026-05-20)
+
+### Amendment O — Legacy `notify_peer` envelope sunset criterion: Option A (counter-based) (added 2026-05-20)
+
+Per Phase 4 (`groundnuty/macf#405` + PR `#409`) which surfaced three sunset criterion options for the legacy `POST /notify` envelope path (used by `notify_peer` MCP tool pre-A2A; see DR-023 UC-1), operator selected **Option A — counter-based** on `groundnuty/macf#368` 2026-05-20T~23:35Z.
+
+**Sunset criterion (formal codification):**
+
+> The legacy `POST /notify` envelope path is sunset when **no `notify_peer` legacy-path invocations have been observed for 60 consecutive days** across all known MACF deployments. Observation is via the `macf.outbound.protocol: 'legacy'` span attribute count in Tempo (per Phase 3 #407 wiring; observed via the release-hygiene Grafana dashboard's macf-release-hygiene UID per `groundnuty/macf-devops-toolkit#74` + `#77`).
+
+**Rationale (per Phase 4 design doc `design/phases/P-A2A-phase-4.md § Step 4`):**
+
+- **Option A (selected)**: usage-driven sunset; avoids premature removal while ANY consumer still uses the path. Sister-shape to feature-flag-removal discipline (`feature.is_used()` returning false for N days → safe to remove).
+- Option B (calendar-based, e.g., 2026-09-30): rejected — forcing-function discipline carries risk of breaking still-active callers.
+- Option C (phase-completion-based + 30 days): also viable but A is purer (no Phase-5-execution dependency on the criterion itself).
+
+**Observation procedure:**
+
+1. **Baseline establishment** (Phase 5 execution step 7): once CV consumer fleet migrates to v0.2.32+ (Phase 5 ACs 1-3 satisfied), the legacy-invocation count baseline is established. Query Tempo periodically:
+
+   ```
+   {macf.outbound.protocol="legacy"} | rate() over [1d]
+   ```
+
+   When this rate goes to zero, the 60-day observation window starts.
+
+2. **60-day observation window**: continuously monitor the legacy-invocation rate. Any non-zero observation in the window resets the timer.
+
+3. **Sunset trigger**: at end of 60 consecutive zero-rate days, a sunset-execution PR removes the legacy `/notify` envelope handler from `macf-channel-server` source. The removal PR will:
+   - Reference this Amendment O in its body
+   - Cite the specific Tempo query results establishing the 60-day zero observation
+   - Update `silent-fallback-hazards.md` Instance 6 + `gh-token-attribution-traps.md` to mark their `notify_peer` references as historical-witness-only with the sunset date
+   - Bump the channel-server version (breaking change for any straggling legacy callers; expected zero per the criterion)
+
+**Out of scope for this amendment:**
+
+- Actual sunset-execution PR (triggered when criterion fires; not pre-scheduled per Option A's usage-driven discipline)
+- Phase 5 8-item checklist execution (separate; tracked via `groundnuty/macf#406`)
+- Future Phases beyond #406 if additional consumer-fleet onboarding surfaces (Phase 5 pattern generalizes per `design/phases/P-A2A-phase-5.md § Out of scope`)
+
+**Cross-references:**
+
+- Phase 4 (sunset criterion options): `groundnuty/macf#405` + PR `#409` (`design/phases/P-A2A-phase-4.md § Step 4`)
+- Phase 5 (CV consumer-fleet migration; baseline-establishment step): `groundnuty/macf#406` + PR `#410` (`design/phases/P-A2A-phase-5.md § AC 5 + AC 7`)
+- Phase 3 (protocol selection + `macf.outbound.protocol` span attr): `groundnuty/macf#396` + PR `#407` (`packages/macf-channel-server/src/notify-peer.ts § dispatchToPeer`)
+- DR-023 UC-1 (legacy `/notify` envelope shape that this amendment prepares to sunset)
+- Master tracking: `groundnuty/macf#368` — operator decision recorded 2026-05-20T~23:35Z
+- Release-hygiene dashboard: `groundnuty/macf-devops-toolkit:macf-release-hygiene` Grafana UID (#74 + #77 shipped 2026-05-20)
