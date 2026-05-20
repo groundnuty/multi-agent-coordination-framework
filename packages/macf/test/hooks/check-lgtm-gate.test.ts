@@ -489,7 +489,7 @@ describe('check-lgtm-gate.sh (hook)', () => {
       expect(r.status).toBe(0);
     });
 
-    it('allows merge when gh is not on PATH (worst-case missing tool)', { timeout: 30_000 }, () => {
+    it('allows merge when gh is not on PATH (worst-case missing tool)', () => {
       // Build a PATH that contains bash/jq/sed (so the script itself
       // runs) but lacks `gh`. Use only an empty stub dir prepended;
       // resolve standard system paths from the test's PATH so basic
