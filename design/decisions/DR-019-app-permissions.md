@@ -395,10 +395,14 @@ analogous artifact is the canonical PreToolUse hook itself:
 canonical-rules + hook test coverage) lands in a follow-up issue
 filed against `groundnuty/macf` after this DR amendment lands (not
 in this DR amendment's scope; this DR codifies the requirement, the
-issue tracks the code). Devops-agent's forthcoming
-`groundnuty/macf-devops-toolkit#TBD` builds the release-hygiene
-Grafana dashboard derived from these signals — URL recorded in this
-DR once the dashboard lands.
+issue tracks the code). Devops-agent's `groundnuty/macf-devops-toolkit#74`
+(issue, closed 2026-05-20T00:06:56Z) + `#77` (impl PR, merged at
+`85c966a8`) builds the release-hygiene Grafana dashboard derived from
+these signals. Dashboard UID: `macf-release-hygiene`. Operator access:
+`make pf-grafana` (from `environments/macf/`) → `http://127.0.0.1:3000/d/macf-release-hygiene`.
+Source manifests at `groundnuty/macf-devops-toolkit:environments/macf/manifests/grafana-dashboards-release-hygiene/`.
+
+**PromQL string-escape gotcha** (caught during devops-agent's dashboard implementation): the canonical dispatch-allowlist regex `npm-deprecate\.yml` (single backslash; matches the literal `.` in `.yml`) must be doubled to `npm-deprecate\\.yml` when embedded in a PromQL string literal (PromQL's string parser doesn't accept `\.` as an escape sequence and silently mis-parses without the doubling). The `make grafana-allowlist-sync` target in `groundnuty/macf-devops-toolkit` handles the doubling automatically when materializing the SSOT-derived ConfigMap into the dashboard alert expression. Future readers re-implementing the alert surface or adding sibling regex-driven alerts must apply the same transform; sister-shape to silent-fallback hazards on the regex-cross-language-translation side. Devops-agent's `reference_multi_language_regex_escape_translation.md` memory captures the methodology learning.
 
 If science-agent + devops-agent push back on the gh-CLI Q3 reframe
 and prefer to adopt octokit instead, the implementation issue scopes
@@ -428,4 +432,4 @@ issue.
 - groundnuty/macf#371 — `/sign` namespace move; surfaced this amendment via the orphan-cleanup workflow_dispatch ask
 - groundnuty/macf#377 — sigstore-TLOG hazard + test-flake stabilization (sibling concern from same session)
 - `reference_macf_app_permissions.md` (science-agent memory) — recurring-friction history
-- Devops-agent's forthcoming `groundnuty/macf-devops-toolkit#TBD` — release-hygiene Grafana dashboard
+- `groundnuty/macf-devops-toolkit#74` (issue) + `groundnuty/macf-devops-toolkit#77` (impl PR, merged at `85c966a8`) — release-hygiene Grafana dashboard + alerts (dashboard UID `macf-release-hygiene`)
