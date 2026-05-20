@@ -11,7 +11,11 @@ import { getNotifyReceivedCounter, getSignCallsCounter, MetricAttr } from './met
 import {
   JsonRpcRequestSchema,
   MessageSendParamsSchema,
+  TaskIdParamsSchema,
+  resolveTaskId,
   A2A_METHOD_MESSAGE_SEND,
+  A2A_METHOD_TASKS_GET,
+  A2A_METHOD_TASKS_CANCEL,
   A2A_ENDPOINT_PATH,
   A2A_ERROR_DOMAIN,
   A2A_REASON_INVALID_MESSAGE,
@@ -25,7 +29,12 @@ import {
   JSONRPC_INVALID_PARAMS,
   JSONRPC_INTERNAL_ERROR,
 } from './a2a-types.js';
-import { TaskNotFoundError, TaskNotResumableError, InvalidTaskTransitionError } from './a2a-task.js';
+import {
+  TaskNotFoundError,
+  TaskNotResumableError,
+  TaskNotCancelableError,
+  InvalidTaskTransitionError,
+} from './a2a-task.js';
 import type { TaskStore } from './a2a-task.js';
 
 const MAX_BODY_BYTES = 64 * 1024; // 64KB
@@ -532,22 +541,136 @@ export function createHttpsServer(config: {
         return;
       }
 
-      // Method dispatch. Phase 2a supports only `message/send`. Other
-      // A2A methods (`tasks/get`, `tasks/cancel`, `message/stream`) →
-      // -32601 Method not found. They land in Phase 2b/2.5/3.
-      if (envelope.data.method !== A2A_METHOD_MESSAGE_SEND) {
+      // Method dispatch (macf#398 Phase 2d). Supported methods:
+      //   - `message/send`  (Phase 2a + 2b) — fresh task or resume
+      //   - `tasks/get`     (Phase 2d) — read-only task lookup
+      //   - `tasks/cancel`  (Phase 2d) — transition non-terminal → CANCELED
+      //
+      // Out-of-scope methods (`message/stream`, `tasks/subscribe`,
+      // `tasks/pushNotificationConfig.set`, etc.) → -32601 Method not
+      // found. They land in Phase 3.5+ when streaming support arrives.
+      const isSupportedMethod =
+        envelope.data.method === A2A_METHOD_MESSAGE_SEND
+        || envelope.data.method === A2A_METHOD_TASKS_GET
+        || envelope.data.method === A2A_METHOD_TASKS_CANCEL;
+      if (!isSupportedMethod) {
         sendA2aJson(res, 200, {
           jsonrpc: '2.0',
           id: envelope.data.id,
           error: {
             code: JSONRPC_METHOD_NOT_FOUND,
-            message: `Method '${envelope.data.method}' not supported (Phase 2a only implements '${A2A_METHOD_MESSAGE_SEND}')`,
+            message: `Method '${envelope.data.method}' not supported`,
             data: { reason: A2A_REASON_METHOD_NOT_SUPPORTED, domain: A2A_ERROR_DOMAIN },
           },
         });
         return;
       }
 
+      // macf#398 Phase 2d: tasks/get + tasks/cancel are read-only/state-
+      // mutation methods that don't go through TaskStore.completeHappyPath.
+      // Dispatch directly + return early; spans named after the method
+      // for OTel observability parity with `message/send`.
+      if (envelope.data.method === A2A_METHOD_TASKS_GET) {
+        const taskIdParams = TaskIdParamsSchema.safeParse(envelope.data.params);
+        if (!taskIdParams.success) {
+          sendA2aJson(res, 200, {
+            jsonrpc: '2.0',
+            id: envelope.data.id,
+            error: {
+              code: JSONRPC_INVALID_PARAMS,
+              message: `Invalid tasks/get params: ${taskIdParams.error.message}`,
+              data: { reason: A2A_REASON_INVALID_MESSAGE, domain: A2A_ERROR_DOMAIN },
+            },
+          });
+          return;
+        }
+        const taskId = resolveTaskId(taskIdParams.data);
+        const task = taskId !== undefined ? taskStore.get(taskId) : undefined;
+        if (task === undefined) {
+          sendA2aJson(res, 200, {
+            jsonrpc: '2.0',
+            id: envelope.data.id,
+            error: {
+              code: JSONRPC_INVALID_PARAMS,
+              message: `Task ${taskId ?? '(no id)'} not found`,
+              data: { reason: A2A_REASON_TASK_NOT_FOUND, domain: A2A_ERROR_DOMAIN },
+            },
+          });
+          return;
+        }
+        sendA2aJson(res, 200, {
+          jsonrpc: '2.0',
+          id: envelope.data.id,
+          result: task,
+        });
+        return;
+      }
+
+      if (envelope.data.method === A2A_METHOD_TASKS_CANCEL) {
+        const taskIdParams = TaskIdParamsSchema.safeParse(envelope.data.params);
+        if (!taskIdParams.success) {
+          sendA2aJson(res, 200, {
+            jsonrpc: '2.0',
+            id: envelope.data.id,
+            error: {
+              code: JSONRPC_INVALID_PARAMS,
+              message: `Invalid tasks/cancel params: ${taskIdParams.error.message}`,
+              data: { reason: A2A_REASON_INVALID_MESSAGE, domain: A2A_ERROR_DOMAIN },
+            },
+          });
+          return;
+        }
+        const taskId = resolveTaskId(taskIdParams.data);
+        try {
+          const task = taskStore.cancel(taskId ?? '', { nowIso: new Date().toISOString() });
+          sendA2aJson(res, 200, {
+            jsonrpc: '2.0',
+            id: envelope.data.id,
+            result: task,
+          });
+        } catch (err) {
+          if (err instanceof TaskNotFoundError) {
+            sendA2aJson(res, 200, {
+              jsonrpc: '2.0',
+              id: envelope.data.id,
+              error: {
+                code: JSONRPC_INVALID_PARAMS,
+                message: `Task ${err.taskId} not found (cannot cancel)`,
+                data: { reason: A2A_REASON_TASK_NOT_FOUND, domain: A2A_ERROR_DOMAIN },
+              },
+            });
+            return;
+          }
+          if (err instanceof TaskNotCancelableError) {
+            sendA2aJson(res, 200, {
+              jsonrpc: '2.0',
+              id: envelope.data.id,
+              error: {
+                code: JSONRPC_INVALID_PARAMS,
+                message: `Task ${err.taskId} in state ${err.currentState} cannot be canceled`,
+                data: { reason: A2A_REASON_TASK_TERMINAL_STATE, domain: A2A_ERROR_DOMAIN },
+              },
+            });
+            return;
+          }
+          logger.error('a2a_tasks_cancel_failed', {
+            error: err instanceof Error ? err.message : String(err),
+          });
+          sendA2aJson(res, 200, {
+            jsonrpc: '2.0',
+            id: envelope.data.id,
+            error: {
+              code: JSONRPC_INTERNAL_ERROR,
+              message: 'Internal error processing tasks/cancel',
+              data: { domain: A2A_ERROR_DOMAIN },
+            },
+          });
+        }
+        return;
+      }
+
+      // Below: A2A_METHOD_MESSAGE_SEND. The isSupportedMethod guard
+      // already filtered out unknown methods.
       const params = MessageSendParamsSchema.safeParse(envelope.data.params);
       if (!params.success) {
         sendA2aJson(res, 200, {
